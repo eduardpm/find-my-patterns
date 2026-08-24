@@ -590,6 +590,15 @@ engine and local inference — not self-hosting itself.
 
 ---
 
+## 11. What next? Differentiator opportunities
+
+This document identifies the competitive position *today*. For forward-looking analysis — what
+additional differentiators could be built, ranked by feasibility and impact, and the strongest
+possible product positioning — see the companion document:
+**[differentiator-opportunities.md](differentiator-opportunities.md)**.
+
+---
+
 ## Open questions and unverified items
 
 - Whether Bearable analyses free-text "Reflections" in correlations — no first-party page found
