@@ -17,25 +17,19 @@ interface Props {
  * what FR-014's keyboard-only requirement and FR-027's labelling bar actually need.
  *
  * The list is passed in, never hardcoded: constitution Principle VII keeps the feeling set in the
- * backend. Emoji live here because presentation is explicitly the client's business.
+ * backend.
+ *
+ * Each chip is marked with its feeling's colour rather than an emoji. Emoji were the obvious first
+ * choice and the wrong one: they are a different drawing on every platform, they cannot be tinted
+ * to match the calendar dots that mean the same thing, and "🥱 Exhausted" beside "😴 Sleepy" is a
+ * distinction the user has to squint at. A colour that matches the calendar and the entry rail is
+ * one the user learns once. Colour is never the only channel — the label is always present.
  */
-
-const EMOJI: Record<string, string> = {
-  happy: '😊',
-  excited: '🤩',
-  neutral: '😐',
-  sleepy: '😴',
-  exhausted: '🥱',
-  stressed: '😖',
-  sad: '😢',
-  depressed: '😞',
-};
-
 export function FeelingChips({ feelings, selected, onSelect, suggestedKey, legend }: Props) {
   return (
     <fieldset className="feeling-chips">
       <legend>{legend}</legend>
-      <div className="row">
+      <div className="chip-grid">
         {feelings.map((feeling) => {
           const isSuggested = suggestedKey === feeling.key;
           return (
@@ -52,9 +46,9 @@ export function FeelingChips({ feelings, selected, onSelect, suggestedKey, legen
                 onChange={() => onSelect(feeling.key)}
                 className="visually-hidden"
               />
-              <span aria-hidden="true">{EMOJI[feeling.key] ?? '•'}</span>
+              <span className="feeling-dot" aria-hidden="true" />
               <span>{feeling.label}</span>
-              {isSuggested && <span className="chip__hint"> (suggested)</span>}
+              {isSuggested && <span className="chip__hint">suggested</span>}
             </label>
           );
         })}

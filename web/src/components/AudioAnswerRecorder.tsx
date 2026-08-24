@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { transcribeAudio } from '../api/transcriptions';
+import { Icon } from './Icon';
 
 const MAX_RECORDING_MS = 5 * 60 * 1000;
 
@@ -173,7 +174,8 @@ export function AudioAnswerRecorder({
     <div className="audio-answer">
       {state === 'recording' ? (
         <button type="button" className="btn btn--recording" onClick={stop}>
-          <span className="recording-dot" aria-hidden="true" /> Stop recording
+          <span className="recording-dot" aria-hidden="true" />
+          Stop recording
         </button>
       ) : state !== 'failed' ? (
         <button
@@ -182,7 +184,7 @@ export function AudioAnswerRecorder({
           onClick={() => void start()}
           disabled={disabled || busy}
         >
-          <span aria-hidden="true">🎙</span>
+          <Icon name="mic" />
           {state === 'requesting'
             ? 'Opening microphone…'
             : state === 'transcribing'
@@ -190,7 +192,12 @@ export function AudioAnswerRecorder({
               : 'Record answer'}
         </button>
       ) : null}
-      <span className="muted" role="status">
+      {/*
+        The reassurance about the audio being discarded is the whole reason a private diary can ask
+        for a microphone at all, so it is a persistent hint attached to the control rather than a
+        transient message.
+      */}
+      <span className="field-hint" role="status">
         {state === 'recording'
           ? 'Listening…'
           : state === 'transcribing'
@@ -207,12 +214,14 @@ export function AudioAnswerRecorder({
           <audio controls src={recordingUrl} aria-label="Your saved recording" />
           <div className="row">
             <button type="button" className="btn btn--secondary" onClick={retry}>
+              <Icon name="refresh" />
               Retry transcription
             </button>
             <a className="btn btn--text" href={recordingUrl} download="diary-answer.webm">
               Download recording
             </a>
             <button type="button" className="btn btn--text" onClick={discardRecording}>
+              <Icon name="trash" />
               Discard recording
             </button>
           </div>

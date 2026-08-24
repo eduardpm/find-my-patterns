@@ -1,7 +1,9 @@
 /*
- * Reset, typography, and the shared interaction primitives. The focus-visible rule below is a
- * requirement, not styling: FR-027 mandates a visible focus indicator on every interactive element,
- * and it is what makes FR-014's keyboard-only flow usable rather than merely possible (SC-014).
+ * Reset, typography, and the shared interaction primitives.
+ *
+ * The focus-visible rule below is a requirement, not styling: FR-027 mandates a visible focus
+ * indicator on every interactive element, and it is what makes FR-014's keyboard-only flow usable
+ * rather than merely possible (SC-014).
  */
 @import './tokens.css';
 
@@ -19,37 +21,65 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+/*
+ * The page wash lives on <html> rather than on <body>, and is viewport-attached.
+ *
+ * A background set on <body> propagates to the canvas but keeps <html>'s box as its positioning
+ * area, so its size depends on document height rather than on window height. Declaring it here
+ * with `fixed` makes the viewport the positioning area outright, which is what "a wash from the top
+ * of the window" is supposed to mean, and keeps a short page — an empty Today, a 404 — covered
+ * edge to edge without relying on the min-height chain below.
+ */
+html {
+  background-color: var(--color-surface);
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--color-primary-container) 40%, transparent),
+    transparent 22rem
+  );
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: var(--text-body-lg-size);
   line-height: var(--text-body-lg-line);
   color: var(--color-on-surface);
-  background:
-    radial-gradient(
-      circle at 15% 0%,
-      color-mix(in srgb, var(--color-primary-container) 45%, transparent),
-      transparent 32rem
-    ),
-    var(--color-surface);
-  min-height: 100vh;
+  background: transparent;
+  min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---- Type ---- */
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  /*
+   * Progressive: user agents that support it keep short headings from dropping a single orphan
+   * word onto its own line. Where unsupported, headings simply wrap normally.
+   */
+  text-wrap: balance;
 }
 
 h1 {
   font-size: var(--text-headline-size);
   line-height: var(--text-headline-line);
-  font-weight: 700;
 }
 
 h2 {
   font-size: var(--text-title-lg-size);
   line-height: var(--text-title-lg-line);
-  font-weight: 600;
 }
 
 h3 {
   font-size: var(--text-title-md-size);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 input,
@@ -58,6 +88,22 @@ button,
 select {
   font: inherit;
   color: inherit;
+}
+
+/* URLs, pasted IDs and unbroken diary text reflow instead of forcing the page sideways. */
+p,
+li,
+blockquote,
+td {
+  overflow-wrap: anywhere;
+}
+
+/* ---- Icons ---- */
+
+.icon {
+  flex: none;
+  /* Sits an icon on the text's optical centre rather than its baseline. */
+  vertical-align: -0.15em;
 }
 
 /* ---- Focus visibility (FR-027, SC-014) ---- */
@@ -83,6 +129,8 @@ select {
   background: var(--color-primary);
   color: var(--color-on-primary);
   border-radius: var(--radius-sm);
+  font-size: var(--text-label-size);
+  font-weight: 600;
 }
 
 .skip-link:focus {
@@ -105,7 +153,7 @@ select {
 .app-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .app-main {
@@ -113,15 +161,75 @@ select {
   width: 100%;
   max-width: var(--layout-max-width);
   margin: 0 auto;
-  padding: var(--space-6) var(--space-4) calc(var(--space-6) * 2);
+  padding: var(--space-6) var(--space-5) var(--space-8);
 }
 
-.app-header {
+/* The calendar is a grid, not prose, and is cramped at the reading measure. */
+.app-main--wide {
+  max-width: var(--layout-wide-width);
+}
+
+.stack {
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.stack--loose {
+  gap: var(--space-6);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.row--between {
   justify-content: space-between;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
+}
+
+.row--tight {
+  gap: var(--space-2);
+  flex-wrap: nowrap;
+}
+
+/* ---- Page header ----
+ * An eyebrow, a serif title and an actions cluster. The eyebrow carries the context a title alone
+ * cannot ("Sunday, 24 August"), which keeps the h1 itself short and stable for assistive tech.
+ */
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.page-header__titles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.page-header__eyebrow {
+  font-size: var(--text-micro-size);
+  font-weight: 600;
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--color-on-surface-variant);
+}
+
+.page-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 /* ---- Navigation ---- */
@@ -131,56 +239,85 @@ select {
   top: 0;
   z-index: 20;
   display: flex;
-  justify-content: center;
+  align-items: center;
   gap: var(--space-1);
-  padding: var(--space-2);
-  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
-  border-bottom: 1px solid var(--color-outline-variant);
-  box-shadow: 0 1px 0 rgb(0 0 0 / 3%);
-  backdrop-filter: blur(14px);
+  padding: var(--space-2) var(--space-4);
+  background: color-mix(in srgb, var(--color-surface-overlay) 85%, transparent);
+  border-bottom: 1px solid var(--color-hairline);
+  backdrop-filter: blur(12px) saturate(1.4);
 }
 
 .app-brand {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-right: auto;
-  font-size: var(--text-label-size);
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  padding-right: var(--space-3);
+  font-family: var(--font-serif);
+  font-size: var(--text-title-md-size);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  white-space: nowrap;
 }
 
 .app-brand__mark {
+  display: inline-flex;
   color: var(--color-primary);
-  margin-right: var(--space-1);
 }
 
 .app-nav a {
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-full);
+  position: relative;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
   color: var(--color-on-surface-variant);
   text-decoration: none;
   font-size: var(--text-label-size);
   font-weight: 500;
-  transition: background var(--motion-fast) var(--easing-standard);
+  /* Touch target: the visible pill is short, so the hit area is grown rather than the padding. */
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  transition:
+    color var(--motion-fast) var(--easing-standard),
+    background var(--motion-fast) var(--easing-standard);
 }
 
 .app-nav a:hover {
   background: var(--color-surface-variant);
-}
-
-.app-nav a[aria-current='page'] {
-  background: var(--color-primary-container);
   color: var(--color-on-surface);
 }
 
+/*
+ * The current page is marked twice over: weight and colour, plus an underline bar. Weight alone is
+ * a subtle signal and colour alone would be a colour-only cue (FR-027).
+ */
+.app-nav a[aria-current='page'] {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.app-nav a[aria-current='page']::after {
+  content: '';
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: 4px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+}
+
 .app-nav__logout {
-  display: none;
-  margin-left: auto;
+  margin-left: var(--space-2);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--color-hairline);
 }
 
 .app-nav__logout button {
+  min-height: 44px;
   padding: var(--space-2) var(--space-3);
   border: 0;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-on-surface-variant);
   font-size: var(--text-label-size);
@@ -194,27 +331,14 @@ select {
 
 @media (min-width: 48rem) {
   .app-nav {
-    padding-inline: max(var(--space-4), calc((100vw - var(--layout-max-width)) / 2));
-    justify-content: flex-start;
-  }
-
-  .app-brand {
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .app-nav__logout {
-    display: block;
+    padding-inline: max(var(--space-5), calc((100vw - var(--layout-wide-width)) / 2));
   }
 }
 
-@media (max-width: 47.999rem) {
-  .app-nav__logout {
-    display: block;
-  }
-
-  .app-nav__logout button {
-    padding-inline: var(--space-2);
+/* Below the brand's breakpoint the wordmark goes, but the mark stays as an anchor. */
+@media (max-width: 30rem) {
+  .app-brand__text {
+    display: none;
   }
 }
 
@@ -225,73 +349,93 @@ select {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-5);
-  border: none;
+  /* 44px minimum, met by height rather than by padding so labels of any length match. */
+  min-height: 44px;
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid transparent;
   border-radius: var(--radius-full);
   background: var(--color-primary);
   color: var(--color-on-primary);
+  font-family: var(--font-sans);
   font-size: var(--text-label-size);
-  font-weight: 500;
+  font-weight: 600;
+  /* `.btn` is worn by both <button> and <a>; without this the links arrive underlined. */
+  text-decoration: none;
+  white-space: nowrap;
   cursor: pointer;
+  touch-action: manipulation;
   transition:
-    filter var(--motion-fast) var(--easing-standard),
+    background var(--motion-fast) var(--easing-standard),
+    border-color var(--motion-fast) var(--easing-standard),
+    color var(--motion-fast) var(--easing-standard),
     transform var(--motion-fast) var(--easing-standard);
 }
 
 .btn:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: var(--color-primary-hover);
 }
 
 .btn:active:not(:disabled) {
   transform: scale(0.98);
 }
 
-.btn:disabled {
-  opacity: 0.5;
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
 .btn--secondary {
-  background: var(--color-surface-variant);
+  background: var(--color-surface-container);
   color: var(--color-on-surface);
+  border-color: var(--color-outline);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: var(--color-surface-variant);
+  border-color: var(--color-on-surface-variant);
 }
 
 .btn--text {
   background: transparent;
   color: var(--color-primary);
-  padding: var(--space-2) var(--space-3);
+  padding-inline: var(--space-3);
+}
+
+.btn--text:hover:not(:disabled) {
+  background: var(--color-surface-variant);
+  color: var(--color-primary-hover);
 }
 
 .btn--danger {
-  background: var(--color-error);
-  color: #fff;
+  background: transparent;
+  color: var(--color-error);
+  border-color: currentcolor;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--color-error-container);
+  color: var(--color-on-error-container);
+}
+
+/* Square icon-only control. Always needs an aria-label or an Icon `title`. */
+.btn--icon {
+  min-width: 44px;
+  padding: var(--space-2);
 }
 
 /* ---- Cards & surfaces ---- */
 
 .card {
   background: var(--color-surface-container);
-  border: 1px solid color-mix(in srgb, var(--color-outline-variant) 65%, transparent);
-  border-radius: var(--radius-md);
-  padding: var(--space-4);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
   box-shadow: var(--shadow-1);
-}
-
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
 }
 
 .app-main > .stack > .btn {
   align-self: flex-start;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
 }
 
 .muted {
@@ -299,64 +443,236 @@ select {
   font-size: var(--text-body-md-size);
 }
 
-/* ---- Insights (US4) ---- */
-
-.insights-list {
-  list-style: none;
-  padding: 0;
-}
-
-.insights-empty {
-  text-align: center;
-  padding: var(--space-6) var(--space-4);
-}
-
-.pattern-card__header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-/*
- * Topics arrive lowercased from the backend ("coca cola"). Capitalising in CSS rather than in JS
- * keeps the string itself exactly as served — constitution Principle VII — and matches how the
- * Android card presents it.
- */
-.pattern-card__topic::first-letter {
+.eyebrow {
+  font-size: var(--text-micro-size);
+  font-weight: 600;
+  letter-spacing: var(--tracking-eyebrow);
   text-transform: uppercase;
+  color: var(--color-on-surface-variant);
 }
 
-.pattern-card__narrative {
-  font-size: var(--text-body-lg-size);
-  line-height: var(--text-body-lg-line);
+/* Times, counts and averages, so digits never jitter as values change. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
 }
 
-.pattern-card__suggestion {
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
+/* ---- Empty states ---- */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-5);
+  text-align: center;
+  border: 1px dashed var(--color-outline);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-surface-container) 55%, transparent);
+}
+
+.empty-state__icon {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--radius-full);
   background: var(--color-primary-container);
-  color: var(--color-on-surface);
+  color: var(--color-primary);
+  font-size: 1.5rem;
+}
+
+.empty-state__title {
+  font-family: var(--font-serif);
+  font-size: var(--text-title-lg-size);
+  font-weight: 600;
+}
+
+.empty-state p {
+  max-width: 34ch;
+  color: var(--color-on-surface-variant);
   font-size: var(--text-body-md-size);
 }
 
-.pattern-badge {
+/* ---- Feeling colour token plumbing ----
+ * `[data-feeling]` sets one custom property; everything downstream (dot, rail, text) reads it. That
+ * keeps the eight-way branch in one place instead of once per component.
+ */
+
+[data-feeling] {
+  --feeling-color: var(--color-outline);
+}
+
+[data-feeling='happy'] {
+  --feeling-color: var(--feeling-happy);
+}
+[data-feeling='excited'] {
+  --feeling-color: var(--feeling-excited);
+}
+[data-feeling='neutral'] {
+  --feeling-color: var(--feeling-neutral);
+}
+[data-feeling='sleepy'] {
+  --feeling-color: var(--feeling-sleepy);
+}
+[data-feeling='exhausted'] {
+  --feeling-color: var(--feeling-exhausted);
+}
+[data-feeling='stressed'] {
+  --feeling-color: var(--feeling-stressed);
+}
+[data-feeling='sad'] {
+  --feeling-color: var(--feeling-sad);
+}
+[data-feeling='depressed'] {
+  --feeling-color: var(--feeling-depressed);
+}
+
+.feeling-dot {
+  width: 0.625rem;
+  height: 0.625rem;
   flex: none;
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid currentcolor;
   border-radius: var(--radius-full);
-  font-size: var(--text-label-size);
-  font-weight: 500;
+  background: var(--feeling-color);
+}
+
+/* ---- Entry list (US1) ---- */
+
+.entry-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.entry-card {
+  position: relative;
+  display: block;
+  padding-left: calc(var(--space-5) + 4px);
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+  transition:
+    box-shadow var(--motion-base) var(--easing-standard),
+    border-color var(--motion-base) var(--easing-standard),
+    transform var(--motion-base) var(--easing-standard);
+}
+
+/*
+ * A colour rail down the leading edge, tinted by the entry's feeling. It is a second, redundant
+ * encoding — the feeling is always spelled out in the card's header too (FR-027) — but it is what
+ * lets a week of entries be skimmed for shape rather than read.
+ */
+.entry-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--feeling-color, var(--color-hairline));
+}
+
+.entry-card:hover {
+  box-shadow: var(--shadow-2);
+  border-color: var(--color-outline);
+  transform: translateY(-1px);
+}
+
+.entry-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.entry-card__time {
+  font-size: var(--text-micro-size);
+  font-weight: 600;
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--color-on-surface-variant);
+}
+
+.entry-card__feeling {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body-md-size);
+  font-weight: 600;
+  color: var(--feeling-color);
+}
+
+.entry-card__text {
+  font-family: var(--font-serif);
+  font-size: var(--text-body-lg-size);
+  line-height: var(--text-body-lg-line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * A long entry fades out rather than filling the list with one person's worst Tuesday. The full
+ * text is one click away on the detail route, and nothing is hidden from assistive tech — the
+ * clamp is visual only.
+ */
+.entry-card__text--clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* An "unconfirmed" marker, in words as well as in weight. */
+.badge-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--color-outline);
+  border-radius: var(--radius-full);
+  font-size: var(--text-micro-size);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-on-surface-variant);
   white-space: nowrap;
 }
 
-.pattern-badge--keep {
-  color: var(--color-success);
+/* ---- Error banner ---- */
+
+.error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-error) 45%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--color-error-container);
+  color: var(--color-on-error-container);
+  font-size: var(--text-body-md-size);
 }
 
-.pattern-badge--change {
+.error-banner__icon {
   color: var(--color-error);
+  margin-top: 0.15em;
+}
+
+.error-banner__message {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.error-banner .btn--text {
+  color: var(--color-on-error-container);
+  text-decoration: underline;
+  min-height: 2rem;
+  padding-inline: var(--space-2);
+}
+
+.error-banner .btn--text:hover {
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
 }
 
 /* ---- Text input ---- */
@@ -365,99 +681,115 @@ select {
   width: 100%;
   min-height: 9rem;
   padding: var(--space-4);
-  border: 1px solid var(--color-outline-variant);
+  border: 1px solid var(--color-outline);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: var(--color-surface-container);
+  color: var(--color-on-surface);
+  /* The writing surface uses the reading face: what is typed here is what is read back later. */
+  font-family: var(--font-serif);
   font-size: var(--text-body-lg-size);
   line-height: var(--text-body-lg-line);
   resize: vertical;
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 3%);
+  transition:
+    border-color var(--motion-fast) var(--easing-standard),
+    box-shadow var(--motion-fast) var(--easing-standard);
+}
+
+.textarea::placeholder {
+  color: var(--color-on-surface-variant);
+  opacity: 1;
 }
 
 .textarea:focus-visible {
   border-color: var(--color-primary);
 }
 
+.textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .text-input {
   width: 100%;
+  min-height: 44px;
   padding: var(--space-3);
-  border: 1px solid var(--color-outline-variant);
+  border: 1px solid var(--color-outline);
   border-radius: var(--radius-sm);
-  background: var(--color-surface);
+  background: var(--color-surface-container);
+  color: var(--color-on-surface);
 }
 
-/* ---- Entry list & composer (US1) ---- */
-
-.error-banner {
+/* A hint that belongs to the control above it, not to the page. */
+.field-hint {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--color-error-container);
-  color: var(--color-on-error-container);
+  gap: var(--space-2);
   font-size: var(--text-body-md-size);
+  color: var(--color-on-surface-variant);
 }
 
-.entry-card {
-  display: block;
-  color: inherit;
-  text-decoration: none;
-  transition:
-    box-shadow var(--motion-fast) var(--easing-standard),
-    transform var(--motion-fast) var(--easing-standard);
+/* Keyboard shortcut, drawn as a key rather than described as one. */
+kbd {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 1px var(--space-2);
+  border: 1px solid var(--color-outline);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-container);
+  color: var(--color-on-surface-variant);
+  font-family: var(--font-numeric);
+  font-size: var(--text-micro-size);
+  line-height: 1.5;
 }
 
-.entry-card:hover {
-  box-shadow: var(--shadow-2);
-  transform: translateY(-1px);
-}
-
-.entry-card__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-bottom: var(--space-2);
-}
-
-.entry-card__feeling {
-  font-size: var(--text-body-md-size);
-  font-weight: 500;
-}
-
-.entry-card__text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
+/* ---- Feeling chips ---- */
 
 .feeling-chips {
   border: none;
   padding: 0;
+  min-width: 0;
 }
 
 .feeling-chips legend {
-  margin-bottom: var(--space-2);
-  font-size: var(--text-label-size);
-  font-weight: 500;
+  margin-bottom: var(--space-3);
+  padding: 0;
+  font-size: var(--text-micro-size);
+  font-weight: 600;
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
   color: var(--color-on-surface-variant);
+}
+
+/* Wraps before it shrinks: a truncated feeling name is worse than a taller control. */
+.chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 44px;
   padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--color-outline-variant);
+  border: 1px solid var(--color-outline);
   border-radius: var(--radius-full);
+  background: var(--color-surface-container);
   font-size: var(--text-label-size);
+  font-weight: 500;
   cursor: pointer;
-  transition: background var(--motion-fast) var(--easing-standard);
+  touch-action: manipulation;
+  transition:
+    background var(--motion-fast) var(--easing-standard),
+    border-color var(--motion-fast) var(--easing-standard),
+    color var(--motion-fast) var(--easing-standard);
 }
 
 .chip:hover {
   background: var(--color-surface-variant);
+  border-color: var(--color-on-surface-variant);
 }
 
 /*
@@ -469,21 +801,258 @@ select {
   outline-offset: var(--focus-ring-offset);
 }
 
+/*
+ * Selection is marked three ways — border weight, fill, and the feeling's own colour — so it
+ * survives greyscale and colour blindness. The chosen chip's dot grows into a ring for a fourth.
+ */
 .chip--selected {
-  background: var(--color-primary-container);
-  border-color: var(--color-primary);
-  font-weight: 600;
+  border-color: var(--feeling-color, var(--color-primary));
+  border-width: 2px;
+  padding-block: calc(var(--space-2) - 1px);
+  padding-inline: calc(var(--space-4) - 1px);
+  background: color-mix(in srgb, var(--feeling-color, var(--color-primary)) 12%, transparent);
+  color: var(--color-on-surface);
+  font-weight: 700;
 }
 
 .chip__hint {
   color: var(--color-on-surface-variant);
-  font-size: var(--text-body-md-size);
-  font-weight: 400;
+  font-size: var(--text-micro-size);
+  font-weight: 500;
 }
 
 blockquote.card {
   white-space: pre-wrap;
+  font-family: var(--font-serif);
   border-left: 4px solid var(--color-primary);
+}
+
+/* ---- Composer & guided questions (US3) ---- */
+
+.composer-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.composer-progress__label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-micro-size);
+  font-weight: 600;
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--color-on-surface-variant);
+}
+
+/*
+ * The prompt list can grow while the user answers — a mention of food pulls in the food prompt —
+ * so the track is drawn as discrete steps. A continuous bar would appear to move backwards when
+ * the denominator rose, which is a lie about progress.
+ */
+.composer-progress__track {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.composer-progress__step {
+  flex: 1;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-variant);
+  border: 1px solid var(--color-hairline);
+  transition: background var(--motion-base) var(--easing-standard);
+}
+
+.composer-progress__step--done {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.composer-progress__step--current {
+  background: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  border-color: var(--color-primary);
+}
+
+.guided-prompt {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: var(--text-title-lg-size);
+  line-height: var(--text-title-lg-line);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  text-wrap: pretty;
+}
+
+/*
+ * The two actions are not peers: one advances the flow, the other abandons it. They are separated
+ * rather than sat side by side so "skip" is never the button the hand goes to by momentum.
+ */
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-2);
+}
+
+.composer-actions__aside {
+  margin-left: auto;
+}
+
+@media (max-width: 30rem) {
+  .composer-actions__aside {
+    margin-left: 0;
+  }
+}
+
+.audio-answer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.btn--recording {
+  background: var(--color-error);
+  border-color: var(--color-error);
+  color: #fff;
+}
+
+.btn--recording:hover:not(:disabled) {
+  background: var(--color-error);
+  filter: brightness(1.1);
+}
+
+.recording-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: var(--radius-full);
+  background: currentcolor;
+  animation: recording-pulse 1.2s ease-in-out infinite;
+}
+
+.audio-answer__error {
+  flex-basis: 100%;
+  color: var(--color-error);
+  font-size: var(--text-body-md-size);
+}
+
+.audio-answer__recovery {
+  display: grid;
+  width: 100%;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-outline);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-variant);
+}
+
+.audio-answer__recovery audio {
+  width: 100%;
+}
+
+@keyframes recording-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---- Insights (US4) ---- */
+
+.insights-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.pattern-card {
+  gap: var(--space-3);
+}
+
+.pattern-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/*
+ * Topics arrive lowercased from the backend ("coca cola"). Capitalising in CSS rather than in JS
+ * keeps the string itself exactly as served — constitution Principle VII — and matches how the
+ * Android card presents it.
+ */
+.pattern-card__topic {
+  font-size: var(--text-title-lg-size);
+  line-height: var(--text-title-lg-line);
+}
+
+.pattern-card__topic::first-letter {
+  text-transform: uppercase;
+}
+
+.pattern-card__narrative {
+  font-family: var(--font-serif);
+  font-size: var(--text-body-lg-size);
+  line-height: var(--text-body-lg-line);
+}
+
+/* The suggestion is advice rather than fact, so it is set apart and tinted with the accent. */
+.pattern-card__suggestion {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-accent-container);
+  color: var(--color-on-surface);
+  font-size: var(--text-body-md-size);
+}
+
+.pattern-card__suggestion .icon {
+  color: var(--color-accent);
+  margin-top: 0.2em;
+}
+
+.pattern-card__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-hairline);
+}
+
+/* Direction is carried by an arrow icon and a word, never by the colour alone (FR-027). */
+.pattern-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-full);
+  font-size: var(--text-micro-size);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pattern-badge--keep {
+  color: var(--color-success);
+  background: var(--color-success-container);
+}
+
+.pattern-badge--change {
+  color: var(--color-on-error-container);
+  background: var(--color-error-container);
 }
 
 /* ---- Conflict resolution (US2) ---- */
@@ -501,84 +1070,28 @@ blockquote.card {
   }
 }
 
-/* ---- Guided questions (US3) ---- */
-
-.guided-progress {
-  font-size: var(--text-label-size);
-  color: var(--color-on-surface-variant);
-}
-
-.guided-prompt {
-  font-size: var(--text-title-lg-size);
-  line-height: var(--text-title-lg-line);
-  font-weight: 600;
-}
-
-.audio-answer {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.btn--recording {
-  background: var(--color-error);
-  color: #fff;
-}
-
-.recording-dot {
-  width: 0.65rem;
-  height: 0.65rem;
-  border-radius: var(--radius-full);
-  background: currentcolor;
-  animation: recording-pulse 1.2s ease-in-out infinite;
-}
-
-.audio-answer__error {
-  flex-basis: 100%;
-  color: var(--color-error);
-  font-size: var(--text-body-md-size);
-}
-
-.audio-answer__recovery {
-  display: grid;
-  width: 100%;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--color-outline-variant);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-container);
-}
-
-.audio-answer__recovery audio {
-  width: 100%;
-}
-
-@keyframes recording-pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .recording-dot {
-    animation: none;
-  }
-}
-
 /* ---- Monthly calendar (US5) ---- */
 
+/*
+ * Three slots on one row at every width: the label keeps the middle and the two controls stay
+ * pinned to the edges. The old flex row wrapped on a phone and dropped "Next month" onto its own
+ * line, which read as a list of unrelated buttons rather than as a stepper.
+ */
 .month-switcher {
-  display: flex;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
-  flex-wrap: wrap;
 }
 
 .month-switcher__label {
   text-align: center;
-  flex: 1;
+  margin: 0;
+  font-size: var(--text-title-lg-size);
+}
+
+.calendar-card {
+  padding: var(--space-4);
 }
 
 .calendar {
@@ -589,9 +1102,11 @@ blockquote.card {
 }
 
 .calendar th {
-  padding-bottom: var(--space-1);
-  font-size: var(--text-label-size);
-  font-weight: 500;
+  padding-bottom: var(--space-2);
+  font-size: var(--text-micro-size);
+  font-weight: 600;
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
   color: var(--color-on-surface-variant);
 }
 
@@ -600,9 +1115,9 @@ blockquote.card {
 }
 
 .calendar-day {
-  height: 3rem;
+  height: 3.25rem;
   padding: var(--space-1);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   text-align: center;
   vertical-align: top;
 }
@@ -613,13 +1128,13 @@ blockquote.card {
  * in each cell says "no entries" outright.
  */
 .calendar-day--logged {
-  background: var(--color-surface-container);
-  border: 1px solid var(--color-outline-variant);
+  background: var(--color-surface-variant);
+  border: 1px solid var(--color-hairline);
 }
 
 .calendar-day--empty {
   background: transparent;
-  border: 1px dashed var(--color-outline-variant);
+  border: 1px dashed var(--color-hairline);
   color: var(--color-on-surface-variant);
 }
 
@@ -630,7 +1145,12 @@ blockquote.card {
 .calendar-day__number {
   display: block;
   font-size: var(--text-body-md-size);
-  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.calendar-day--logged .calendar-day__number {
+  font-weight: 600;
 }
 
 /* US5 AC3: one dot per feeling, so a mixed day reads as mixed rather than as its first feeling. */
@@ -638,18 +1158,46 @@ blockquote.card {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   margin-top: var(--space-1);
 }
 
 .calendar-day__dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: var(--radius-full);
 }
 
+/*
+ * Today gets a ring rather than a fill: a fill would compete with "this day has entries", which is
+ * what the cell's background already means. The cell's hidden label says "today" outright, so this
+ * is never the only signal (FR-027).
+ */
+.calendar-day--today {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.calendar-day--today .calendar-day__number {
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+/* ---- Month totals ---- */
+
+.summary-average {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
 .summary-average__value {
-  font-size: var(--text-title-lg-size);
+  font-family: var(--font-serif);
+  font-size: var(--text-display-size);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary);
 }
 
 .totals {
@@ -657,48 +1205,61 @@ blockquote.card {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .totals__item {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-}
-
-.totals__dot {
-  width: 10px;
-  height: 10px;
-  border-radius: var(--radius-full);
-  flex: none;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-hairline);
 }
 
 .totals__label {
   flex: 1;
+  font-size: var(--text-body-md-size);
 }
 
 .totals__count {
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
 /* ---- Responsive refinements (SC-010) ---- */
 
+@media (min-width: 42rem) {
+  .totals {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: var(--space-6);
+  }
+}
+
 /*
  * Narrow phones: the calendar is the tightest thing in the app at seven fixed columns, so it gets
  * shorter cells and tighter spacing rather than being allowed to overflow horizontally.
  */
-@media (max-width: 26rem) {
+@media (max-width: 30rem) {
   .app-main {
-    padding: var(--space-3) var(--space-2) var(--space-6);
+    padding: var(--space-5) var(--space-4) var(--space-7);
+  }
+
+  .card {
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+  }
+
+  .calendar-card {
+    padding: var(--space-2);
   }
 
   .calendar {
-    border-spacing: 2px;
+    border-spacing: 3px;
   }
 
   .calendar-day {
-    height: 2.5rem;
+    height: 2.75rem;
     padding: 2px;
   }
 
@@ -706,24 +1267,15 @@ blockquote.card {
     font-size: 0.8125rem;
   }
 
-  .btn {
-    padding: var(--space-3) var(--space-4);
-  }
-}
-
-/* Wide screens: the month totals read better in two columns than as one long list. */
-@media (min-width: 42rem) {
-  .totals {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    column-gap: var(--space-5);
+  .summary-average__value {
+    font-size: var(--text-headline-size);
   }
 }
 
 /* A composer that grows with the window is the whole reason to write at a desk (FR-015). */
 @media (min-height: 45rem) {
   .textarea {
-    min-height: 12rem;
+    min-height: 13rem;
   }
 }
 
@@ -732,6 +1284,8 @@ blockquote.card {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

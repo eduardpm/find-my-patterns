@@ -7,6 +7,7 @@ import {
   monthLabel,
 } from '../components/CalendarGrid';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { Icon } from '../components/Icon';
 import { useRefreshable } from '../hooks/useRefreshable';
 import type { MonthlySummary } from '../domain/types';
 
@@ -36,28 +37,37 @@ export function MonthlyCalendarScreen() {
   const [month, setMonth] = useState(currentMonth);
 
   return (
-    <div className="stack">
-      <header className="app-header">
-        <h1>Monthly overview</h1>
+    <div className="stack stack--loose">
+      <header className="page-header">
+        <div className="page-header__titles">
+          <span className="page-header__eyebrow">A month at a glance</span>
+          <h1>Monthly overview</h1>
+        </div>
       </header>
 
+      {/*
+        A three-slot stepper — control, label, control — rather than a flex row of two wide labelled
+        buttons. The labelled version wrapped on a phone and dropped "Next month" onto its own line
+        below "Previous month", which stopped reading as a pair. The arrows keep their names for
+        assistive tech and as a pointer tooltip; only the visible text is dropped.
+      */}
       <div className="month-switcher">
         <button
           type="button"
-          className="btn btn--secondary"
+          className="btn btn--secondary btn--icon"
           onClick={() => setMonth((m) => shiftMonth(m, -1))}
         >
-          <span aria-hidden="true">‹</span> Previous month
+          <Icon name="chevronLeft" title="Previous month" />
         </button>
         <h2 className="month-switcher__label" aria-live="polite">
           {monthLabel(month)}
         </h2>
         <button
           type="button"
-          className="btn btn--secondary"
+          className="btn btn--secondary btn--icon"
           onClick={() => setMonth((m) => shiftMonth(m, 1))}
         >
-          Next month <span aria-hidden="true">›</span>
+          <Icon name="chevronRight" title="Next month" />
         </button>
       </div>
 
@@ -87,10 +97,13 @@ function MonthPanel({ month }: { month: string }) {
 
       {data && (
         <>
-          <CalendarGrid month={data.month} days={data.days} />
+          <div className="card calendar-card">
+            <CalendarGrid month={data.month} days={data.days} />
+          </div>
           <MonthTotals summary={data} />
           <div className="row">
             <button type="button" className="btn btn--text" onClick={refresh}>
+              <Icon name="refresh" />
               Refresh
             </button>
           </div>
@@ -126,7 +139,7 @@ function MonthTotals({ summary }: { summary: MonthlySummary }) {
         */}
         <strong className="summary-average__value">
           {summary.average_entries_per_day.toFixed(1)}
-        </strong>{' '}
+        </strong>
         <span className="muted">entries per day, on average</span>
       </p>
 
@@ -136,7 +149,7 @@ function MonthTotals({ summary }: { summary: MonthlySummary }) {
         <ul className="totals">
           {totals.map(([feeling, count]) => (
             <li key={feeling} className="totals__item">
-              <span className="totals__dot" style={feelingDotStyle(feeling)} aria-hidden="true" />
+              <span className="feeling-dot" style={feelingDotStyle(feeling)} aria-hidden="true" />
               <span className="totals__label">{feelingLabel(feeling)}</span>
               <span className="totals__count">{count}</span>
             </li>

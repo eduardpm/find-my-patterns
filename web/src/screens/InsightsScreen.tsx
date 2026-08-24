@@ -1,5 +1,6 @@
 import { fetchInsights } from '../api/insights';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { Icon } from '../components/Icon';
 import { PatternCard } from '../components/PatternCard';
 import type { Insights } from '../domain/types';
 import { useRefreshable } from '../hooks/useRefreshable';
@@ -16,15 +17,19 @@ export default function InsightsScreen() {
   const { data, failure, loading, refresh } = useRefreshable<Insights>(fetchInsights);
 
   return (
-    <section className="stack" aria-busy={loading}>
-      <header className="app-header">
-        <h1>Insights</h1>
-        <div className="row">
+    <section className="stack stack--loose" aria-busy={loading}>
+      <header className="page-header">
+        <div className="page-header__titles">
+          <span className="page-header__eyebrow">What keeps happening</span>
+          <h1>Insights</h1>
+        </div>
+        <div className="page-header__actions">
           {/* Always rendered so the live region exists before its text changes. */}
           <span className="muted" role="status">
             {loading ? 'Loading…' : ''}
           </span>
           <button type="button" className="btn btn--secondary" onClick={refresh}>
+            <Icon name="refresh" />
             Refresh insights
           </button>
         </div>
@@ -42,9 +47,12 @@ function InsightsBody({ insights }: { insights: Insights }) {
   // `patterns` — the minimum-occurrence threshold lives there and must never be mirrored here.
   if (insights.insufficient_data) {
     return (
-      <div className="card stack insights-empty">
-        <h2>Not enough entries yet</h2>
-        <p className="muted">
+      <div className="empty-state">
+        <span className="empty-state__icon">
+          <Icon name="trendUp" size="1.5rem" />
+        </span>
+        <p className="empty-state__title">Not enough entries yet</p>
+        <p>
           Keep writing. Once a topic and a feeling show up together often enough, the pattern will
           appear here — on this screen and on your phone, identically.
         </p>
@@ -53,11 +61,19 @@ function InsightsBody({ insights }: { insights: Insights }) {
   }
 
   if (insights.patterns.length === 0) {
-    return <p className="muted">No patterns are active right now.</p>;
+    return (
+      <div className="empty-state">
+        <span className="empty-state__icon">
+          <Icon name="spark" size="1.5rem" />
+        </span>
+        <p className="empty-state__title">No active patterns</p>
+        <p>Nothing is repeating often enough to call it a pattern right now.</p>
+      </div>
+    );
   }
 
   return (
-    <ul className="stack insights-list">
+    <ul className="insights-list">
       {insights.patterns.map((pattern) => (
         <li key={pattern.id}>
           <PatternCard pattern={pattern} />

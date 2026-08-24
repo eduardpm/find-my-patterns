@@ -13,6 +13,7 @@ import {
 } from '../api/guidedDrafts';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { FeelingChips } from '../components/FeelingChips';
+import { Icon } from '../components/Icon';
 import type { Entry, Feeling, GuidedAnswerInput, GuidingQuestion } from '../domain/types';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { useRefreshable } from '../hooks/useRefreshable';
@@ -192,10 +193,19 @@ export function EntryComposer() {
   }
 
   return (
-    <div className="stack">
-      <div className="app-header">
-        <h1>{stage === 'confirming' ? 'How did that feel?' : 'What just happened?'}</h1>
-      </div>
+    <div className="stack stack--loose">
+      <header className="page-header">
+        <div className="page-header__titles">
+          {/*
+            The eyebrow names the step so the two-stage save (write, then confirm the feeling) is
+            visible as a sequence rather than as the page unexpectedly changing its question.
+          */}
+          <span className="page-header__eyebrow">
+            {stage === 'confirming' ? 'Step 2 of 2 · Saved' : 'Step 1 of 2 · New entry'}
+          </span>
+          <h1>{stage === 'confirming' ? 'How did that feel?' : 'What just happened?'}</h1>
+        </div>
+      </header>
 
       <ErrorBanner failure={failure} />
 
@@ -233,7 +243,7 @@ export function EntryComposer() {
             placeholder="Write whatever's on your mind…"
             disabled={stage === 'suggesting'}
           />
-          <div className="row">
+          <div className="composer-actions">
             <button
               type="button"
               className="btn"
@@ -241,8 +251,11 @@ export function EntryComposer() {
               disabled={!text.trim() || stage === 'suggesting'}
             >
               {stage === 'suggesting' ? 'Saving…' : 'Save'}
+              {stage !== 'suggesting' && <Icon name="check" />}
             </button>
-            <span className="muted">Ctrl + Enter</span>
+            <span className="field-hint">
+              <kbd>Ctrl</kbd> + <kbd>Enter</kbd>
+            </span>
           </div>
           {stage === 'suggesting' && (
             <p className="muted" role="status">
@@ -270,11 +283,16 @@ export function EntryComposer() {
               (saved.feeling_source === 'suggested' ? saved.feeling_key : null)
             }
           />
-          <div className="row">
+          <div className="composer-actions">
             <button type="button" className="btn" onClick={handleConfirm} disabled={!chosen}>
               Done
+              <Icon name="check" />
             </button>
-            <button type="button" className="btn btn--text" onClick={() => navigate('/app/today')}>
+            <button
+              type="button"
+              className="btn btn--text composer-actions__aside"
+              onClick={() => navigate('/app/today')}
+            >
               Skip for now
             </button>
           </div>

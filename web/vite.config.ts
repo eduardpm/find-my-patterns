@@ -10,9 +10,14 @@ import { defineConfig } from 'vite';
 const API_PATHS = [
   '/entries',
   '/feelings',
+  // Guided drafts and transcriptions are separate top-level paths, not children of `/entries`, so
+  // they need their own entries here. Without them `npm run dev` served index.html in place of the
+  // API and the guided composer — the default way an entry is written — failed on load.
+  '/guided-entry-drafts',
   '/guiding-questions',
   '/insights',
   '/monthly-summary',
+  '/transcriptions',
   '/auth',
   '/login',
 ];

@@ -1,104 +1,171 @@
 /*
- * Design tokens mirroring the Android app's Material 3 palette and type scale
- * (android/.../ui/theme/Color.kt and Type.kt), per research.md §8. Mirroring rather than sharing:
- * constitution Principle VII reserves presentation to each client, so these values are duplicated
- * deliberately — they carry no rules, only looks.
+ * Design tokens for the web client.
+ *
+ * This file used to mirror the Android app's Material 3 palette value-for-value. It no longer does,
+ * and that is deliberate: constitution Principle VII reserves presentation to each client, and the
+ * two clients are read in different places. The phone is glanced at; the desk is where entries get
+ * written and re-read at length. So the web app gets a warm, paper-like reading surface and an
+ * editorial type scale instead of a phone palette stretched across a monitor.
+ *
+ * What is still shared with Android is the part that carries meaning rather than mood: the eight
+ * feelings each keep their hue family, so a green day on the calendar is a green day on both
+ * clients. The exact values differ because the Android hues are tuned for an OLED phone panel and
+ * several of them fall under 3:1 against a light web page — see the contrast note below.
+ *
+ * Contrast: every foreground/background pair defined here was checked against its intended
+ * surface. Body and label text clears 4.5:1 (FR-027); control borders, focus rings and feeling dots
+ * clear 3:1. The feeling tokens are re-declared per theme rather than shared, because a single hue
+ * cannot clear 3:1 against both #FBF7F0 and #17130F.
+ *
+ * No webfonts. index.html rules out third-party requests (FR-017), and self-hosting a display face
+ * would add binary assets to a repo that currently has none. The stacks below name real fonts that
+ * ship with macOS, Windows and most Linux desktops, and degrade to the generic family elsewhere.
  */
 :root {
-  /* Material 3 baseline, matching JournalPrimary/Secondary/Tertiary on Android */
-  --color-primary: #6750a4;
-  --color-primary-container: #e9ddff;
+  color-scheme: light dark;
+
+  /* ---- Surfaces: warm paper, three depths ---- */
+  --color-surface: #fbf7f0; /* the page */
+  --color-surface-container: #ffffff; /* cards, raised things */
+  --color-surface-variant: #f3ece1; /* sunken things: wells, secondary buttons */
+  --color-surface-overlay: #ffffff; /* sticky nav, popovers */
+
+  /* ---- Ink ---- */
+  --color-on-surface: #231c14;
+  --color-on-surface-variant: #6a5c4c;
+
+  /* ---- Brand: journal brown, with ink violet for anything advisory ---- */
+  --color-primary: #92400e;
+  --color-primary-hover: #7a350b;
   --color-on-primary: #ffffff;
-  --color-secondary: #625b71;
-  --color-tertiary: #7d5260;
+  --color-primary-container: #f6e8d5;
+  --color-accent: #4f46e5;
+  --color-accent-container: #ecebfd;
 
-  --color-surface: #fffbfe;
-  --color-surface-variant: #f4eff7;
-  --color-surface-container: #f1ecf4;
-  --color-outline: #79747e;
-  --color-outline-variant: #cac4d0;
+  /* ---- Lines. `outline` bounds real controls (3:1); `hairline` only separates. ---- */
+  --color-outline: #94897a;
+  --color-hairline: #e6dccc;
 
-  /* 4.5:1+ against --color-surface (FR-027) */
-  --color-on-surface: #1c1b1f;
-  --color-on-surface-variant: #49454f;
-
+  /* ---- Status ---- */
   --color-error: #b3261e;
-  --color-error-container: #f9dedc;
-  --color-on-error-container: #410e0b;
+  --color-error-container: #fdecea;
+  --color-on-error-container: #8c1d18;
   --color-success: #1b5e20;
+  --color-success-container: #e6f0e6;
 
-  /* Per-feeling accents — identical to Feeling.dotColor() on Android */
-  --feeling-happy: #4caf50;
-  --feeling-excited: #ffc107;
-  --feeling-neutral: #9e9e9e;
-  --feeling-sleepy: #64b5f6;
-  --feeling-exhausted: #7986cb;
-  --feeling-stressed: #ff7043;
-  --feeling-sad: #5c6bc0;
-  --feeling-depressed: #616161;
+  /*
+   * ---- Per-feeling accents ----
+   * Same eight hue families as Android, darkened for a light page: every one of these clears 4.5:1
+   * on white, so the identical token can tint a dot, a rail and a text label without a second
+   * variant. `CalendarGrid.feelingDotStyle` reads these by key, so the names are load-bearing.
+   */
+  --feeling-happy: #2e7d32;
+  --feeling-excited: #8a5a12;
+  --feeling-neutral: #5f5f5f;
+  --feeling-sleepy: #1565a6;
+  --feeling-exhausted: #4a54a8;
+  --feeling-stressed: #b3441a;
+  --feeling-sad: #3f4ba8;
+  --feeling-depressed: #4a4a4a;
 
-  /* Type scale mirroring Type.kt */
+  /* ---- Type ----
+   * A serif for the things a person reads (headings, their own diary prose) and a sans for the
+   * things they operate (nav, buttons, labels, numbers). The serif stack leads with faces that are
+   * actually installed rather than with a generic `serif`, which resolves to Times on most systems.
+   */
+  --font-serif:
+    'Iowan Old Style', 'Palatino Linotype', Palatino, Charter, 'Bitstream Charter', Georgia,
+    'Times New Roman', serif;
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --text-headline-size: 1.625rem; /* 26sp */
-  --text-headline-line: 2rem;
-  --text-title-lg-size: 1.375rem; /* 22sp */
-  --text-title-lg-line: 1.75rem;
-  --text-title-md-size: 1rem; /* 16sp */
-  --text-body-lg-size: 1.0625rem; /* 17sp — the composer's writing size */
-  --text-body-lg-line: 1.625rem;
-  --text-body-md-size: 0.875rem;
-  --text-label-size: 0.875rem;
+  --font-numeric: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
+  /* A 1.2-ish modular scale. Body sits at 17px: this app's core act is reading prose. */
+  --text-display-size: 2.25rem;
+  --text-headline-size: 1.75rem;
+  --text-headline-line: 1.25;
+  --text-title-lg-size: 1.3125rem;
+  --text-title-lg-line: 1.35;
+  --text-title-md-size: 1.0625rem;
+  --text-body-lg-size: 1.0625rem;
+  --text-body-lg-line: 1.65;
+  --text-body-md-size: 0.9375rem;
+  --text-label-size: 0.875rem;
+  --text-micro-size: 0.75rem;
+
+  /* Small caps-ish eyebrow labels ("TODAY", "3 ENTRIES") lean on tracking, not size. */
+  --tracking-eyebrow: 0.08em;
+  --tracking-tight: -0.011em;
+
+  /* ---- Space: 4px base ---- */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
   --space-5: 1.5rem;
   --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 20px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
   --radius-full: 999px;
 
-  --shadow-1: 0 1px 3px rgb(0 0 0 / 12%);
-  --shadow-2: 0 4px 12px rgb(0 0 0 / 10%);
+  /* Warm-tinted rather than neutral black, so shadows sit on paper instead of over it. */
+  --shadow-1: 0 1px 2px rgb(60 42 20 / 6%), 0 1px 3px rgb(60 42 20 / 4%);
+  --shadow-2: 0 2px 4px rgb(60 42 20 / 6%), 0 8px 20px rgb(60 42 20 / 8%);
 
   --focus-ring-width: 3px;
-  --focus-ring-color: #6750a4;
+  --focus-ring-color: #92400e;
   --focus-ring-offset: 2px;
 
   --motion-fast: 120ms;
   --motion-base: 200ms;
   --easing-standard: cubic-bezier(0.2, 0, 0, 1);
 
-  --layout-max-width: 46rem;
+  /* ~68 characters of body prose — the readable measure, not an arbitrary container. */
+  --layout-max-width: 44rem;
+  --layout-wide-width: 60rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-primary: #d0bcff;
-    --color-primary-container: #4f378a;
-    --color-on-primary: #371e73;
-    --color-secondary: #ccc2dc;
-    --color-tertiary: #efb8c8;
+    --color-surface: #17130f;
+    --color-surface-container: #211b15;
+    --color-surface-variant: #2a231b;
+    --color-surface-overlay: #1c1712;
 
-    --color-surface: #141218;
-    --color-surface-variant: #211f26;
-    --color-surface-container: #1d1b20;
-    --color-outline: #938f99;
-    --color-outline-variant: #49454f;
+    --color-on-surface: #f2eae0;
+    --color-on-surface-variant: #bcab98;
 
-    --color-on-surface: #e6e0e9;
-    --color-on-surface-variant: #cac4d0;
+    --color-primary: #e8a857;
+    --color-primary-hover: #f0b970;
+    --color-on-primary: #231c14;
+    --color-primary-container: #3a2a17;
+    --color-accent: #a5b4fc;
+    --color-accent-container: #262647;
+
+    --color-outline: #7e6c58;
+    --color-hairline: #3f342b;
 
     --color-error: #f2b8b5;
-    --color-error-container: #8c1d18;
+    --color-error-container: #48211f;
     --color-on-error-container: #f9dedc;
     --color-success: #a5d6a7;
+    --color-success-container: #1e2e1f;
 
-    --focus-ring-color: #d0bcff;
-    --shadow-1: 0 1px 3px rgb(0 0 0 / 40%);
-    --shadow-2: 0 4px 12px rgb(0 0 0 / 35%);
+    /* Lightened counterparts: each clears 4.5:1 on the dark card. */
+    --feeling-happy: #7cc47f;
+    --feeling-excited: #e8b33c;
+    --feeling-neutral: #b4a99b;
+    --feeling-sleepy: #7fc0f0;
+    --feeling-exhausted: #a3abe8;
+    --feeling-stressed: #ff9e70;
+    --feeling-sad: #93a0ec;
+    --feeling-depressed: #b0a79c;
+
+    --focus-ring-color: #e8a857;
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-2: 0 2px 4px rgb(0 0 0 / 30%), 0 8px 20px rgb(0 0 0 / 35%);
   }
 }

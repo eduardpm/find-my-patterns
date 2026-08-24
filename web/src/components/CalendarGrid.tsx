@@ -44,6 +44,19 @@ function dayOfMonth(isoDate: string): number {
   return Number(isoDate.slice(8, 10));
 }
 
+/**
+ * Today, as a local `YYYY-MM-DD`.
+ *
+ * Local rather than UTC because "today" on a calendar is a local-calendar question — the same
+ * reason `MonthlyCalendarScreen.currentMonth` works this way. Compared as strings so the day cells,
+ * which arrive as ISO dates, never have to become Date objects and pick up a timezone shift.
+ */
+function todayIso(): string {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
 /** 0 = Monday … 6 = Sunday. Parsed as UTC so the local timezone can't move the date. */
 function mondayFirstWeekday(isoDate: string): number {
   const parsed = new Date(`${isoDate}T00:00:00Z`);
@@ -78,6 +91,7 @@ export function monthLabel(month: string): string {
  */
 export function CalendarGrid({ month, days }: Props) {
   const label = monthLabel(month);
+  const today = todayIso();
 
   if (days.length === 0) {
     return <p className="muted">No days to show for {label}.</p>;
@@ -111,7 +125,7 @@ export function CalendarGrid({ month, days }: Props) {
           <tr key={weekIndex}>
             {week.map((day, dayIndex) =>
               day ? (
-                <DayCell key={day.date} day={day} month={label} />
+                <DayCell key={day.date} day={day} month={label} isToday={day.date === today} />
               ) : (
                 <td key={`blank-${weekIndex}-${dayIndex}`} className="calendar-day--outside" />
               ),
@@ -123,15 +137,19 @@ export function CalendarGrid({ month, days }: Props) {
   );
 }
 
-function DayCell({ day, month }: { day: MonthlyDay; month: string }) {
+function DayCell({ day, month, isToday }: { day: MonthlyDay; month: string; isToday: boolean }) {
   const logged = day.feelings.length > 0;
   const number = dayOfMonth(day.date);
-  const description = logged
-    ? `${number} ${month}: ${day.feelings.map(feelingLabel).join(', ')}`
-    : `${number} ${month}: no entries`;
+  const feelings = logged ? day.feelings.map(feelingLabel).join(', ') : 'no entries';
+  // "Today" leads, because that is the thing a reader scanning the grid is looking for.
+  const description = `${isToday ? 'Today, ' : ''}${number} ${month}: ${feelings}`;
 
   return (
-    <td className={`calendar-day ${logged ? 'calendar-day--logged' : 'calendar-day--empty'}`}>
+    <td
+      className={`calendar-day ${logged ? 'calendar-day--logged' : 'calendar-day--empty'}${
+        isToday ? ' calendar-day--today' : ''
+      }`}
+    >
       {/* The hidden label carries the whole cell, so the visible parts are hidden from AT to
           avoid the day number being announced twice. */}
       <span className="visually-hidden">{description}</span>

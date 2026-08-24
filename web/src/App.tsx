@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Icon } from './components/Icon';
 import { EntryComposer } from './screens/EntryComposer';
 import { EntryDetailScreen } from './screens/EntryDetailScreen';
 import { InsightsScreen } from './screens/InsightsScreen';
@@ -27,6 +28,7 @@ const NAV = [
 
 export default function App() {
   const [authEnabled, setAuthEnabled] = useState(false);
+  const { pathname } = useLocation();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -45,8 +47,12 @@ export default function App() {
       </a>
 
       <nav className="app-nav" aria-label="Main">
+        {/* Decorative: the nav's own accessible name comes from aria-label above. */}
         <span className="app-brand" aria-hidden="true">
-          <span className="app-brand__mark">✦</span> Mood diary
+          <span className="app-brand__mark">
+            <Icon name="book" size="1.25em" />
+          </span>
+          <span className="app-brand__text">Mood diary</span>
         </span>
         {NAV.map(({ to, label }) => (
           <NavLink key={to} to={to}>
@@ -60,7 +66,15 @@ export default function App() {
         )}
       </nav>
 
-      <main className="app-main" id="main">
+      {/*
+        The calendar is a seven-column grid rather than prose, so it gets the wider container. Every
+        other screen stays at the reading measure — a diary entry stretched across a monitor is
+        harder to read, not easier.
+      */}
+      <main
+        className={`app-main${pathname.startsWith('/app/calendar') ? ' app-main--wide' : ''}`}
+        id="main"
+      >
         <Routes>
           <Route path="/" element={<Navigate to="/app/today" replace />} />
           <Route path="/app" element={<Navigate to="/app/today" replace />} />
@@ -88,10 +102,15 @@ function ScrollToTop() {
 
 function NotFound() {
   return (
-    <div className="stack">
-      <h1>Not found</h1>
-      <p className="muted">That page doesn&apos;t exist.</p>
-      <NavLink to="/app/today">Back to today</NavLink>
+    <div className="empty-state">
+      <span className="empty-state__icon">
+        <Icon name="warning" size="1.5rem" />
+      </span>
+      <h1 className="empty-state__title">Not found</h1>
+      <p>That page doesn&apos;t exist. It may have been a link to an entry that has since gone.</p>
+      <NavLink to="/app/today" className="btn btn--secondary">
+        Back to today
+      </NavLink>
     </div>
   );
 }

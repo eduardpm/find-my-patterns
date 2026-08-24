@@ -6,6 +6,7 @@ import { ConflictView } from './ConflictScreen';
 import { fetchFeelings } from '../api/feelings';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { FeelingChips } from '../components/FeelingChips';
+import { Icon } from '../components/Icon';
 import type { Entry, Feeling } from '../domain/types';
 import { useRefreshable } from '../hooks/useRefreshable';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
@@ -114,12 +115,18 @@ export function EntryDetailScreen() {
     );
   }
 
-  if (loaded.loading) return <p className="muted">Loading…</p>;
+  if (loaded.loading)
+    return (
+      <p className="muted" role="status">
+        Loading…
+      </p>
+    );
   if (!entry) {
     return (
       <div className="stack">
         <ErrorBanner failure={loaded.failure} onRetry={loaded.refresh} />
-        <button type="button" className="btn btn--text" onClick={() => navigate('/app/today')}>
+        <button type="button" className="btn btn--secondary" onClick={() => navigate('/app/today')}>
+          <Icon name="chevronLeft" />
           Back to today
         </button>
       </div>
@@ -127,11 +134,15 @@ export function EntryDetailScreen() {
   }
 
   return (
-    <div className="stack">
-      <div className="app-header">
-        <h1>Entry</h1>
-        <span className="muted">{new Date(entry.created_at).toLocaleString()}</span>
-      </div>
+    <div className="stack stack--loose">
+      <header className="page-header">
+        <div className="page-header__titles">
+          <span className="page-header__eyebrow">
+            {new Date(entry.created_at).toLocaleString()}
+          </span>
+          <h1>Entry</h1>
+        </div>
+      </header>
 
       <ErrorBanner failure={failure} />
 
@@ -152,7 +163,12 @@ export function EntryDetailScreen() {
         onSelect={setFeelingKey}
       />
 
-      <div className="row">
+      {/*
+        Delete is pushed to the opposite end of the row rather than sat third in a line of three.
+        It is the one irreversible control on the screen, and putting it next to "Cancel" — which
+        the hand reaches for to *avoid* changing anything — is how a diary entry gets lost.
+      */}
+      <div className="composer-actions">
         <button
           type="button"
           className="btn"
@@ -160,6 +176,7 @@ export function EntryDetailScreen() {
           disabled={!dirty || saving}
         >
           {saving ? 'Saving…' : 'Save changes'}
+          {!saving && <Icon name="check" />}
         </button>
         <button
           type="button"
@@ -170,7 +187,12 @@ export function EntryDetailScreen() {
         >
           Cancel
         </button>
-        <button type="button" className="btn btn--danger" onClick={handleDelete}>
+        <button
+          type="button"
+          className="btn btn--danger composer-actions__aside"
+          onClick={handleDelete}
+        >
+          <Icon name="trash" />
           Delete
         </button>
       </div>

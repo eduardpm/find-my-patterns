@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { GuidedAnswerInput, GuidingQuestion } from '../domain/types';
 import { AudioAnswerRecorder } from '../components/AudioAnswerRecorder';
+import { Icon } from '../components/Icon';
 
 /**
  * Decides which prompts to show for the text written so far.
@@ -109,8 +110,12 @@ export function GuidedQuestionFlow({
 
   if (!current) {
     return (
-      <div className="stack">
-        <p className="muted">No guiding questions are available right now.</p>
+      <div className="empty-state">
+        <span className="empty-state__icon">
+          <Icon name="spark" size="1.5rem" />
+        </span>
+        <p className="empty-state__title">No prompts available</p>
+        <p>The question library came back empty, so this one is a blank page after all.</p>
         <button type="button" className="btn" onClick={onSkip}>
           Just write freely
         </button>
@@ -120,9 +125,34 @@ export function GuidedQuestionFlow({
 
   return (
     <div className="stack">
-      <p className="guided-progress" aria-live="polite">
-        Question {index + 1} of {prompts.length}
-      </p>
+      {/*
+        The prompt list grows as the user writes — mentioning a drink pulls in the drink prompt — so
+        the visible track is drawn as one segment per prompt rather than as a filling bar. A bar
+        would appear to slide backwards the moment the denominator rose, which would read as lost
+        progress. Only the sentence is announced; the segments are decoration on top of it.
+      */}
+      <div className="composer-progress">
+        <p className="composer-progress__label">
+          <span aria-live="polite">
+            Question {index + 1} of {prompts.length}
+          </span>
+          <span>{isLast ? 'Last one' : `${prompts.length - index - 1} to go`}</span>
+        </p>
+        <div className="composer-progress__track" aria-hidden="true">
+          {prompts.map((prompt, i) => (
+            <span
+              key={prompt.key}
+              className={`composer-progress__step${
+                i < index
+                  ? ' composer-progress__step--done'
+                  : i === index
+                    ? ' composer-progress__step--current'
+                    : ''
+              }`}
+            />
+          ))}
+        </div>
+      </div>
 
       <label className="guided-prompt" htmlFor="guided-answer">
         {current.prompt_text}
@@ -161,7 +191,12 @@ export function GuidedQuestionFlow({
         </p>
       )}
 
-      <div className="row">
+      {/*
+        The two actions are not peers — one advances the flow, the other abandons it — so "skip" is
+        pushed to the far side rather than sat next to the primary button where a fast hand would
+        reach it by momentum.
+      */}
+      <div className="composer-actions">
         <button
           type="button"
           className="btn"
@@ -169,10 +204,11 @@ export function GuidedQuestionFlow({
           disabled={!draft.trim() || busy || audioBusy || audioPending || savingAnswer}
         >
           {busy || savingAnswer ? 'Saving…' : isLast ? 'Done' : 'Next'}
+          {!busy && !savingAnswer && <Icon name={isLast ? 'check' : 'chevronRight'} />}
         </button>
         <button
           type="button"
-          className="btn btn--text"
+          className="btn btn--text composer-actions__aside"
           onClick={onSkip}
           disabled={busy || audioBusy || audioPending || savingAnswer}
         >
