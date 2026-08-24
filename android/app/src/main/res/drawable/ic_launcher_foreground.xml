@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple "open notebook with lines of text" glyph, kept within the adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,22 L76,22 L76,86 L32,86 Z" />
+    <path
+        android:fillColor="#6750A4"
+        android:pathData="M40,34 L68,34 L68,38 L40,38 Z" />
+    <path
+        android:fillColor="#6750A4"
+        android:pathData="M40,46 L68,46 L68,50 L40,50 Z" />
+    <path
+        android:fillColor="#6750A4"
+        android:pathData="M40,58 L60,58 L60,62 L40,62 Z" />
+</vector>

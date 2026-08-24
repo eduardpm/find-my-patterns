@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mood Pattern Diary</string>
+
+    <string name="reminder_channel_name">Diary check-ins</string>
+    <string name="reminder_channel_description">Prompts to log a diary entry at 9:00, 12:00, 18:00 and 21:00</string>
+    <string name="reminder_notification_title">Time to check in</string>
+    <string name="reminder_notification_body">How are you doing right now? Log a quick entry.</string>
+</resources>

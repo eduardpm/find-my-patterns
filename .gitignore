@@ -1,0 +1,14 @@
+# Personal diary data and backups must never enter source control.
+data/*.db
+data/*.db-*
+backups/
+db-data/
+
+# Local state
+.env*
+*.log
+.DS_Store
+
+# Locally built speech-to-text runtime and downloaded model (large, reproducible artifacts)
+models/*.bin
+tools/whisper/

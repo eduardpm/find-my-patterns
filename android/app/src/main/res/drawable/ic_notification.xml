@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Status-bar notification icon: must be a flat white silhouette on a transparent background
+  (the system tints it), per Android notification-icon guidelines.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M6,3 L18,3 C18.55,3 19,3.45 19,4 L19,20 C19,20.55 18.55,21 18,21 L6,21 C5.45,21 5,20.55 5,20 L5,4 C5,3.45 5.45,3 6,3 Z M8,7 L16,7 L16,9 L8,9 Z M8,11 L16,11 L16,13 L8,13 Z M8,15 L13,15 L13,17 L8,17 Z" />
+</vector>

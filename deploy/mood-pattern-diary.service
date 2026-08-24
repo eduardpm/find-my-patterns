@@ -1,0 +1,28 @@
+[Unit]
+Description=Mood Pattern Diary web application
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/epalk/projects/diary-website/backend
+EnvironmentFile=/home/epalk/.config/mood-pattern-diary/service.env
+Environment=PATH=/home/epalk/.windsurf-server/bin/c855b1fa42fce019aedb4b06e6faa69d65ac7fd3:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/epalk/.windsurf-server/bin/c855b1fa42fce019aedb4b06e6faa69d65ac7fd3/node /home/epalk/projects/diary-website/backend/dist/main.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+UMask=0077
+
+# Limit what a compromised web process can modify or ask the kernel to do.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/epalk/projects/diary-website/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target

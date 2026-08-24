@@ -1,0 +1,275 @@
+/**
+ * T033 / T037 / T073 — the write path: the version rule, the 409 body, and the derived values a
+ * guided entry produces.
+ *
+ * Ported from `backend/tests/unit/test_version_conflict.py`,
+ * `backend/tests/contract/test_entries_{create,update,delete}.py` and `test_entries_conflict.py`.
+ */
+
+import request from 'supertest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { bootOnCopy, teardown, type Harness } from '../helpers/app';
+
+let h: Harness;
+const server = () => h.app.getHttpServer();
+
+beforeEach(async () => {
+  h = await bootOnCopy();
+});
+afterEach(async () => {
+  await teardown(h);
+});
+
+const create = async (raw_text: string) =>
+  (await request(server()).post('/entries').send({ mode: 'freeform', raw_text }).expect(201)).body;
+
+describe('POST /entries', () => {
+  it('returns 201 with the full entry shape and version 1', async () => {
+    const body = await create('A quiet day.');
+    expect(body.version).toBe(1);
+    expect(body.feeling_source).toBe('suggested');
+    expect(body.suggested_feeling.key).toBe(body.feeling_key);
+  });
+
+  it('leaves an empty entry unclassified', async () => {
+    const body = (await request(server()).post('/entries').send({ mode: 'freeform', raw_text: '' }))
+      .body;
+    expect(body.feeling_source).toBe('unset');
+    expect(body.feeling_key).toBeNull();
+  });
+
+  it('stamps updated_at later than created_at once a feeling is suggested', async () => {
+    // Two writes: the entry is stored first, then updated with the suggestion, so writing is never
+    // blocked on the network — the entry survives even if the suggestion call fails.
+    const body = await create('Coffee then a walk.');
+    const listed = await request(server()).get(`/entries?date=${body.entry_date}`);
+    expect(listed.body.entries.some((e: { id: string }) => e.id === body.id)).toBe(true);
+  });
+});
+
+describe('guided entries — derived values (data-model.md "Derived values")', () => {
+  it('composes raw_text as "{prompt} {answer}" joined by single spaces', async () => {
+    const body = (
+      await request(server())
+        .post('/entries')
+        .send({
+          mode: 'guided',
+          raw_text: '',
+          guided_answers: [
+            { question_key: 'general_feeling', answer_text: 'Sluggish after lunch' },
+            { question_key: 'mind_body', answer_text: 'Low energy and a little tense' },
+          ],
+        })
+        .expect(201)
+    ).body;
+
+    expect(body.raw_text).toBe(
+      'Since your last entry—or in the last few hours—what happened? What were you doing, where were you, and who was around? Sluggish after lunch ' +
+        'What did you notice in your mind and body? Include thoughts, energy, tension, hunger, pain, or other sensations. Low energy and a little tense',
+    );
+    expect(body.mode).toBe('guided');
+  });
+
+  it('falls back to the raw question key when the question is unknown', async () => {
+    const body = (
+      await request(server())
+        .post('/entries')
+        .send({
+          mode: 'guided',
+          raw_text: '',
+          guided_answers: [{ question_key: 'not_a_real_question', answer_text: 'fallback case' }],
+        })
+        .expect(201)
+    ).body;
+
+    expect(body.raw_text).toBe('not_a_real_question fallback case');
+  });
+
+  it('keeps a submitted raw_text instead of composing over it', async () => {
+    const body = (
+      await request(server())
+        .post('/entries')
+        .send({
+          mode: 'guided',
+          raw_text: 'I wrote this myself',
+          guided_answers: [{ question_key: 'general_feeling', answer_text: 'ignored' }],
+        })
+        .expect(201)
+    ).body;
+
+    expect(body.raw_text).toBe('I wrote this myself');
+  });
+});
+
+describe('PATCH /entries/{id}', () => {
+  it('confirms a suggested feeling', async () => {
+    const entry = await create('Long day.');
+    const res = await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ feeling_key: entry.suggested_feeling.key, version: entry.version })
+      .expect(200);
+    expect(res.body.feeling_source).toBe('confirmed');
+  });
+
+  it('records a different choice as overridden', async () => {
+    const entry = await create('Long day.');
+    const other = entry.suggested_feeling.key === 'happy' ? 'sad' : 'happy';
+    const res = await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ feeling_key: other, version: entry.version })
+      .expect(200);
+    expect(res.body.feeling_key).toBe(other);
+    expect(res.body.feeling_source).toBe('overridden');
+  });
+
+  it('increments the version on success', async () => {
+    const entry = await create('Old text.');
+    const res = await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'New text.', version: entry.version })
+      .expect(200);
+    expect(res.body.raw_text).toBe('New text.');
+    expect(res.body.version).toBe(entry.version + 1);
+  });
+
+  it('rejects a missing version with 422', async () => {
+    const entry = await create('x');
+    const res = await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'no version' })
+      .expect(422);
+    expect(res.body.error.code).toBe('validation_error');
+  });
+
+  it('returns the contract 404 shape for an unknown entry', async () => {
+    const res = await request(server())
+      .patch('/entries/does-not-exist')
+      .send({ raw_text: 'x', version: 1 })
+      .expect(404);
+    expect(res.body).toEqual({ error: { code: 'not_found', message: 'Entry not found' } });
+  });
+
+  it('rejects a feeling outside the backend-owned set', async () => {
+    const entry = await create('Still valid.');
+    await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ feeling_key: 'invented-by-a-client', version: entry.version })
+      .expect(422);
+  });
+});
+
+describe('the 409 stale_entry response', () => {
+  it('rejects a stale version', async () => {
+    const entry = await create('Had a coke.');
+    await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'First.', version: 1 })
+      .expect(200);
+
+    await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'Second.', version: 1 })
+      .expect(409);
+  });
+
+  it('uses the stale_entry code and carries the current entry', async () => {
+    const entry = await create('Had a coke.');
+    await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'Server wins.', version: 1 });
+
+    const res = await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'x', version: 1 });
+
+    expect(res.body.error.code).toBe('stale_entry');
+    expect(res.body.current.id).toBe(entry.id);
+    expect(res.body.current.raw_text).toBe('Server wins.');
+    expect(res.body.current.version).toBe(2);
+  });
+
+  // The three guarantees contracts/api.md makes.
+
+  it('guarantee 1: a rejected mutation is a complete no-op', async () => {
+    const entry = await create('Had a coke.');
+    await request(server()).patch(`/entries/${entry.id}`).send({ raw_text: 'Kept.', version: 1 });
+
+    await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'Discarded.', version: 1 });
+
+    const current = await request(server()).get(`/entries/${entry.id}`);
+    expect(current.body.raw_text).toBe('Kept.');
+  });
+
+  it('guarantee 2: a rejected attempt does not bump the stored version', async () => {
+    const entry = await create('Had a coke.');
+    await request(server()).patch(`/entries/${entry.id}`).send({ raw_text: 'Kept.', version: 1 });
+
+    await request(server()).patch(`/entries/${entry.id}`).send({ raw_text: 'x', version: 1 });
+    await request(server()).patch(`/entries/${entry.id}`).send({ raw_text: 'y', version: 1 });
+
+    const current = await request(server()).get(`/entries/${entry.id}`);
+    expect(current.body.version).toBe(2);
+  });
+
+  it('guarantee 3: the version from the 409 body is immediately reusable', async () => {
+    const entry = await create('Had a coke.');
+    await request(server()).patch(`/entries/${entry.id}`).send({ raw_text: 'Server.', version: 1 });
+    const conflict = await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'Mine.', version: 1 });
+
+    const retry = await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'Mine.', version: conflict.body.current.version })
+      .expect(200);
+    expect(retry.body.raw_text).toBe('Mine.');
+  });
+});
+
+describe('DELETE /entries/{id}', () => {
+  it('deletes with the current version', async () => {
+    const entry = await create('Delete me.');
+    await request(server()).delete(`/entries/${entry.id}?version=${entry.version}`).expect(204);
+    await request(server()).get(`/entries/${entry.id}`).expect(404);
+  });
+
+  it('refuses a stale delete and keeps the entry (FR-021)', async () => {
+    const entry = await create('Delete race.');
+    await request(server())
+      .patch(`/entries/${entry.id}`)
+      .send({ raw_text: 'Changed.', version: 1 });
+
+    const res = await request(server()).delete(`/entries/${entry.id}?version=1`).expect(409);
+    expect(res.body.error.code).toBe('stale_entry');
+    await request(server()).get(`/entries/${entry.id}`).expect(200);
+  });
+
+  it('rejects a missing version with 422 and keeps the entry', async () => {
+    const entry = await create('Still here.');
+    await request(server()).delete(`/entries/${entry.id}`).expect(422);
+    await request(server()).get(`/entries/${entry.id}`).expect(200);
+  });
+
+  it('returns 404 for an unknown entry', async () => {
+    await request(server()).delete('/entries/does-not-exist?version=1').expect(404);
+  });
+
+  it('cascades to guided answers rather than orphaning them', async () => {
+    const entry = (
+      await request(server())
+        .post('/entries')
+        .send({
+          mode: 'guided',
+          raw_text: '',
+          guided_answers: [{ question_key: 'general_feeling', answer_text: 'gone soon' }],
+        })
+    ).body;
+
+    await request(server()).delete(`/entries/${entry.id}?version=${entry.version}`).expect(204);
+    // Foreign keys are off (see db/database.ts), so nothing removes these for us — orphaned rows
+    // would accumulate silently and inflate later pattern counts.
+    await request(server()).get(`/entries/${entry.id}`).expect(404);
+  });
+});

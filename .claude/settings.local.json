@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /home/epalk/projects/diary-website/specs/002-mood-pattern-diary-mobile/checklists)",
+      "Bash(sh .specify/scripts/bash/setup-plan.sh --json)",
+      "Bash(bash .specify/scripts/bash/setup-plan.sh --json)",
+      "Bash(bash .specify/scripts/bash/setup-tasks.sh --json)",
+      "Bash(uv venv *)",
+      "Bash(uv pip *)",
+      "Bash(.venv/bin/python -c ' *)"
+    ]
+  }
+}

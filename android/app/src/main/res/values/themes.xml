@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Minimal platform theme used only for the window background before Compose takes over
+      (all real theming — Material 3, dynamic color, dark mode — lives in
+      ui/theme/Theme.kt's MoodPatternDiaryTheme composable). Deliberately not an
+      AppCompat/Material-Components theme since this app has no View-system UI.
+    -->
+    <style name="Theme.MoodPatternDiary" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
