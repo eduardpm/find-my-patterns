@@ -46,6 +46,11 @@ abstract final class AppConfig {
   /// The pattern echo attached to one entry.
   static String entryEchoPath(String entryId) => '${entryPath(entryId)}/echo';
 
+  /// One entry's topic↔feeling pairing set (E-1a/E-1c): `PUT` replaces it
+  /// whole.
+  static String entryTopicFeelingsPath(String entryId) =>
+      '${entryPath(entryId)}/topic-feelings';
+
   /// The feeling vocabulary the composer offers.
   static const String feelingsPath = '/feelings';
 

@@ -20,6 +20,7 @@ import '../../core/widgets/pattern_echo_panel.dart';
 import 'entry_composer_controller.dart';
 import 'first_pattern_card.dart';
 import 'guided_question_flow.dart';
+import 'pairing_step.dart';
 import 'voice_answer_recorder.dart';
 
 /// The time-of-day shown in the restored-draft notice, e.g. "11:32 PM".
@@ -29,13 +30,15 @@ final DateFormat _draftTimeFormat = DateFormat.jm();
 /// August 26".
 final DateFormat _targetDateFormat = DateFormat('EEEE, MMMM d');
 
-/// The entry composer: a four-stage flow for writing a diary entry, from
-/// the first prompt to the confirmed feeling and any pattern the diary
-/// already has to say about it.
+/// The entry composer: a flow for writing a diary entry, from the first
+/// prompt to the confirmed feeling and any pattern the diary already has to
+/// say about it.
 ///
-/// The stages are [GuidedStage], [FreeformStage], [ConfirmFeelingStage] and
-/// [EchoStage] — see `entry_composer_controller.dart`'s [ComposerStage] for
-/// what each means and why they are ordered the way they are.
+/// The stages are [GuidedStage], [FreeformStage], [ConfirmFeelingStage],
+/// [PairingStage] and [EchoStage] — see `entry_composer_controller.dart`'s
+/// [ComposerStage] for what each means and why they are ordered the way
+/// they are. [PairingStage] is conditional (E-1c): most entries go straight
+/// from [ConfirmFeelingStage] to [EchoStage], exactly as before it existed.
 class EntryComposerScreen extends ConsumerWidget {
   /// Builds the composer. [onDone] and [onCancel] default to popping this
   /// screen off the navigation stack; a caller that needs to route
@@ -209,6 +212,23 @@ class EntryComposerScreen extends ConsumerWidget {
                             version: entry.version,
                             feelings: feelings,
                             intensities: intensities,
+                          );
+                          if (finished) done();
+                        },
+                      ),
+                      PairingStage(:final entry) => PairingStep(
+                        entry: entry,
+                        isSaving: state.isSaving,
+                        onConfirm: (pairings) async {
+                          final finished = await controller.confirmPairing(
+                            entryId: entry.id,
+                            pairings: pairings,
+                          );
+                          if (finished) done();
+                        },
+                        onSkip: () async {
+                          final finished = await controller.skipPairing(
+                            entry.id,
                           );
                           if (finished) done();
                         },

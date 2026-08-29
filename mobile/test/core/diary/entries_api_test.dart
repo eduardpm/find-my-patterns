@@ -474,4 +474,60 @@ void main() {
       expect(result, isA<EntryOutOfDate>());
     });
   });
+
+  group('setTopicFeelings', () {
+    test('PUTs the pairing set, carrying no source and no version', () async {
+      final env = apiFor([FakeReply(200, body: entryJson())]);
+      final entry = await env.api.setTopicFeelings(
+        id: 'entry-1',
+        pairings: const [
+          (topicId: 'topic-1', feelingKey: 'sad'),
+          (topicId: 'topic-2', feelingKey: 'happy'),
+        ],
+      );
+
+      expect(entry.id, 'entry-1');
+      final request = env.adapter.requests.last;
+      expect(request.method, 'PUT');
+      expect(request.path, '/entries/entry-1/topic-feelings');
+      expect(request.data, {
+        'pairings': [
+          {'topic_id': 'topic-1', 'feeling_key': 'sad'},
+          {'topic_id': 'topic-2', 'feeling_key': 'happy'},
+        ],
+      });
+    });
+
+    test(
+      'an empty pairings list is still sent as an empty array -- callers '
+      'decide what that means; see the method doc for why a genuine skip '
+      'must never call this at all',
+      () async {
+        final env = apiFor([FakeReply(200, body: entryJson())]);
+        await env.api.setTopicFeelings(id: 'entry-1', pairings: const []);
+
+        expect(env.adapter.requests.last.data, {'pairings': <Object?>[]});
+      },
+    );
+
+    test(
+      'a 422 (the backend\'s InvalidPairingError) surfaces as an HttpFailure',
+      () async {
+        final env = apiFor([
+          FakeReply(
+            422,
+            body: {'error': 'Topic is not on this entry: topic-9'},
+          ),
+        ]);
+
+        expect(
+          () => env.api.setTopicFeelings(
+            id: 'entry-1',
+            pairings: const [(topicId: 'topic-9', feelingKey: 'sad')],
+          ),
+          throwsA(isA<HttpFailure>()),
+        );
+      },
+    );
+  });
 }

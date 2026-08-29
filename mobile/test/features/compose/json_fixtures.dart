@@ -99,6 +99,8 @@ Map<String, Object?> entryJson({
   String rawText = 'a day',
   List<Map<String, Object?>>? suggestedFeelings,
   bool analysisPending = false,
+  List<Map<String, Object?>>? topics,
+  List<Map<String, Object?>>? topicFeelings,
 }) => {
   'id': id,
   'created_at': '2026-07-28T13:05:00',
@@ -111,6 +113,29 @@ Map<String, Object?> entryJson({
   'version': version,
   'analysis_pending': analysisPending,
   'suggested_feelings': ?suggestedFeelings,
+  'topics': ?topics,
+  'topic_feelings': ?topicFeelings,
+};
+
+/// One topic DTO, nested under an entry's `topics` (#81).
+Map<String, Object?> topicJson({
+  String id = 'topic-1',
+  String name = 'exercise',
+}) => {'id': id, 'name': name};
+
+/// One topic-feeling pairing DTO, nested under an entry's `topic_feelings`
+/// (E-1a) -- the analyser's suggestion by default (`source: 'suggested'`),
+/// which is what a freshly-saved, not-yet-paired entry carries.
+Map<String, Object?> topicFeelingJson({
+  String topicId = 'topic-1',
+  String topic = 'exercise',
+  String feelingKey = 'sad',
+  String source = 'suggested',
+}) => {
+  'topic_id': topicId,
+  'topic': topic,
+  'feeling_key': feelingKey,
+  'source': source,
 };
 
 /// An entry as `POST /entries` returns it the moment analysis is queued and
