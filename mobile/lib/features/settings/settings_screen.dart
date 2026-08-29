@@ -14,6 +14,7 @@ import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_page_wash.dart';
 import '../../core/widgets/server_form.dart';
 import 'appearance_card.dart';
+import 'reminders_card.dart';
 
 /// The shared Settings screen: where the backend is, how the app looks, and
 /// what this app is.
@@ -55,6 +56,8 @@ class SettingsScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: JournalSpacing.x5),
                 const AppearanceCard(),
+                const SizedBox(height: JournalSpacing.x4),
+                const RemindersCard(),
                 const SizedBox(height: JournalSpacing.x4),
                 if (ref.watch(requireAuthProvider)) ...[
                   _Section(

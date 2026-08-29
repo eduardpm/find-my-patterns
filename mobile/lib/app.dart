@@ -9,6 +9,7 @@ import 'core/config/app_config.dart';
 import 'core/config/config_providers.dart';
 import 'core/network/network_providers.dart';
 import 'core/notifications/reminder_providers.dart';
+import 'core/notifications/reminder_schedule.dart';
 import 'core/settings/settings.dart';
 import 'core/settings/settings_controller.dart';
 import 'core/theme/app_theme.dart';
@@ -156,25 +157,33 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
     ref.read(apiClientProvider).configure(settings.backend);
     await ref.read(authProvider.notifier).restore();
     if (!mounted) return;
-    await _armReminders();
+    await _armReminders(settings.reminders);
   }
 
-  /// Sets up the four daily check-in reminders, and asks whether the app was
-  /// launched by tapping one.
+  /// Initialises the reminder plugin, re-arms whichever reminders are
+  /// currently enabled, and asks whether the app was launched by tapping one.
   ///
   /// The order matters: the plugin has to be initialised before a launch tap
-  /// can be read, and the permission is asked for separately from
-  /// initialisation so the prompt appears when the app decides rather than as
-  /// a side effect of starting up.
+  /// can be read.
   ///
-  /// A device that refuses notifications is not an error. The reminders are
-  /// still scheduled and simply show nothing, which is exactly what the
-  /// permission means, so the diary keeps working either way.
-  Future<void> _armReminders() async {
-    final reminders = ref.read(reminderServiceProvider);
-    await reminders.initialize();
-    await reminders.requestPermission();
-    await reminders.scheduleAll();
+  /// This never requests the notification permission itself — that only
+  /// happens when the user turns a reminder on from Settings
+  /// (`RemindersController.save`), not unconditionally on every cold start.
+  /// Rescheduling from the stored settings here is what makes a reminder
+  /// survive the app itself being restarted, alongside the native
+  /// `flutter_local_notifications` boot receivers already declared in the
+  /// Android manifest, which re-arm the same alarms across an actual device
+  /// reboot without this method's help.
+  Future<void> _armReminders(List<ReminderTime> reminders) async {
+    final service = ref.read(reminderServiceProvider);
+    await service.initialize();
+    final slots = [
+      for (final reminder in reminders)
+        if (reminder.enabled) ReminderSlot(reminder.hour, reminder.minute),
+    ];
+    if (slots.isNotEmpty) {
+      await service.scheduleAll(slots: slots);
+    }
     if (!mounted) return;
     await ref.read(openComposerSignalProvider.notifier).checkLaunchTap();
   }

@@ -14,8 +14,9 @@ import 'reminder_schedule.dart';
 ///
 /// Carries [slotId] rather than a [ReminderSlot] itself: the tap is
 /// identified from the notification payload the plugin hands back, which is
-/// a bare string, and a slot lookup is something the app shell can do with
-/// [kReminderTimes] if it ever needs the hour and minute back.
+/// a bare string, and nothing downstream of a tap needs the hour and minute
+/// back — every reminder opens the same composer regardless of which slot
+/// fired it.
 final class const ReminderTap(final int slotId) {
   @override
   bool operator ==(Object other) =>
@@ -28,19 +29,21 @@ final class const ReminderTap(final int slotId) {
   String toString() => 'ReminderTap($slotId)';
 }
 
-/// The channel and notification the four daily reminders are shown under.
+/// The channel and notification the user's reminders are shown under.
 ///
-/// Ported from `ReminderNotifier` (Kotlin) and
-/// `android/app/src/main/res/values/strings.xml`.
+/// Originally ported from `ReminderNotifier` (Kotlin) and
+/// `android/app/src/main/res/values/strings.xml`, back when every device got
+/// the same four fixed times. The copy is deliberately deterministic —
+/// never randomised or personalised — so what fires is exactly what the
+/// unit tests and this constant say it is.
 const String _channelId = 'diary_reminders';
 const String _channelName = 'Diary check-ins';
 const String _channelDescription =
-    'Prompts to log a diary entry at 9:00, 12:00, 18:00 and 21:00';
-const String _notificationTitle = 'Time to check in';
-const String _notificationBody =
-    'How are you doing right now? Log a quick entry.';
+    'Reminders to log a diary entry at the times you choose in Settings.';
+const String _notificationTitle = 'A moment for your diary';
+const String _notificationBody = 'What happened since your last entry?';
 
-/// Schedules and reacts to the four fixed daily check-in reminders.
+/// Schedules and reacts to the user's configured check-in reminders.
 ///
 /// Ported from `ReminderScheduler`, `ReminderNotifier` and
 /// `ReminderReceiver` (Kotlin), collapsed into one class because
@@ -53,6 +56,11 @@ const String _notificationBody =
 /// repeats daily and re-arms itself — including across a reboot, which the
 /// Android manifest's already-declared `flutter_local_notifications`
 /// receivers handle — so there is no manual re-arm loop to port.
+///
+/// The Kotlin app fixed every device to the same four slots; this service
+/// takes whichever slots the caller passes to [scheduleAll], which is how
+/// `RemindersController` (`core/notifications/reminder_settings_controller.dart`)
+/// drives it from the user's own choices in Settings.
 class ReminderService {
   /// Creates a service over [plugin] and [deviceTimeZone].
   ///
@@ -111,6 +119,14 @@ class ReminderService {
   /// alarms; without the permission, nothing is shown for them, mirroring
   /// the Kotlin's `ReminderNotifier.showReminder` early return on a missing
   /// `POST_NOTIFICATIONS` grant.
+  ///
+  /// Call this when the user turns a reminder on, not unconditionally at
+  /// startup — the Android 13+ system dialog it can trigger should appear
+  /// because the user just asked for a reminder, not on every cold start
+  /// regardless of whether any reminder is even enabled. Once the platform
+  /// has already answered, calling again is safe: Android returns the known
+  /// answer without showing the dialog a second time. To check the current
+  /// answer without any risk of a prompt, use [notificationsEnabled].
   Future<bool> requestPermission() async {
     final granted = switch (defaultTargetPlatform) {
       TargetPlatform.android =>
@@ -122,10 +138,36 @@ class ReminderService {
     return granted ?? false;
   }
 
-  /// Schedules all four daily reminders.
-  Future<void> scheduleAll() async {
+  /// Whether this app can currently post notifications, without prompting.
+  ///
+  /// `true` on any platform other than Android, where there is no equivalent
+  /// read-only check and [requestPermission] is the only signal this
+  /// service has — mirroring how [requestPermission] itself treats those
+  /// platforms.
+  Future<bool> notificationsEnabled() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return true;
+    return await plugin.areNotificationsEnabled() ?? true;
+  }
+
+  /// Opens the OS notification-settings screen for this app, for a "grant in
+  /// system settings" link shown once [notificationsEnabled] is `false`.
+  ///
+  /// Returns whether it could be opened. `false` on any platform other than
+  /// Android, where there is nothing to open.
+  Future<bool> openNotificationSettings() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return false;
+    return await plugin.openNotificationSettings() ?? false;
+  }
+
+  /// Schedules every slot in [slots], cancelling nothing first.
+  ///
+  /// The caller decides which slots that is — usually the user's currently
+  /// enabled reminders — and is responsible for calling [cancelAll] first
+  /// when the set of slots has changed, so a removed or disabled reminder's
+  /// old alarm doesn't linger.
+  Future<void> scheduleAll({required List<ReminderSlot> slots}) async {
     final now = DateTime.now();
-    for (final slot in kReminderTimes) {
+    for (final slot in slots) {
       await _scheduleSlot(slot, now);
     }
   }

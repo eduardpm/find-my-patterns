@@ -9,6 +9,16 @@ import 'package:timezone/timezone.dart' as tz;
 import 'fake_device_time_zone.dart';
 import 'fake_notifications_plugin.dart';
 
+/// A representative set of slots to schedule -- the service no longer owns
+/// a fixed list of its own, so tests supply one, standing in for whatever
+/// `RemindersController` would derive from the user's enabled reminders.
+const _testSlots = [
+  ReminderSlot(9, 0),
+  ReminderSlot(12, 0),
+  ReminderSlot(18, 0),
+  ReminderSlot(21, 0),
+];
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -79,13 +89,13 @@ void main() {
   });
 
   group('scheduleAll', () {
-    test('schedules all four slots with a daily time match', () async {
-      await service.scheduleAll();
+    test('schedules every given slot with a daily time match', () async {
+      await service.scheduleAll(slots: _testSlots);
 
-      expect(plugin.scheduledCalls, hasLength(kReminderTimes.length));
+      expect(plugin.scheduledCalls, hasLength(_testSlots.length));
       expect(
         plugin.scheduledCalls.map((call) => call.id).toSet(),
-        kReminderTimes.map((slot) => slot.id).toSet(),
+        _testSlots.map((slot) => slot.id).toSet(),
       );
       for (final call in plugin.scheduledCalls) {
         expect(call.matchDateTimeComponents, DateTimeComponents.time);
@@ -96,16 +106,18 @@ void main() {
       }
     });
 
+    test('schedules nothing for an empty slot list', () async {
+      await service.scheduleAll(slots: const []);
+      expect(plugin.scheduledCalls, isEmpty);
+    });
+
     test('payload identifies which slot the schedule call is for', () async {
-      await service.scheduleAll();
+      await service.scheduleAll(slots: _testSlots);
 
       final payloads = plugin.scheduledCalls
           .map((call) => call.payload)
           .toSet();
-      expect(
-        payloads,
-        kReminderTimes.map((slot) => '${slot.id}').toSet(),
-      );
+      expect(payloads, _testSlots.map((slot) => '${slot.id}').toSet());
     });
 
     test(
@@ -115,15 +127,15 @@ void main() {
           code: 'exact_alarms_not_permitted',
         );
 
-        await service.scheduleAll();
+        await service.scheduleAll(slots: _testSlots);
 
-        expect(plugin.scheduledCalls, hasLength(kReminderTimes.length));
+        expect(plugin.scheduledCalls, hasLength(_testSlots.length));
         expect(
           plugin.scheduledCalls.first.androidScheduleMode,
           AndroidScheduleMode.inexactAllowWhileIdle,
         );
-        // The other three slots were never refused, so they still went out
-        // as exact schedules -- one revoked permission doesn't degrade every
+        // The other slots were never refused, so they still went out as
+        // exact schedules -- one revoked permission doesn't degrade every
         // slot, only the ones that hit it.
         expect(
           plugin.scheduledCalls.skip(1).map((call) => call.androidScheduleMode),
@@ -181,6 +193,48 @@ void main() {
         expect(granted, isFalse);
       },
     );
+  });
+
+  group('notificationsEnabled', () {
+    test('reads the Android answer without prompting', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      plugin.notificationsEnabledResult = false;
+
+      expect(await service.notificationsEnabled(), isFalse);
+    });
+
+    test('reflects a granted Android answer', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      plugin.notificationsEnabledResult = true;
+
+      expect(await service.notificationsEnabled(), isTrue);
+    });
+
+    test('is true on a platform with no equivalent read-only check', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      expect(await service.notificationsEnabled(), isTrue);
+    });
+  });
+
+  group('openNotificationSettings', () {
+    test('opens the Android notification-settings screen', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      plugin.openNotificationSettingsResult = true;
+
+      final opened = await service.openNotificationSettings();
+
+      expect(opened, isTrue);
+      expect(plugin.openNotificationSettingsCallCount, 1);
+    });
+
+    test('reports false rather than throwing off Android', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+
+      final opened = await service.openNotificationSettings();
+
+      expect(opened, isFalse);
+      expect(plugin.openNotificationSettingsCallCount, 0);
+    });
   });
 
   group('launchTap', () {

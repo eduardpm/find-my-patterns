@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
@@ -168,24 +171,82 @@ enum ThemeModeSetting {
       ThemeModeSetting.system;
 }
 
+/// One reminder the user has configured: a wall-clock time, and whether it
+/// is currently armed.
+///
+/// A settings-layer value. [enabled] is what only Settings and the
+/// Reminders card need to know; the schedule computation in
+/// `core/notifications/reminder_schedule.dart` only ever sees the bare
+/// hour and minute, as a `ReminderSlot` built from an enabled entry at the
+/// one call site that schedules it — which is why that type stays free of
+/// an `enabled` flag it would otherwise carry for no reason of its own.
+class const ReminderTime({
+  required final int hour,
+  required final int minute,
+  final bool enabled = false,
+}) {
+  /// The most reminders the Reminders card lets a user keep at once.
+  static const int maxCount = 6;
+
+  /// A copy of this reminder with the given fields replaced.
+  ReminderTime copyWith({int? hour, int? minute, bool? enabled}) =>
+      ReminderTime(
+        hour: hour ?? this.hour,
+        minute: minute ?? this.minute,
+        enabled: enabled ?? this.enabled,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReminderTime &&
+      other.hour == hour &&
+      other.minute == minute &&
+      other.enabled == enabled;
+
+  @override
+  int get hashCode => Object.hash(hour, minute, enabled);
+
+  @override
+  String toString() =>
+      '${hour.toString().padLeft(2, '0')}:'
+      '${minute.toString().padLeft(2, '0')}'
+      '${enabled ? ' (on)' : ' (off)'}';
+}
+
+/// The reminders a fresh install starts with: a morning and an evening
+/// suggestion, both off until the user turns one on.
+///
+/// Echoes two of the old Kotlin app's four fixed slots rather than reviving
+/// all four — a user who wants more adds them from the Reminders card, up
+/// to [ReminderTime.maxCount].
+const List<ReminderTime> kDefaultReminders = [
+  ReminderTime(hour: 9, minute: 0),
+  ReminderTime(hour: 21, minute: 0),
+];
+
 /// Everything this device remembers between runs.
 ///
-/// Deliberately small: where the backend is, and how the app should look.
-/// Nothing here describes the user's data — that lives on the backend.
+/// Where the backend is, how the app should look, and when it should remind
+/// the user to write — device configuration the user chose, never diary
+/// content. Nothing here describes the user's data — that lives on the
+/// backend.
 class const AppSettings({
   final BackendAddress backend = BackendAddress.unset,
   final ThemeModeSetting themeMode = ThemeModeSetting.system,
   final JournalPalette palette = JournalPalette.defaultPalette,
+  final List<ReminderTime> reminders = kDefaultReminders,
 }) {
   /// A copy of these settings with the given fields replaced.
   AppSettings copyWith({
     BackendAddress? backend,
     ThemeModeSetting? themeMode,
     JournalPalette? palette,
+    List<ReminderTime>? reminders,
   }) => AppSettings(
     backend: backend ?? this.backend,
     themeMode: themeMode ?? this.themeMode,
     palette: palette ?? this.palette,
+    reminders: reminders ?? this.reminders,
   );
 
   @override
@@ -193,10 +254,12 @@ class const AppSettings({
       other is AppSettings &&
       other.backend == backend &&
       other.themeMode == themeMode &&
-      other.palette == palette;
+      other.palette == palette &&
+      listEquals(other.reminders, reminders);
 
   @override
-  int get hashCode => Object.hash(backend, themeMode, palette);
+  int get hashCode =>
+      Object.hash(backend, themeMode, palette, Object.hashAll(reminders));
 }
 
 /// Reads and writes [AppSettings].
@@ -216,6 +279,15 @@ abstract interface class SettingsStore {
 
   /// Persists [palette] as the chosen paper.
   Future<void> savePalette(JournalPalette palette);
+
+  /// Persists [reminders] as the full set of configured reminders,
+  /// replacing whatever was stored before.
+  ///
+  /// Takes the whole list rather than one changed entry: the Reminders card
+  /// always has the complete set in hand already (it renders every row from
+  /// it), and a whole-list write is what lets removing a reminder persist
+  /// as an empty list rather than needing a separate delete operation.
+  Future<void> saveReminders(List<ReminderTime> reminders);
 }
 
 /// The default [SettingsStore], backed by `SharedPreferences`.
@@ -236,6 +308,7 @@ class SharedPreferencesSettingsStore implements SettingsStore {
   String get _portKey => '$prefix.backend_port';
   String get _themeKey => '$prefix.theme_mode';
   String get _paletteKey => '$prefix.appearance_palette';
+  String get _remindersKey => '$prefix.reminders';
 
   @override
   Future<AppSettings> load() async {
@@ -248,6 +321,7 @@ class SharedPreferencesSettingsStore implements SettingsStore {
       ),
       themeMode: ThemeModeSetting.fromId(prefs.getString(_themeKey)),
       palette: JournalPalette.fromId(prefs.getString(_paletteKey)),
+      reminders: _decodeReminders(prefs.getString(_remindersKey)),
     );
   }
 
@@ -269,5 +343,47 @@ class SharedPreferencesSettingsStore implements SettingsStore {
   Future<void> savePalette(JournalPalette palette) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_paletteKey, palette.id);
+  }
+
+  @override
+  Future<void> saveReminders(List<ReminderTime> reminders) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_remindersKey, _encodeReminders(reminders));
+  }
+
+  String _encodeReminders(List<ReminderTime> reminders) => jsonEncode([
+    for (final reminder in reminders)
+      {
+        'hour': reminder.hour,
+        'minute': reminder.minute,
+        'enabled': reminder.enabled,
+      },
+  ]);
+
+  /// Decodes a stored reminder list, or falls back to [kDefaultReminders].
+  ///
+  /// The fallback only fires for [raw] being `null` — nothing has ever been
+  /// saved under this key, i.e. a fresh install — or genuinely unreadable
+  /// JSON. A user who removes every reminder saves an empty list, which
+  /// [jsonDecode] reads back as `[]`: a real, deliberate value that must
+  /// stay empty, never spring back to the two suggestions on the next
+  /// restart.
+  List<ReminderTime> _decodeReminders(String? raw) {
+    if (raw == null) return kDefaultReminders;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return kDefaultReminders;
+      return [
+        for (final entry in decoded)
+          if (entry is Map)
+            ReminderTime(
+              hour: (entry['hour'] as num?)?.toInt() ?? 0,
+              minute: (entry['minute'] as num?)?.toInt() ?? 0,
+              enabled: entry['enabled'] as bool? ?? false,
+            ),
+      ];
+    } on FormatException {
+      return kDefaultReminders;
+    }
   }
 }

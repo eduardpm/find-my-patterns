@@ -48,6 +48,15 @@ class FakeNotificationsPlugin implements NotificationsPlugin {
   /// Answered by `requestDarwinNotificationsPermission`.
   bool? darwinPermissionResult = true;
 
+  /// Answered by `areNotificationsEnabled`.
+  bool? notificationsEnabledResult = true;
+
+  /// Answered by `openNotificationSettings`.
+  bool? openNotificationSettingsResult = true;
+
+  /// Incremented on every `openNotificationSettings` call.
+  int openNotificationSettingsCallCount = 0;
+
   @override
   Future<void> initialize({
     required InitializationSettings settings,
@@ -98,6 +107,15 @@ class FakeNotificationsPlugin implements NotificationsPlugin {
   @override
   Future<bool?> requestDarwinNotificationsPermission() async =>
       darwinPermissionResult;
+
+  @override
+  Future<bool?> areNotificationsEnabled() async => notificationsEnabledResult;
+
+  @override
+  Future<bool?> openNotificationSettings() async {
+    openNotificationSettingsCallCount++;
+    return openNotificationSettingsResult;
+  }
 
   /// Simulates the plugin reporting a tap while the app is running.
   void fireTap(NotificationResponse response) {

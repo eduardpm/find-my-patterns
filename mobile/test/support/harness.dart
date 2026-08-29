@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:find_my_patterns/core/config/config_providers.dart';
 import 'package:find_my_patterns/core/network/api_client.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
+import 'package:find_my_patterns/core/notifications/reminder_providers.dart';
+import 'package:find_my_patterns/core/notifications/reminder_service.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
 import 'package:find_my_patterns/features/compose/composer_draft.dart';
@@ -9,6 +11,8 @@ import 'package:find_my_patterns/features/compose/entry_composer_controller.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/notifications/fake_device_time_zone.dart';
+import '../core/notifications/fake_notifications_plugin.dart';
 import 'fake_composer_draft_store.dart';
 import 'fake_http.dart';
 import 'fake_settings_store.dart';
@@ -29,6 +33,7 @@ class Harness {
     ComposerDraft? initialDraft,
   }) : store = FakeSettingsStore(settings),
        draftStore = FakeComposerDraftStore(initialDraft),
+       remindersPlugin = FakeNotificationsPlugin(),
        adapter =
            adapter ?? FakeHttpAdapter.always(const FakeReply(200, body: {})) {
     client = ApiClient(dio: Dio()..httpClientAdapter = this.adapter)
@@ -40,6 +45,12 @@ class Harness {
 
   /// The in-memory composer-draft store the app reads and writes.
   final FakeComposerDraftStore draftStore;
+
+  /// The fake plugin behind [baseOverrides]' `reminderServiceProvider`.
+  ///
+  /// Exposed so a test can assert on what got scheduled, or script a
+  /// permission result, without ever touching a real platform channel.
+  final FakeNotificationsPlugin remindersPlugin;
 
   /// The scripted HTTP adapter behind [client].
   final FakeHttpAdapter adapter;
@@ -80,6 +91,12 @@ class Harness {
     settingsStoreProvider.overrideWithValue(store),
     apiClientProvider.overrideWithValue(client),
     composerDraftStoreProvider.overrideWithValue(draftStore),
+    reminderServiceProvider.overrideWithValue(
+      ReminderService(
+        plugin: remindersPlugin,
+        deviceTimeZone: FakeDeviceTimeZone(),
+      ),
+    ),
   ];
 
   /// The retry policy every test uses: none.
