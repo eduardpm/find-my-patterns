@@ -152,6 +152,36 @@ void main() {
     });
   });
 
+  group('showFirstPatternNotification', () {
+    test('shows immediately, under a payload distinct from any reminder '
+        'slot id', () async {
+      await service.showFirstPatternNotification(
+        title: 'Your first pattern is ready',
+        body: '3 entries point the same way. See the evidence.',
+      );
+
+      expect(plugin.showCalls, hasLength(1));
+      final call = plugin.showCalls.single;
+      expect(call.title, 'Your first pattern is ready');
+      expect(call.body, '3 entries point the same way. See the evidence.');
+      // Never a valid `ReminderSlot.id` (0..1439) -- see the constant's own
+      // doc comment for why that range can never collide with this id.
+      expect(call.id, isNot(inInclusiveRange(0, 1439)));
+      expect(int.tryParse(call.payload), isNull);
+    });
+
+    test('the shown id never collides with a real reminder slot id', () async {
+      await service.scheduleAll(slots: _testSlots);
+      await service.showFirstPatternNotification(
+        title: 'Your first pattern is ready',
+        body: 'Evidence.',
+      );
+
+      final scheduledIds = plugin.scheduledCalls.map((c) => c.id).toSet();
+      expect(scheduledIds.contains(plugin.showCalls.single.id), isFalse);
+    });
+  });
+
   group('requestPermission', () {
     test('requests the Android permission on Android', () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -262,6 +292,38 @@ void main() {
 
       expect(tap, const ReminderTap(540));
     });
+
+    test(
+      'detects a cold start from the first-pattern notification (#38)',
+      () async {
+        plugin.launchDetails = const NotificationAppLaunchDetails(
+          true,
+          notificationResponse: NotificationResponse(
+            notificationResponseType:
+                NotificationResponseType.selectedNotification,
+            payload: 'first_pattern',
+          ),
+        );
+
+        final tap = await service.launchTap();
+
+        expect(tap, const FirstPatternTap());
+      },
+    );
+
+    test('is null for a payload that is neither a slot id nor the '
+        'first-pattern sentinel', () async {
+      plugin.launchDetails = const NotificationAppLaunchDetails(
+        true,
+        notificationResponse: NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: 'not_a_number',
+        ),
+      );
+
+      expect(await service.launchTap(), isNull);
+    });
   });
 
   group('taps', () {
@@ -278,6 +340,22 @@ void main() {
       );
 
       expect(await future, const ReminderTap(720));
+    });
+
+    test('emits FirstPatternTap for the first-pattern notification\'s own '
+        'payload (#38)', () async {
+      await service.initialize();
+
+      final future = service.taps.first;
+      plugin.fireTap(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: 'first_pattern',
+        ),
+      );
+
+      expect(await future, const FirstPatternTap());
     });
   });
 }

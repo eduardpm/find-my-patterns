@@ -2,9 +2,11 @@ import 'package:find_my_patterns/app.dart';
 import 'package:find_my_patterns/core/config/app_config.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/features/auth/login_screen.dart';
+import 'package:find_my_patterns/features/insights/insights_screen.dart';
 import 'package:find_my_patterns/features/shell/app_shell.dart';
 import 'package:find_my_patterns/features/today/today_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/fake_http.dart';
@@ -135,6 +137,78 @@ void main() {
       expect(find.byType(LoginScreen), findsOneWidget);
       expect(find.text('Host'), findsOneWidget);
     });
+  });
+
+  group('first-pattern notification tap-through (L-3/#38)', () {
+    testWidgets(
+      'a warm tap switches the Insights shell branch, not a stacked screen',
+      (tester) async {
+        final harness = Harness();
+        await tester.pumpWidget(harness.scope(const FindMyPatternsApp()));
+        await tester.pumpAndSettle();
+        expect(find.byType(TodayScreen), findsOneWidget);
+        expect(find.byType(InsightsScreen), findsNothing);
+
+        harness.remindersPlugin.fireTap(
+          const NotificationResponse(
+            notificationResponseType:
+                NotificationResponseType.selectedNotification,
+            payload: 'first_pattern',
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // `AppShell` (and its bottom nav bar) is still the one screen on
+        // screen -- this switched the already-showing shell's branch
+        // rather than pushing a second Insights screen on top of it.
+        expect(find.byType(AppShell), findsOneWidget);
+        expect(find.byType(InsightsScreen), findsOneWidget);
+        expect(find.byType(TodayScreen), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a cold-start launch tap opens straight to Insights',
+      (tester) async {
+        final harness = Harness();
+        harness.remindersPlugin.launchDetails =
+            const NotificationAppLaunchDetails(
+              true,
+              notificationResponse: NotificationResponse(
+                notificationResponseType:
+                    NotificationResponseType.selectedNotification,
+                payload: 'first_pattern',
+              ),
+            );
+
+        await tester.pumpWidget(harness.scope(const FindMyPatternsApp()));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(AppShell), findsOneWidget);
+        expect(find.byType(InsightsScreen), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'a reminder tap still opens the composer, not Insights',
+      (tester) async {
+        final harness = Harness();
+        await tester.pumpWidget(harness.scope(const FindMyPatternsApp()));
+        await tester.pumpAndSettle();
+
+        harness.remindersPlugin.fireTap(
+          const NotificationResponse(
+            notificationResponseType:
+                NotificationResponseType.selectedNotification,
+            payload: '540',
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byType(InsightsScreen), findsNothing);
+        expect(find.text('New entry'), findsOneWidget);
+      },
+    );
   });
 
   group('SplashScreen', () {

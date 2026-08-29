@@ -33,8 +33,11 @@ final reminderServiceProvider = Provider<ReminderService>(
 class OpenComposerSignal extends Notifier<int> {
   @override
   int build() {
-    final subscription = ref.watch(reminderServiceProvider).taps.listen((_) {
-      state++;
+    final subscription = ref.watch(reminderServiceProvider).taps.listen((tap) {
+      // Only a reminder opens the composer -- a first-pattern tap
+      // (#38) goes to Insights instead, through
+      // [OpenInsightsSignal], which shares this same tap stream.
+      if (tap is ReminderTap) state++;
     });
     ref.onDispose(subscription.cancel);
     return 0;
@@ -49,7 +52,7 @@ class OpenComposerSignal extends Notifier<int> {
   /// subscription instead.
   Future<void> checkLaunchTap() async {
     final tap = await ref.read(reminderServiceProvider).launchTap();
-    if (tap != null) state++;
+    if (tap is ReminderTap) state++;
   }
 }
 
@@ -57,4 +60,48 @@ class OpenComposerSignal extends Notifier<int> {
 /// composer.
 final openComposerSignalProvider = NotifierProvider<OpenComposerSignal, int>(
   OpenComposerSignal.new,
+);
+
+/// A monotonic count of events the app shell should react to by navigating
+/// to Insights: a tap on the first-pattern celebration notification (#38),
+/// cold or warm, or the inline celebration card's own "see the evidence"
+/// tap bumping this directly (see `EntryComposerScreen`).
+///
+/// A counter rather than a `bool`, for the same reason
+/// [OpenComposerSignal] is: a second navigation request must still move
+/// even if the first already landed on Insights and nothing about the
+/// destination looks different.
+class OpenInsightsSignal extends Notifier<int> {
+  @override
+  int build() {
+    final subscription = ref.watch(reminderServiceProvider).taps.listen((tap) {
+      if (tap is FirstPatternTap) state++;
+    });
+    ref.onDispose(subscription.cancel);
+    return 0;
+  }
+
+  /// Checks whether the first-pattern notification cold-started the app
+  /// and, if so, signals the app shell to open Insights for it. Call this
+  /// once, from the app shell, right after [ReminderService.initialize] —
+  /// see [OpenComposerSignal.checkLaunchTap] for why a cold start needs its
+  /// own explicit read.
+  Future<void> checkLaunchTap() async {
+    final tap = await ref.read(reminderServiceProvider).launchTap();
+    if (tap is FirstPatternTap) state++;
+  }
+
+  /// Signals the app shell to open Insights right now.
+  ///
+  /// The inline first-pattern celebration card's own "see the evidence"
+  /// tap calls this directly (see `EntryComposerScreen`) rather than
+  /// waiting on a notification tap that, on that path, never happens --
+  /// the card is only shown when the app is already in the foreground, so
+  /// there is no OS notification behind it to tap.
+  void bump() => state++;
+}
+
+/// The signal the app shell watches to know when to navigate to Insights.
+final openInsightsSignalProvider = NotifierProvider<OpenInsightsSignal, int>(
+  OpenInsightsSignal.new,
 );

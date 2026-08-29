@@ -10,6 +10,21 @@ import 'device_time_zone.dart';
 import 'notifications_plugin.dart';
 import 'reminder_schedule.dart';
 
+/// A local notification the user tapped, cold or warm -- routed to whatever
+/// that particular notification means to open.
+///
+/// A sealed supertype rather than one payload-agnostic class: [ReminderTap]
+/// and [FirstPatternTap] (#38) go to different places -- the composer and
+/// Insights respectively -- and `flutter_local_notifications`'
+/// `FlutterLocalNotificationsPlugin.initialize` takes exactly one `onTap`
+/// callback for the whole app, so every kind of tap this app can receive
+/// has to funnel through the same [ReminderService] and come back out
+/// distinguishable. See [ReminderService._tapFromPayload] for how the
+/// payload string decides which one a given tap becomes.
+sealed class NotificationTap {
+  const NotificationTap();
+}
+
 /// A reminder notification the user tapped, cold or warm.
 ///
 /// Carries [slotId] rather than a [ReminderSlot] itself: the tap is
@@ -17,7 +32,7 @@ import 'reminder_schedule.dart';
 /// a bare string, and nothing downstream of a tap needs the hour and minute
 /// back — every reminder opens the same composer regardless of which slot
 /// fired it.
-final class const ReminderTap(final int slotId) {
+final class const ReminderTap(final int slotId) extends NotificationTap {
   @override
   bool operator ==(Object other) =>
       other is ReminderTap && other.slotId == slotId;
@@ -27,6 +42,24 @@ final class const ReminderTap(final int slotId) {
 
   @override
   String toString() => 'ReminderTap($slotId)';
+}
+
+/// A tap on the first-pattern celebration notification (#38) -- opens
+/// Insights rather than the composer.
+///
+/// Carries nothing: there is only ever one first-pattern notification for
+/// the life of a diary (`EntryComposerController._checkFirstPattern`
+/// enforces the exactly-once flag), so there is no id or slot to
+/// distinguish one from another the way [ReminderTap.slotId] has to.
+final class const FirstPatternTap() extends NotificationTap {
+  @override
+  bool operator ==(Object other) => other is FirstPatternTap;
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() => 'FirstPatternTap()';
 }
 
 /// The channel and notification the user's reminders are shown under.
@@ -42,6 +75,24 @@ const String _channelDescription =
     'Reminders to log a diary entry at the times you choose in Settings.';
 const String _notificationTitle = 'A moment for your diary';
 const String _notificationBody = 'What happened since your last entry?';
+
+/// The payload `showFirstPatternNotification` sends, and the sentinel
+/// `_tapFromPayload` checks for before trying [int.tryParse] on a reminder
+/// slot id.
+///
+/// Deliberately not numeric -- a reminder's payload is always a bare
+/// integer (`'${slot.id}'`), so a non-numeric sentinel can never collide
+/// with one no matter which slot ids a device has scheduled, and existing
+/// scheduled reminders (whose payload was baked in before this feature
+/// existed) keep decoding exactly as before.
+const String _firstPatternPayload = 'first_pattern';
+
+/// The notification id `showFirstPatternNotification` shows under.
+///
+/// `ReminderSlot.id` ranges over `0..1439` (`hour * 60 + minute`); a
+/// negative id can never collide with, and so can never silently replace
+/// or be replaced by, a scheduled reminder.
+const int _firstPatternNotificationId = -1;
 
 /// Schedules and reacts to the user's configured check-in reminders.
 ///
@@ -79,16 +130,21 @@ class ReminderService {
   /// Resolves the device's real time zone, for [initialize].
   final DeviceTimeZone deviceTimeZone;
 
-  final StreamController<ReminderTap> _tapController =
-      StreamController<ReminderTap>.broadcast();
+  final StreamController<NotificationTap> _tapController =
+      StreamController<NotificationTap>.broadcast();
 
-  /// Emits a [ReminderTap] each time the user taps a reminder notification
-  /// while the app is already running.
+  /// Emits a [NotificationTap] each time the user taps a notification from
+  /// this app while the app is already running -- a [ReminderTap] or a
+  /// [FirstPatternTap] (#38), broadcast on the same stream because both
+  /// come back through the one `onTap` callback [initialize] registers.
+  /// `reminder_providers.dart`'s `OpenComposerSignal` and
+  /// `OpenInsightsSignal` each filter this down to the one kind they care
+  /// about.
   ///
   /// A cold start is not reported here — read it once from [launchTap]
   /// instead, since by the time this stream has a listener the launch
   /// notification response has already happened.
-  Stream<ReminderTap> get taps => _tapController.stream;
+  Stream<NotificationTap> get taps => _tapController.stream;
 
   /// Initialises the plugin and the time zone database.
   ///
@@ -175,12 +231,31 @@ class ReminderService {
   /// Cancels every scheduled reminder.
   Future<void> cancelAll() => plugin.cancelAll();
 
-  /// Whether a reminder tap cold-started the app, and if so, which slot.
+  /// Shows the first-pattern celebration (#38) immediately, under the same
+  /// channel and permission handling as a reminder.
+  ///
+  /// [title] and [body] are the caller's own -- this service holds no
+  /// first-pattern copy of its own, the same way it holds no diary
+  /// vocabulary at all; `EntryComposerController._checkFirstPattern`
+  /// derives them from the pattern's own evidence count before calling
+  /// this, via `first_pattern_copy.dart`.
+  Future<void> showFirstPatternNotification({
+    required String title,
+    required String body,
+  }) => plugin.show(
+    id: _firstPatternNotificationId,
+    title: title,
+    body: body,
+    notificationDetails: _notificationDetails,
+    payload: _firstPatternPayload,
+  );
+
+  /// Whether a notification tap cold-started the app, and if so, which one.
   ///
   /// Call this once at startup, after [initialize] — a cold start must be
   /// read explicitly because by the time anything can listen to [taps], the
   /// launch that would have fired it has already happened.
-  Future<ReminderTap?> launchTap() async {
+  Future<NotificationTap?> launchTap() async {
     final details = await plugin.getNotificationAppLaunchDetails();
     if (details == null || !details.didNotificationLaunchApp) return null;
     return _tapFromPayload(details.notificationResponse?.payload);
@@ -230,8 +305,20 @@ class ReminderService {
     if (tap != null) _tapController.add(tap);
   }
 
-  ReminderTap? _tapFromPayload(String? payload) {
-    final slotId = payload == null ? null : int.tryParse(payload);
+  /// Resolves a plugin payload to the [NotificationTap] it identifies, or
+  /// `null` for a payload this service does not recognise -- an unparsable
+  /// payload is silently dropped rather than guessed at, the same way it
+  /// always has been for a reminder.
+  ///
+  /// [_firstPatternPayload] is checked first, before [int.tryParse]: it is
+  /// not numeric, so there is no ambiguity between the two branches, but
+  /// checking it first keeps this reading as "first, the one fixed
+  /// sentinel; otherwise, a slot id" rather than relying on the parse
+  /// failing to fall through correctly.
+  NotificationTap? _tapFromPayload(String? payload) {
+    if (payload == null) return null;
+    if (payload == _firstPatternPayload) return const FirstPatternTap();
+    final slotId = int.tryParse(payload);
     return slotId == null ? null : ReminderTap(slotId);
   }
 

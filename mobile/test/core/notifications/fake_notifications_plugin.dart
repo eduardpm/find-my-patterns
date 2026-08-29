@@ -3,6 +3,21 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart';
 
+/// One call `FakeNotificationsPlugin.show` recorded.
+class ShowCall {
+  ShowCall({
+    required this.id,
+    required this.title,
+    required this.body,
+    required this.payload,
+  });
+
+  final int id;
+  final String title;
+  final String body;
+  final String payload;
+}
+
 /// One call `FakeNotificationsPlugin.zonedSchedule` recorded.
 class ScheduledCall {
   ScheduledCall({
@@ -31,6 +46,9 @@ class FakeNotificationsPlugin implements NotificationsPlugin {
 
   /// Every call `zonedSchedule` received, in order.
   final List<ScheduledCall> scheduledCalls = [];
+
+  /// Every call `show` received, in order.
+  final List<ShowCall> showCalls = [];
 
   /// Incremented on every `cancelAll` call.
   int cancelAllCallCount = 0;
@@ -94,6 +112,17 @@ class FakeNotificationsPlugin implements NotificationsPlugin {
   @override
   Future<void> cancelAll() async {
     cancelAllCallCount++;
+  }
+
+  @override
+  Future<void> show({
+    required int id,
+    required String title,
+    required String body,
+    required NotificationDetails notificationDetails,
+    required String payload,
+  }) async {
+    showCalls.add(ShowCall(id: id, title: title, body: body, payload: payload));
   }
 
   @override

@@ -3,6 +3,8 @@ import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/diary_providers.dart';
 import 'package:find_my_patterns/core/diary/guiding_question.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
+import 'package:find_my_patterns/core/notifications/reminder_providers.dart';
+import 'package:find_my_patterns/core/notifications/reminder_service.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
 import 'package:find_my_patterns/features/compose/composer_draft.dart';
@@ -10,7 +12,10 @@ import 'package:find_my_patterns/features/compose/entry_composer_controller.dart
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../core/notifications/fake_device_time_zone.dart';
+import '../../core/notifications/fake_notifications_plugin.dart';
 import '../../support/fake_composer_draft_store.dart';
+import '../../support/fake_first_pattern_store.dart';
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
 import 'json_fixtures.dart';
@@ -24,30 +29,55 @@ import 'json_fixtures.dart';
 const _testTargetDate = CalendarDate(2026, 8, 29);
 
 void main() {
-  ({ProviderContainer container, FakeComposerDraftStore draftStore})
+  ({
+    ProviderContainer container,
+    FakeComposerDraftStore draftStore,
+    FakeFirstPatternNotifiedStore firstPatternStore,
+    FakeNotificationsPlugin notificationsPlugin,
+  })
   buildContainer(
     FakeHttpAdapter adapter, {
     ComposerDraft? initialDraft,
     DateTime? now,
+    // Passed in directly (rather than a plain `bool`) so a test can share
+    // one store instance across two separately built containers -- the
+    // "exactly once across a simulated restart" group below builds a
+    // second, entirely fresh container over the *same* store to prove the
+    // flag it persisted survives what stands in for an app restart here.
+    FakeFirstPatternNotifiedStore? firstPatternStore,
   }) {
     final harness = Harness(
       settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
       adapter: adapter,
       initialDraft: initialDraft,
     );
+    final resolvedFirstPatternStore =
+        firstPatternStore ?? harness.firstPatternStore;
     final container = ProviderContainer(
       overrides: [
         requireAuthProvider.overrideWithValue(harness.requireAuth),
         settingsStoreProvider.overrideWithValue(harness.store),
         apiClientProvider.overrideWithValue(harness.client),
         composerDraftStoreProvider.overrideWithValue(harness.draftStore),
+        firstPatternStoreProvider.overrideWithValue(resolvedFirstPatternStore),
+        reminderServiceProvider.overrideWithValue(
+          ReminderService(
+            plugin: harness.remindersPlugin,
+            deviceTimeZone: FakeDeviceTimeZone(),
+          ),
+        ),
         composerNowProvider.overrideWithValue(
           now ?? _testTargetDate.toDateTime(),
         ),
       ],
     );
     addTearDown(container.dispose);
-    return (container: container, draftStore: harness.draftStore);
+    return (
+      container: container,
+      draftStore: harness.draftStore,
+      firstPatternStore: resolvedFirstPatternStore,
+      notificationsPlugin: harness.remindersPlugin,
+    );
   }
 
   /// The three background loads `build()` fires, in the order they hit the
@@ -81,6 +111,8 @@ void main() {
       EntryComposerController controller,
       FakeHttpAdapter adapter,
       FakeComposerDraftStore draftStore,
+      FakeFirstPatternNotifiedStore firstPatternStore,
+      FakeNotificationsPlugin notificationsPlugin,
     })
   >
   readyController(
@@ -89,9 +121,15 @@ void main() {
     Duration draftSaveDebounce = Duration.zero,
     CalendarDate targetDate = _testTargetDate,
     DateTime? now,
+    FakeFirstPatternNotifiedStore? firstPatternStore,
   }) async {
     final adapter = FakeHttpAdapter(replies);
-    final built = buildContainer(adapter, initialDraft: initialDraft, now: now);
+    final built = buildContainer(
+      adapter,
+      initialDraft: initialDraft,
+      now: now,
+      firstPatternStore: firstPatternStore,
+    );
     final controller = built.container.read(
       entryComposerControllerProvider(targetDate).notifier,
     );
@@ -102,6 +140,8 @@ void main() {
       controller: controller,
       adapter: adapter,
       draftStore: built.draftStore,
+      firstPatternStore: built.firstPatternStore,
+      notificationsPlugin: built.notificationsPlugin,
     );
   }
 
@@ -552,6 +592,314 @@ void main() {
         );
 
         expect(env.container.read(diaryWriteSignalProvider), 0);
+      },
+    );
+  });
+
+  group('first-pattern celebration (L-3/#38)', () {
+    test(
+      'flag unset, patterns present, app foregrounded -- celebrates '
+      'inline and sets the flag exactly once',
+      () async {
+        final env = await readyController(
+          [
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: insightsJson(patterns: [patternJson()])),
+            FakeReply(200, body: echoJson(count: 0)),
+          ],
+          firstPatternStore: FakeFirstPatternNotifiedStore(notified: false),
+        );
+        env.controller.isAppForegrounded = () => true;
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isFalse);
+        final stage =
+            env.container
+                    .read(entryComposerControllerProvider(_testTargetDate))
+                    .stage
+                as EchoStage;
+        expect(stage.celebratedPattern, isNotNull);
+        expect(stage.celebratedPattern!.occurrenceCount, 3);
+        expect(stage.echoes, isEmpty);
+        expect(env.firstPatternStore.markNotifiedCallCount, 1);
+        expect(await env.firstPatternStore.hasNotified(), isTrue);
+        // Foregrounded -- shown on screen, never pushed as a notification.
+        expect(env.notificationsPlugin.showCalls, isEmpty);
+      },
+    );
+
+    test(
+      'flag unset, no patterns yet -- nothing celebrated and the flag '
+      'stays unset',
+      () async {
+        final env = await readyController(
+          [
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: insightsJson()),
+            FakeReply(200, body: echoJson(count: 0)),
+          ],
+          firstPatternStore: FakeFirstPatternNotifiedStore(notified: false),
+        );
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isTrue);
+        expect(env.firstPatternStore.markNotifiedCallCount, 0);
+        expect(await env.firstPatternStore.hasNotified(), isFalse);
+      },
+    );
+
+    test(
+      'flag already set -- no insights fetch at all, so an existing '
+      'confirm/echo reply script is untouched',
+      () async {
+        // No insights reply scripted between the two -- if `_checkFirstPattern`
+        // made the call anyway, the echo reply below would be consumed by
+        // it instead, and this test would fail with a reply mismatch.
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: entryJson()),
+          FakeReply(200, body: echoJson(count: 1)),
+        ]);
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isFalse);
+        final stage =
+            env.container
+                    .read(entryComposerControllerProvider(_testTargetDate))
+                    .stage
+                as EchoStage;
+        expect(stage.celebratedPattern, isNull);
+        expect(env.firstPatternStore.markNotifiedCallCount, 0);
+      },
+    );
+
+    test(
+      'flag unset, patterns present, app backgrounded -- fires a '
+      'notification instead of an inline card, and sets the flag',
+      () async {
+        final env = await readyController(
+          [
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(
+              200,
+              body: insightsJson(patterns: [patternJson(occurrenceCount: 5)]),
+            ),
+            FakeReply(200, body: echoJson(count: 0)),
+          ],
+          firstPatternStore: FakeFirstPatternNotifiedStore(notified: false),
+        );
+        env.controller.isAppForegrounded = () => false;
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        // Nothing left to show inline (no echo, and the celebration went
+        // out as a notification instead) -- the composer finishes.
+        expect(done, isTrue);
+        expect(env.firstPatternStore.markNotifiedCallCount, 1);
+        expect(env.notificationsPlugin.showCalls, hasLength(1));
+        final call = env.notificationsPlugin.showCalls.single;
+        expect(call.title, 'Your first pattern is ready');
+        expect(call.body, '5 entries point the same way. See the evidence.');
+      },
+    );
+
+    test(
+      'a denied/unavailable notification permission does not crash the '
+      'background celebration path',
+      () async {
+        final env = await readyController(
+          [
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: insightsJson(patterns: [patternJson()])),
+            FakeReply(200, body: echoJson(count: 0)),
+          ],
+          firstPatternStore: FakeFirstPatternNotifiedStore(notified: false),
+        );
+        env.controller.isAppForegrounded = () => false;
+        env.notificationsPlugin.notificationsEnabledResult = false;
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isTrue);
+        expect(await env.firstPatternStore.hasNotified(), isTrue);
+      },
+    );
+
+    test(
+      'the inline path never touches the notifications plugin -- a denied '
+      'permission cannot break it',
+      () async {
+        final env = await readyController(
+          [
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: insightsJson(patterns: [patternJson()])),
+            FakeReply(200, body: echoJson(count: 0)),
+          ],
+          firstPatternStore: FakeFirstPatternNotifiedStore(notified: false),
+        );
+        env.controller.isAppForegrounded = () => true;
+        env.notificationsPlugin.notificationsEnabledResult = false;
+
+        await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(env.notificationsPlugin.showCalls, isEmpty);
+      },
+    );
+
+    test(
+      'a failed echo fetch still shows the inline celebration -- the two '
+      'calls owe each other nothing',
+      () async {
+        final env = await readyController(
+          [
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: insightsJson(patterns: [patternJson()])),
+            FakeReply(500, body: {'error': 'echo boom'}),
+          ],
+          firstPatternStore: FakeFirstPatternNotifiedStore(notified: false),
+        );
+        env.controller.isAppForegrounded = () => true;
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isFalse);
+        final stage =
+            env.container
+                    .read(entryComposerControllerProvider(_testTargetDate))
+                    .stage
+                as EchoStage;
+        expect(stage.echoes, isEmpty);
+        expect(stage.celebratedPattern, isNotNull);
+        expect(
+          env.container
+              .read(entryComposerControllerProvider(_testTargetDate))
+              .errorMessage,
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'a failed insights fetch leaves the flag unset, so the next confirm '
+      'gets another chance',
+      () async {
+        final env = await readyController(
+          [
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(500, body: {'error': 'boom'}),
+            FakeReply(200, body: echoJson(count: 0)),
+          ],
+          firstPatternStore: FakeFirstPatternNotifiedStore(notified: false),
+        );
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isTrue);
+        expect(
+          env.container
+              .read(entryComposerControllerProvider(_testTargetDate))
+              .errorMessage,
+          isNull,
+        );
+        expect(await env.firstPatternStore.hasNotified(), isFalse);
+      },
+    );
+
+    test(
+      'exactly once across a simulated restart -- a fresh controller '
+      'reading the same persisted flag does not celebrate again',
+      () async {
+        final sharedStore = FakeFirstPatternNotifiedStore(notified: false);
+
+        final first = await readyController(
+          [
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: insightsJson(patterns: [patternJson()])),
+            FakeReply(200, body: echoJson(count: 0)),
+          ],
+          firstPatternStore: sharedStore,
+        );
+        first.controller.isAppForegrounded = () => true;
+        await first.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+        expect(await sharedStore.hasNotified(), isTrue);
+
+        // A brand new container and controller -- standing in for the app
+        // having been killed and reopened -- built over the very same
+        // store instance, the way `SharedPreferences` would persist the
+        // flag across a real restart.
+        final second = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: entryJson(id: 'entry-2')),
+          // No insights reply scripted: an already-notified store must
+          // short-circuit before ever fetching insights again.
+          FakeReply(200, body: echoJson(count: 0)),
+        ], firstPatternStore: sharedStore);
+
+        final done = await second.controller.confirmFeelings(
+          entryId: 'entry-2',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isTrue);
+        expect(sharedStore.markNotifiedCallCount, 1);
       },
     );
   });
