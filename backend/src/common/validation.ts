@@ -2,6 +2,7 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { z, type ZodType } from 'zod';
 import { FEELING_KEYS, MAX_FEELINGS_PER_ENTRY } from '../db/feeling-vocabulary';
 import { MAX_INTENSITY, MIN_INTENSITY } from '../insights/constants';
+import { MAX_EXPERIMENT_LENGTH_DAYS, MIN_EXPERIMENT_LENGTH_DAYS } from '../experiments/constants';
 
 /**
  * Request validation.
@@ -83,3 +84,30 @@ export const guidedDraftAnswerSchema = z.object({
 });
 
 export const orderIndexQuerySchema = z.coerce.number().int().min(0).max(100);
+
+/**
+ * A calendar date, `YYYY-MM-DD`. Only the shape is checked here; a value that is the right shape
+ * but not a real date (`2026-02-30`) is rejected downstream by `decodeDate`, the one place a date
+ * string is actually parsed (`db/codecs.ts`).
+ */
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+
+/**
+ * Starting an experiment from a qualifying pattern (R-3a). `pattern_topic` and `pattern_feeling`
+ * identify the pattern the same way the client already has it — the exact `topic` and `feeling`
+ * strings off a `PatternOut` from `GET /insights` — so no separate lookup id is needed. Whether
+ * that pair currently qualifies is decided by `ExperimentsService`, not here: this only checks the
+ * request is well-formed.
+ */
+export const experimentCreateSchema = z.object({
+  pattern_topic: z.string().trim().min(1).max(128),
+  pattern_feeling: z.enum(FEELING_KEYS),
+  hypothesis_kind: z.enum(['more_of', 'less_of']),
+  start_date: dateSchema.optional(),
+  length_days: z
+    .number()
+    .int()
+    .min(MIN_EXPERIMENT_LENGTH_DAYS)
+    .max(MAX_EXPERIMENT_LENGTH_DAYS)
+    .optional(),
+});

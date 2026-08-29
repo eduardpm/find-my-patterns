@@ -1,0 +1,109 @@
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpException,
+  HttpStatus,
+  Param,
+  Post,
+} from '@nestjs/common';
+import { decodeDate } from '../db/codecs';
+import { experimentCreateSchema, parseOrThrow } from '../common/validation';
+import {
+  ActiveExperimentExistsError,
+  ExperimentNotActiveError,
+  ExperimentNotFoundError,
+  ExperimentsService,
+  InvalidExperimentLengthError,
+  NoActiveExperimentError,
+  NonQualifyingPatternError,
+  type ExperimentOut,
+  type ExperimentResultsOut,
+} from './experiments.service';
+
+/**
+ * N-of-1 experiments (R-3a). Backend half only — the client that starts an experiment from a
+ * pattern card, shows the "experiment active" banner, and renders the results view is R-3b.
+ *
+ * Every failure here answers **422 `validation_error`**, never 400 (contracts/api.md): a
+ * malformed body, an out-of-range length, a non-qualifying pattern and an already-active
+ * experiment are all "the request was understood, the value was not acceptable" — the same reason
+ * every other invalid field in this API answers 422.
+ */
+@Controller('experiments')
+export class ExperimentsController {
+  constructor(private readonly experiments: ExperimentsService) {}
+
+  @Post()
+  async create(@Body() body: unknown): Promise<ExperimentOut> {
+    const input = parseOrThrow(experimentCreateSchema, body ?? {});
+    // `experimentCreateSchema` only checks `start_date`'s shape (`YYYY-MM-DD`); a value that is
+    // the right shape but not a real calendar date (`2026-02-30`) is caught here, before the
+    // service sees it, so it still answers 422 rather than the generic 500 an unrecognised date
+    // would otherwise throw from deep inside `decodeDate`.
+    let startDate;
+    try {
+      startDate = input.start_date ? decodeDate(input.start_date) : undefined;
+    } catch (err) {
+      throw new HttpException(
+        err instanceof Error ? err.message : 'Invalid start_date',
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+    try {
+      return await this.experiments.create({
+        patternTopic: input.pattern_topic,
+        patternFeeling: input.pattern_feeling,
+        hypothesisKind: input.hypothesis_kind,
+        startDate,
+        lengthDays: input.length_days,
+      });
+    } catch (err) {
+      throw translate(err);
+    }
+  }
+
+  @Get('active')
+  getActive(): ExperimentOut {
+    try {
+      return this.experiments.getActive();
+    } catch (err) {
+      throw translate(err);
+    }
+  }
+
+  @Post(':id/abandon')
+  @HttpCode(HttpStatus.OK)
+  abandon(@Param('id') id: string): ExperimentOut {
+    try {
+      return this.experiments.abandon(id);
+    } catch (err) {
+      throw translate(err);
+    }
+  }
+
+  @Get(':id/results')
+  results(@Param('id') id: string): ExperimentResultsOut {
+    try {
+      return this.experiments.results(id);
+    } catch (err) {
+      throw translate(err);
+    }
+  }
+}
+
+function translate(err: unknown): unknown {
+  if (err instanceof ExperimentNotFoundError || err instanceof NoActiveExperimentError) {
+    return new HttpException(err.message, HttpStatus.NOT_FOUND);
+  }
+  if (
+    err instanceof ActiveExperimentExistsError ||
+    err instanceof NonQualifyingPatternError ||
+    err instanceof ExperimentNotActiveError ||
+    err instanceof InvalidExperimentLengthError
+  ) {
+    return new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY);
+  }
+  return err;
+}
