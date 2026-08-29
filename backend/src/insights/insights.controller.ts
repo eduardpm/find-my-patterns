@@ -1,6 +1,12 @@
-import { Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpException, HttpStatus, Post, Query } from '@nestjs/common';
 import { engineConstants, type EngineConstants } from './constants';
 import { PatternsService, type PatternOut, type WithdrawalOut } from './patterns.service';
+import {
+  InvalidSeriesRangeError,
+  SeriesService,
+  type SeriesGranularity,
+  type SeriesOut,
+} from './series.service';
 import { WhenInsightsService, type WhenInsights } from './when.service';
 
 export interface InsightsOut {
@@ -16,6 +22,7 @@ export class InsightsController {
   constructor(
     private readonly patterns: PatternsService,
     private readonly when: WhenInsightsService,
+    private readonly series: SeriesService,
   ) {}
 
   /**
@@ -54,6 +61,36 @@ export class InsightsController {
   }
 
   /**
+   * CH-0: the shared prerequisite behind every chart (mood line, Year in Pixels, the topic
+   * sparkline, Year in Review) — a day score plus a range read, so no client computes one for
+   * itself. `granularity` defaults to `day`; `week` and `month` aggregate by the mean of day
+   * scores, not by pooling feelings (see `constants.ts` for why).
+   *
+   * A pure read — unlike `GET /insights`, nothing here recomputes anything.
+   *
+   * `topic_id` filtering and an intensity-weighted variant are deliberately out of scope for this
+   * endpoint; see the day-score doc in `constants.ts`.
+   */
+  @Get('series')
+  getSeries(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('granularity') granularity?: string,
+  ): SeriesOut {
+    if (!from) throw new HttpException('Field required: from', HttpStatus.UNPROCESSABLE_ENTITY);
+    if (!to) throw new HttpException('Field required: to', HttpStatus.UNPROCESSABLE_ENTITY);
+    const parsedGranularity = parseGranularity(granularity);
+    try {
+      return this.series.getSeries(from, to, parsedGranularity);
+    } catch (err) {
+      if (err instanceof InvalidSeriesRangeError) {
+        throw new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY);
+      }
+      throw err;
+    }
+  }
+
+  /**
    * A2-07: the user has seen the current withdrawal notices.
    *
    * An explicit action rather than a side effect of the GET — see `acknowledgeWithdrawals`.
@@ -63,4 +100,14 @@ export class InsightsController {
   acknowledge(): void {
     this.patterns.acknowledgeWithdrawals();
   }
+}
+
+/** `day` is the documented default; anything other than the three named values is a 422, not a 500. */
+function parseGranularity(value: string | undefined): SeriesGranularity {
+  if (value === undefined) return 'day';
+  if (value === 'day' || value === 'week' || value === 'month') return value;
+  throw new HttpException(
+    `Invalid granularity: '${value}', expected day, week or month`,
+    HttpStatus.UNPROCESSABLE_ENTITY,
+  );
 }

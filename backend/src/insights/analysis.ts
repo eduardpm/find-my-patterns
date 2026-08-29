@@ -65,6 +65,26 @@ export function weekdayIndex(date: PlainDate): number {
   return (day + 6) % 7;
 }
 
+/** A calendar date shifted by `days` (negative to go back), through `Date.UTC` for the same reason `daysBetween` is. */
+export function addDays(date: PlainDate, days: number): PlainDate {
+  const shifted = new Date(Date.UTC(date.year, date.month - 1, date.day) + days * 86_400_000);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+  };
+}
+
+/** The Monday that starts `date`'s week (CH-0) — matches `weekdayIndex`'s Monday-first convention. */
+export function weekStart(date: PlainDate): PlainDate {
+  return addDays(date, -weekdayIndex(date));
+}
+
+/** The first of `date`'s month (CH-0). */
+export function monthStart(date: PlainDate): PlainDate {
+  return { year: date.year, month: date.month, day: 1 };
+}
+
 /**
  * Which part of the day an entry was written in (I5-01).
  *

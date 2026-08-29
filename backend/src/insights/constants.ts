@@ -57,7 +57,7 @@ export const MAX_INVERSE_PATTERNS = 5;
 export const MIN_BUCKET_ENTRIES = 3;
 
 /**
- * The valence scale used for every average the "when" view shows (I5-03).
+ * The valence scale used for every average the "when" view — and every chart — shows (I5-03).
  *
  * Deliberately three points and not five: the diary stores a feeling word, not a rating, and
  * inventing intermediate values would give the average a precision the data does not have.
@@ -68,6 +68,33 @@ export const VALENCE_SCORE: Record<string, number> = {
   neutral: 0,
   negative: -1,
 };
+
+/**
+ * The day score (CH-0): the number every chart — the mood line, Year in Pixels, the topic
+ * sparkline — is built from, defined once so the two clients never invent their own.
+ *
+ * A day's score is the **mean `VALENCE_SCORE` of its CONFIRMED feelings** (`CONFIRMED_FEELING_SOURCES`
+ * below — a suggestion nobody acted on is not evidence here either, same as everywhere else in this
+ * engine), flattened across every feeling on every confirmed entry that day rather than averaged
+ * per entry first. A day with entries but zero confirmed feelings scores `null`, not `0` — "nothing
+ * confirmed" and "confirmed neutral" are different facts, and the entry count travels alongside so a
+ * client can still draw the day faintly instead of pretending it never happened. A day with no
+ * entries at all does not appear in the series — a gap is a gap, not a `null`.
+ *
+ * `feeling_intensity` (I6) is deliberately never folded in: intensity is optional, most days will
+ * not have it, and mixing an optional 1–5 rating into a −1…+1 mean would make the line dishonest
+ * about days that were never rated. An intensity-weighted line, if one ships, is a separate opt-in
+ * series that only draws over rated days — never a silent adjustment to this one.
+ *
+ * Week and month points aggregate by the **mean of day scores**, not by pooling every feeling in the
+ * period — a single heavy day (many entries, many feelings) would otherwise outvote a quiet week
+ * instead of counting once, the same reasoning `averageValence` in `analysis.ts` applies per entry.
+ *
+ * See `src/insights/series.service.ts` for the implementation this describes.
+ */
+
+/** CH-0: the largest `from`…`to` span `GET /insights/series` accepts at `granularity=day`. */
+export const MAX_SERIES_RANGE_DAYS = 400;
 
 /** I6: the optional dial on the primary feeling. Not a 1–100 scale (I6-08). */
 export const MIN_INTENSITY = 1;
