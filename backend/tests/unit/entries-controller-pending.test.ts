@@ -74,6 +74,15 @@ function stubEntriesRepo(): { findTopicFeelingPairings: () => never[] } {
   return { findTopicFeelingPairings: () => [] };
 }
 
+/**
+ * A stub carrying only what `create`/`finalize` touch on `TopicsService` — the `topics` read that
+ * #81 added. No test in this file cares about topics themselves (that is
+ * `entries-topics.test.ts`'s job); this exists only so `toEntryOut` has something to call.
+ */
+function stubTopicsService(): { topicsForEntry: () => never[] } {
+  return { topicsForEntry: () => [] };
+}
+
 describe('POST /entries -- analysis_pending honesty', () => {
   it('reports the job as pending when createEntry could not suggest synchronously', () => {
     const entry = fakeEntry();
@@ -85,6 +94,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubEntriesRepo() as never,
       service,
       undefined as never,
+      stubTopicsService() as never,
     );
 
     const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
@@ -106,6 +116,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubEntriesRepo() as never,
       service,
       undefined as never,
+      stubTopicsService() as never,
     );
 
     const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
@@ -126,6 +137,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubEntriesRepo() as never,
       service,
       undefined as never,
+      stubTopicsService() as never,
     );
 
     const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
@@ -147,6 +159,7 @@ describe('POST /guided-entry-drafts/{key}/finalize -- analysis_pending honesty',
       service,
       stubEntriesRepo() as never,
       undefined as never,
+      stubTopicsService() as never,
     );
 
     const body = controller.finalize('draft-1');

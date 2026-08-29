@@ -15,6 +15,7 @@ import {
 import type { Request } from 'express';
 import { guidedDraftAnswerSchema, orderIndexQuerySchema, parseOrThrow } from '../common/validation';
 import { TranscriptionJobsService } from '../transcription/transcription-jobs.service';
+import { TopicsService } from '../topics/topics.service';
 import { toEntryOut } from './entries.controller';
 import { EntriesRepository } from './entries.repository';
 import { EmptyGuidedDraftError, EntriesService, GuidedDraftNotFoundError } from './entries.service';
@@ -25,6 +26,7 @@ export class GuidedDraftsController {
     private readonly entries: EntriesService,
     private readonly entriesRepo: EntriesRepository,
     private readonly transcriptionJobs: TranscriptionJobsService,
+    private readonly topics: TopicsService,
   ) {}
 
   @Post()
@@ -109,7 +111,8 @@ export class GuidedDraftsController {
     try {
       const { entry, suggestion } = this.entries.finalizeGuidedDraft(draftKey);
       const pairings = this.entriesRepo.findTopicFeelingPairings(entry.id);
-      if (suggestion) return toEntryOut(entry, suggestion, false, [], null, pairings);
+      const topics = this.topics.topicsForEntry(entry.id);
+      if (suggestion) return toEntryOut(entry, suggestion, false, [], null, pairings, topics);
       const analysis = this.entries.analysisFor(entry.id);
       return toEntryOut(
         entry,
@@ -118,6 +121,7 @@ export class GuidedDraftsController {
         analysis.suggestedAll,
         null,
         pairings,
+        topics,
       );
     } catch (error) {
       if (error instanceof EmptyGuidedDraftError) {

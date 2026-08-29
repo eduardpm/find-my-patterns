@@ -305,6 +305,114 @@ void main() {
     );
   });
 
+  group('topics', () {
+    testWidgets('shows a chip for each of the entry\'s topics', (
+      tester,
+    ) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter(
+          bootReplies(
+            entry: FakeReply(
+              200,
+              body: entryJson(
+                topics: const [
+                  {'id': 'topic-1', 'name': 'walking'},
+                  {'id': 'topic-2', 'name': 'family'},
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(find.text('TOPICS'), findsOneWidget);
+      expect(find.text('walking'), findsOneWidget);
+      expect(find.text('family'), findsOneWidget);
+    });
+
+    // The client-side face of #81's acceptance criterion: a topic chip
+    // renders straight off `entry.topics`, never through `topic_feelings`
+    // (E-1a) -- so a topic on an entry with no feelings at all, which could
+    // not possibly have a pairing, still shows as a chip. `topic_feelings`
+    // alone cannot represent an unpaired topic (see the backend's
+    // `entries-topics.test.ts`); this is the client never routing through
+    // it in the first place.
+    testWidgets('shows a topic even when the entry has no feelings', (
+      tester,
+    ) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter(
+          bootReplies(
+            entry: FakeReply(
+              200,
+              body: entryJson(
+                feelingKey: null,
+                feelingKeys: const [],
+                topics: const [
+                  {'id': 'topic-1', 'name': 'walking'},
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(find.text('walking'), findsOneWidget);
+    });
+
+    testWidgets(
+      'the section is omitted, not shown empty, when there are none',
+      (
+        tester,
+      ) async {
+        useTallScreen(tester);
+        final harness = configuredHarness(
+          FakeHttpAdapter(
+            bootReplies(entry: FakeReply(200, body: entryJson())),
+          ),
+        );
+        await tester.pumpWidget(app(harness));
+        await tester.pumpAndSettle();
+
+        expect(find.text('TOPICS'), findsNothing);
+      },
+    );
+
+    testWidgets('a topic chip does nothing on tap', (tester) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter(
+          bootReplies(
+            entry: FakeReply(
+              200,
+              body: entryJson(
+                topics: const [
+                  {'id': 'topic-1', 'name': 'walking'},
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('walking'));
+      await tester.pumpAndSettle();
+
+      // Still on the entry-detail screen, nothing navigated or changed --
+      // the deep link to Topics is UX-7's follow-up, not this ticket's.
+      expect(find.text('walking'), findsOneWidget);
+      expect(find.text('Entry'), findsOneWidget);
+    });
+  });
+
   group('supporting patterns', () {
     testWidgets(
       'lists a matching active pattern under "This entry supports" and '

@@ -166,10 +166,12 @@ export class EntriesRepository {
   }
 
   /**
-   * The entry's topic↔feeling pairings (E-1a), joined out to the topic's name — an entry serves no
-   * topics of its own anywhere else, so this is the only place a client can learn which topics a
-   * pairing is even about. Ordered for a stable, deterministic wire shape rather than SQLite's
-   * insertion order.
+   * The entry's topic↔feeling pairings (E-1a), joined out to the topic's name. Ordered for a
+   * stable, deterministic wire shape rather than SQLite's insertion order.
+   *
+   * `topic` is still carried here even though the entry payload also serves `topics` directly
+   * (#81, via `TopicsService.topicsForEntry()`): a pairing row's own topic name is what makes each
+   * pairing self-describing without a client having to cross-reference the two lists.
    */
   findTopicFeelingPairings(entryId: string): TopicFeelingPairing[] {
     const rows = this.db
