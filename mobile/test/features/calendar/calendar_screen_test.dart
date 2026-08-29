@@ -111,7 +111,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.bySemanticsLabel('5, Happy, Sad, intensity 4'),
+        find.bySemanticsLabel('5, 2 entries, Happy, Sad, intensity 4'),
         findsOneWidget,
       );
       // Day 6 has no entries.
@@ -162,7 +162,7 @@ void main() {
     await tester.pumpWidget(app(harness, onOpenDay: (date) => opened = date));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.bySemanticsLabel('5, Happy'));
+    await tester.tap(find.bySemanticsLabel('5, 1 entry, Happy'));
 
     expect(opened, const CalendarDate(2026, 8, 5));
     handle.dispose();

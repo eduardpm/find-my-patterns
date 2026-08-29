@@ -63,10 +63,10 @@ const VOCABULARY: FeelingVocabulary = {
 const SERVED: MonthlySummary = {
   month: '2026-05',
   days: [
-    { date: '2026-05-01', feelings: ['happy'], intensity: null },
-    { date: '2026-05-02', feelings: ['sleepy', 'neutral'], intensity: null },
-    { date: '2026-05-03', feelings: [], intensity: null },
-    { date: '2026-05-04', feelings: ['happy'], intensity: null },
+    { date: '2026-05-01', feelings: ['happy'], intensity: null, entry_count: 1 },
+    { date: '2026-05-02', feelings: ['sleepy', 'neutral'], intensity: null, entry_count: 2 },
+    { date: '2026-05-03', feelings: [], intensity: null, entry_count: 0 },
+    { date: '2026-05-04', feelings: ['happy'], intensity: null, entry_count: 1 },
   ],
   totals_by_feeling: { happy: 9, sleepy: 4, neutral: 2 },
   average_entries_per_day: 1.4285714285714286,
@@ -124,7 +124,7 @@ describe('MonthlyCalendarScreen — served numbers, never recomputed (Principle 
     fetchMock.mockResolvedValue(
       ok({
         month: '2026-05',
-        days: [{ date: '2026-05-01', feelings: [], intensity: null }],
+        days: [{ date: '2026-05-01', feelings: [], intensity: null, entry_count: 0 }],
         totals_by_feeling: { stressed: 6 },
         average_entries_per_day: 0.2,
       }),
@@ -148,7 +148,7 @@ describe('MonthlyCalendarScreen — served numbers, never recomputed (Principle 
     fetchMock.mockResolvedValue(
       ok({
         month: 'previous',
-        days: [{ date: '2026-04-01', feelings: ['happy'], intensity: null }],
+        days: [{ date: '2026-04-01', feelings: ['happy'], intensity: null, entry_count: 31 }],
         totals_by_feeling: { happy: 31 },
         average_entries_per_day: 2.93,
       }),

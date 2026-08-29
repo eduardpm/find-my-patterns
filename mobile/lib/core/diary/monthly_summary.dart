@@ -15,6 +15,20 @@ class const DaySummary(
   /// 5 with two unrated entries would report a quieter day than the one
   /// the user had.
   final int? intensity,
+
+  /// How many entries were logged this day.
+  ///
+  /// Deliberately not `feelings.length`: [feelings] is the *distinct set*
+  /// of feelings seen that day, so ten entries all tagged the same feeling
+  /// still leave `feelings.length == 1` while `entryCount` reads 10. The
+  /// calendar's volume bar reads this field precisely because
+  /// `feelings.length` used to stand in for it and undercounted busy days.
+  ///
+  /// Defaults to 0 so a [DaySummary] built by hand (this file's own tests,
+  /// the today screen's day-summary card) does not have to state a count
+  /// it does not care about; a real one is always populated by
+  /// [daySummaryFromJson].
+  final int entryCount = 0,
 });
 
 /// Powers the monthly calendar screen, from `GET /monthly-summary`.
@@ -33,6 +47,10 @@ DaySummary daySummaryFromJson(JsonObject json, FeelingCatalog catalog) =>
         (json['feelings'] as List<Object?>?)?.cast<String>() ?? const [],
       ),
       intensity: json['intensity'] as int?,
+      // Null-tolerant like every other optional field here: a backend that
+      // predates #72 has no `entry_count` key at all, and that must decode
+      // as "nothing here" (0) rather than throw.
+      entryCount: json['entry_count'] as int? ?? 0,
     );
 
 /// Decodes `GET /monthly-summary`'s whole response.

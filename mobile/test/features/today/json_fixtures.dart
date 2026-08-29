@@ -76,7 +76,13 @@ Map<String, Object?> daySummaryJson({
   required CalendarDate date,
   List<String> feelings = const ['happy'],
   int? intensity,
-}) => {'date': date.toString(), 'feelings': feelings, 'intensity': intensity};
+  int? entryCount,
+}) => {
+  'date': date.toString(),
+  'feelings': feelings,
+  'intensity': intensity,
+  'entry_count': entryCount ?? feelings.length,
+};
 
 /// A `GET /monthly-summary` body wrapping [days].
 Map<String, Object?> monthlySummaryJson({

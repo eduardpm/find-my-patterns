@@ -1,6 +1,6 @@
 // Widget coverage for the calendar day cell's UX-9b rework: dropping the
-// dashed border on empty days, and the entry-volume proxy bar under a
-// logged day's dots.
+// dashed border on empty days, and the entry-volume bar under a logged
+// day's dots.
 //
 // There is no golden-image harness in this repo (see `calendar_screen.dart`
 // and `feeling_chip_test.dart` for the same call), so "verified on all 3
@@ -14,12 +14,12 @@
 //     those widgets are given actually clear WCAG's text (4.5:1) and
 //     non-text (3:1) minimums in every palette's both halves.
 //
-// `GET /monthly-summary` has no per-day entry count (see
-// `calendar_screen.dart`'s `_DayCell` doc comment) — `days[].feelings` is
-// the distinct *set* of feeling keys logged that day, not one entry per
-// slot — so the volume bar reads `feelings.length` instead. This file uses
-// a six-key catalog, local to it, to exercise that mapping past its
-// five-feeling ceiling; `json_fixtures.dart`'s shared three-key catalog
+// `GET /monthly-summary` carries `days[].entry_count` (#72), and the volume
+// bar reads that field directly rather than `days[].feelings.length` — the
+// distinct *set* of feeling keys logged that day, a different and smaller
+// number whenever several entries share a feeling. This file uses a
+// six-key catalog, local to it, to exercise the bar's fifths mapping past
+// its five-entry ceiling; `json_fixtures.dart`'s shared three-key catalog
 // stays untouched since nothing else in this suite needs more than that.
 
 import 'package:find_my_patterns/core/config/config_providers.dart';
@@ -179,8 +179,13 @@ void main() {
 
   group('the volume bar', () {
     testWidgets(
-      'widens with the distinct-feeling count, one fifth per feeling, '
-      'capping at five',
+      // Pre-#72 this asserted the *distinct-feeling* count drove the bar —
+      // that was the bug (#72's whole reason for existing). `entryCount` is
+      // now passed explicitly, matching feeling count only because this
+      // test's days each have exactly one entry per feeling; the headline
+      // test below is what proves the bar no longer depends on that
+      // coincidence.
+      'widens with the entry count, one fifth per entry, capping at five',
       (tester) async {
         useTallScreen(tester);
         final harness = configuredHarness(
@@ -195,6 +200,7 @@ void main() {
                     daySummaryJson(
                       date: '2026-08-0$n',
                       feelings: _sixFeelingKeys.take(n).toList(),
+                      entryCount: n,
                     ),
                 ],
               ),
@@ -209,14 +215,13 @@ void main() {
         expect(volumeWidthFactor(tester, '2026-08-03'), closeTo(0.6, 1e-6));
         expect(volumeWidthFactor(tester, '2026-08-04'), closeTo(0.8, 1e-6));
         expect(volumeWidthFactor(tester, '2026-08-05'), closeTo(1.0, 1e-6));
-        // Six distinct feelings still reads as "full", not overflowing —
-        // this is the "10+-entry day" acceptance criterion's proxy case.
+        // Six entries still reads as "full", not overflowing.
         expect(volumeWidthFactor(tester, '2026-08-06'), closeTo(1.0, 1e-6));
       },
     );
 
     testWidgets(
-      'a 1-feeling day and a 5-feeling day are visibly different widths',
+      'a 1-entry day and a 5-entry day are visibly different widths',
       (tester) async {
         useTallScreen(tester);
         final harness = configuredHarness(
@@ -227,10 +232,15 @@ void main() {
               body: monthlySummaryJson(
                 month: '2026-08',
                 days: [
-                  daySummaryJson(date: '2026-08-01', feelings: const ['a']),
+                  daySummaryJson(
+                    date: '2026-08-01',
+                    feelings: const ['a'],
+                    entryCount: 1,
+                  ),
                   daySummaryJson(
                     date: '2026-08-02',
                     feelings: _sixFeelingKeys,
+                    entryCount: 5,
                   ),
                 ],
               ),
@@ -244,6 +254,38 @@ void main() {
           volumeWidthFactor(tester, '2026-08-02'),
           greaterThan(volumeWidthFactor(tester, '2026-08-01')),
         );
+      },
+    );
+
+    testWidgets(
+      // #72's headline case: under the old `feelings.length` mapping, ten
+      // entries all tagged the same feeling would draw the same 20% bar as
+      // a single-entry day. The bar must now read the real entry count.
+      'many entries sharing ONE feeling render a full bar, not a 20% one',
+      (tester) async {
+        useTallScreen(tester);
+        final harness = configuredHarness(
+          FakeHttpAdapter([
+            FakeReply(200, body: _richCatalogJson()),
+            FakeReply(
+              200,
+              body: monthlySummaryJson(
+                month: '2026-08',
+                days: [
+                  daySummaryJson(
+                    date: '2026-08-01',
+                    feelings: const ['a'],
+                    entryCount: 10,
+                  ),
+                ],
+              ),
+            ),
+          ]),
+        );
+        await tester.pumpWidget(app(harness));
+        await tester.pumpAndSettle();
+
+        expect(volumeWidthFactor(tester, '2026-08-01'), closeTo(1.0, 1e-6));
       },
     );
   });
@@ -284,9 +326,8 @@ void main() {
   });
 
   group('semantics', () {
-    testWidgets('never states an entry count the payload does not carry', (
-      tester,
-    ) async {
+    testWidgets('states the real entry count, pluralised, before the '
+        'feelings (#72)', (tester) async {
       useTallScreen(tester);
       final handle = tester.ensureSemantics();
       final harness = configuredHarness(
@@ -301,6 +342,7 @@ void main() {
                   date: '2026-08-05',
                   feelings: _sixFeelingKeys,
                   intensity: 4,
+                  entryCount: 6,
                 ),
               ],
             ),
@@ -310,14 +352,94 @@ void main() {
       await tester.pumpWidget(app(harness));
       await tester.pumpAndSettle();
 
-      // Every distinct feeling logged is still named in full — a screen
-      // reader is told strictly more than the sighted volume bar shows.
+      // Every distinct feeling logged is still named in full, and now the
+      // real entry count is stated too — a screen reader is told strictly
+      // more than the sighted volume bar shows.
       expect(
-        find.bySemanticsLabel('5, A, B, C, D, E, F, intensity 4'),
+        find.bySemanticsLabel('5, 6 entries, A, B, C, D, E, F, intensity 4'),
         findsOneWidget,
       );
-      // No cell anywhere in the grid claims a number of entries.
-      expect(find.bySemanticsLabel(RegExp(r'\d+ entries?\b')), findsNothing);
+      handle.dispose();
+    });
+
+    testWidgets('says "1 entry", singular, for a single-entry day', (
+      tester,
+    ) async {
+      useTallScreen(tester);
+      final handle = tester.ensureSemantics();
+      final harness = configuredHarness(
+        FakeHttpAdapter([
+          FakeReply(200, body: _richCatalogJson()),
+          FakeReply(
+            200,
+            body: monthlySummaryJson(
+              month: '2026-08',
+              days: [
+                daySummaryJson(
+                  date: '2026-08-05',
+                  feelings: const ['a'],
+                  entryCount: 1,
+                ),
+              ],
+            ),
+          ),
+        ]),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(find.bySemanticsLabel('5, 1 entry, A'), findsOneWidget);
+      handle.dispose();
+    });
+
+    testWidgets(
+      'states the real entry count even when it exceeds the distinct-'
+      'feeling count (many entries, one feeling)',
+      (tester) async {
+        useTallScreen(tester);
+        final handle = tester.ensureSemantics();
+        final harness = configuredHarness(
+          FakeHttpAdapter([
+            FakeReply(200, body: _richCatalogJson()),
+            FakeReply(
+              200,
+              body: monthlySummaryJson(
+                month: '2026-08',
+                days: [
+                  daySummaryJson(
+                    date: '2026-08-05',
+                    feelings: const ['a'],
+                    entryCount: 10,
+                  ),
+                ],
+              ),
+            ),
+          ]),
+        );
+        await tester.pumpWidget(app(harness));
+        await tester.pumpAndSettle();
+
+        expect(find.bySemanticsLabel('5, 10 entries, A'), findsOneWidget);
+        handle.dispose();
+      },
+    );
+
+    testWidgets('an empty day still reads "no entries", never "0 entries"', (
+      tester,
+    ) async {
+      useTallScreen(tester);
+      final handle = tester.ensureSemantics();
+      final harness = configuredHarness(
+        FakeHttpAdapter([
+          FakeReply(200, body: feelingsCatalogJson()),
+          FakeReply(200, body: monthlySummaryJson(month: '2026-08')),
+        ]),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(find.bySemanticsLabel('6, no entries'), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'0 entries')), findsNothing);
       handle.dispose();
     });
   });

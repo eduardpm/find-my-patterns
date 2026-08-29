@@ -36,13 +36,14 @@ const List<String> _weekdayLabels = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 /// where the number comes from.
 final int _barMaxIntensity = EngineConstants.placeholder.maxIntensity;
 
-/// The distinct-feeling count a day cell's volume bar reads as "full".
+/// The entry count a day cell's volume bar reads as "full".
 ///
-/// See [_DayCell]'s doc comment for why this reads `feelings.length` rather
-/// than an entry count: `GET /monthly-summary` (`monthly-summary.service.ts`)
-/// has no per-day entry count field to read instead. 5 rather than the
-/// feeling catalog's own size, matching the width steps UX-9b specifies:
-/// 1 distinct feeling → 20%, 5 or more → 100%.
+/// 5 rather than some larger, "truly maxed out" figure, matching the width
+/// steps UX-9b specifies: 1 entry → 20%, 5 or more entries → 100%. #72 made
+/// this the real per-day entry count from `GET /monthly-summary`
+/// (`days[].entry_count`); before that, [_VolumeBar] read `feelings.length`
+/// — the distinct-feeling count — as a stand-in, which this same constant
+/// and mapping already fit.
 const int _volumeBarMaxCount = 5;
 
 /// Which of the calendar's two views is on screen: the month grid this
@@ -333,19 +334,14 @@ class _CalendarGrid extends StatelessWidget {
 /// fill — a fill would compete with "this day has entries", which is what
 /// a logged cell's background already means.
 ///
-/// **The volume signal is a proxy, not a count.** `GET /monthly-summary`
-/// (`backend/src/monthly-summary/monthly-summary.service.ts`) has no
-/// per-day entry count: `days[].feelings` is the *distinct set* of feeling
-/// keys logged that day, not one entry per slot, and `intensity` is the
-/// day's strongest rating, not its volume. Neither the client nor the
-/// backend is meant to change to add one here (UX-9b is scoped to the
-/// cell). So [_VolumeBar] reads `feelings.length` (the full list, before
-/// the dots' own cap of 3) as the closest available stand-in: a day with
-/// more distinct feelings is treated as a fuller day. This undercounts a
-/// day where many entries share one feeling — 15 entries all "grateful"
-/// reads the same as one — which the day-entries screen's own list still
-/// shows correctly; the calendar cell can only be as precise as what it is
-/// given.
+/// **The volume signal reads the real per-day entry count.** `GET
+/// /monthly-summary` (`backend/src/monthly-summary/monthly-summary.service.ts`)
+/// carries `days[].entry_count` (#72) alongside `days[].feelings` — the
+/// *distinct set* of feeling keys logged that day, a different and smaller
+/// number whenever several entries share a feeling. [_VolumeBar] reads
+/// `entry_count`, not `feelings.length`, so a day where many entries share
+/// one feeling — 15 entries all "grateful" — renders a full bar rather than
+/// the single-entry-looking bar `feelings.length` would have drawn.
 class _DayCell extends StatelessWidget {
   const _DayCell({
     required this.date,
@@ -397,7 +393,7 @@ class _DayCell extends StatelessWidget {
           const SizedBox(height: 2),
           _VolumeBar(
             key: ValueKey('calendarVolumeBar-$date'),
-            count: feelings.length,
+            count: day?.entryCount ?? 0,
             hairline: journal.hairline,
             fill: theme.colorScheme.primary,
           ),
@@ -431,7 +427,13 @@ class _DayCell extends StatelessWidget {
       key: ValueKey('calendarDayCell-$date'),
       container: true,
       button: true,
-      label: _spokenLabel(date, isToday, feelings, intensity),
+      label: _spokenLabel(
+        date,
+        isToday,
+        feelings,
+        intensity,
+        day?.entryCount ?? 0,
+      ),
       onTap: () => onTap(date),
       child: ExcludeSemantics(
         child: Material(
@@ -463,44 +465,47 @@ class _DayCell extends StatelessWidget {
   }
 }
 
-/// `"<day>, today, <feelings>, intensity N"`, or `"<day>, no entries"`.
+/// `"<day>, today, <N> entries, <feelings>, intensity N"`, or `"<day>, no entries"`.
 ///
 /// "no entries" is said outright, never left implied by the absence of a
 /// feelings clause, so a screen reader states plainly what an empty cell
-/// looks like to a sighted reader.
+/// looks like to a sighted reader; that branch is keyed on `feelings` being
+/// empty (unchanged by #72) rather than on `entryCount`, so it still reads
+/// exactly as it did before this field existed, and never says "0 entries".
 ///
-/// Never states an entry count: `GET /monthly-summary` does not carry one
-/// (see [_DayCell]'s doc comment), and a spoken label — unlike [_VolumeBar]
-/// — has no proxy worth reaching for. Enumerating the feelings already
-/// tells a screen-reader user strictly more than the sighted volume signal
-/// does: "grateful, calm, anxious" names three feelings a dot count alone
-/// would only show as "3".
+/// States the real entry count (#72), correctly pluralised ("1 entry" vs.
+/// "15 entries") — [_VolumeBar] draws the same number as a bar, but a
+/// spoken label loses nothing by also saying it outright, and it is what
+/// #17 could previously only approximate as a feeling count.
 String _spokenLabel(
   CalendarDate date,
   bool isToday,
   List<Feeling> feelings,
   int? intensity,
+  int entryCount,
 ) {
   final buffer = StringBuffer('${date.day}');
   if (isToday) buffer.write(', today');
   if (feelings.isEmpty) {
     buffer.write(', no entries');
   } else {
+    final noun = entryCount == 1 ? 'entry' : 'entries';
+    buffer.write(', $entryCount $noun');
     buffer.write(', ${feelings.map((f) => f.label).join(', ')}');
     if (intensity != null) buffer.write(', intensity $intensity');
   }
   return buffer.toString();
 }
 
-/// The entry-volume proxy, as a short bar under the dots.
+/// The entry-volume signal, as a short bar under the dots.
 ///
-/// [count] is `feelings.length` at the call site — see [_DayCell]'s doc
-/// comment for why that stands in for an entry count the backend does not
-/// send. Mapped in fifths, per UX-9b: 1 distinct feeling reads as 20% full,
-/// [_volumeBarMaxCount] or more reads as 100%. A day with only one
-/// distinct feeling still draws a bar (20%, never empty) — the bar's job is
-/// telling a 1-feeling day from a 5-feeling one, not telling a logged day
-/// from an empty one, which the dots above it already do.
+/// [count] is `day.entryCount` at the call site (#72) — the real number of
+/// entries logged that day, not `feelings.length`. Mapped in fifths, per
+/// UX-9b: 1 entry reads as 20% full, [_volumeBarMaxCount] or more reads as
+/// 100%. A logged day still draws a bar at least 20% full even with a
+/// single entry — the bar's job is telling a 1-entry day from a 5-entry
+/// one, not telling a logged day from an empty one, which the dots above
+/// it already do.
 class _VolumeBar extends StatelessWidget {
   const _VolumeBar({
     super.key,

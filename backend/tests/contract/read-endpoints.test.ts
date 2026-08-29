@@ -4,9 +4,10 @@
  * Expectations come from contracts/api.md — the shapes both clients are built against.
  */
 
+import Database from 'better-sqlite3';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { bootOnCopy, teardown, type Harness } from '../helpers/app';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { bootOnCopy, bootOnFresh, teardown, type Harness } from '../helpers/app';
 import { FEELING_GROUP_SEED, FEELING_SEED } from '../../src/db/feeling-vocabulary';
 
 let h: Harness;
@@ -222,5 +223,116 @@ describe('GET /monthly-summary', () => {
     for (const day of res.body.days) {
       expect(day.feelings).toEqual([...day.feelings].sort());
     }
+  });
+
+  it('reports entry_count independently of feelings.length on the golden fixture (#72)', async () => {
+    // 2026-07-28 in golden.db carries 8 entries behind only 3 distinct feelings (one entry has no
+    // confirmed feeling at all) — entry_count and feelings.length must disagree here, or the
+    // fixture no longer exercises the gap this field exists to close.
+    const res = await request(server()).get(`/monthly-summary?month=${FIXTURE_MONTH}`);
+    const day = res.body.days.find((d: { date: string }) => d.date === '2026-07-28');
+    expect(day.entry_count).toBe(8);
+    expect(day.feelings).toEqual(['happy', 'neutral', 'sleepy']);
+    expect(day.entry_count).not.toBe(day.feelings.length);
+  });
+
+  it('reports entry_count 0 for a day with no entries', async () => {
+    const res = await request(server()).get(`/monthly-summary?month=${FIXTURE_MONTH}`);
+    const empty = res.body.days.find((d: { feelings: string[] }) => d.feelings.length === 0);
+    expect(empty.entry_count).toBe(0);
+  });
+});
+
+/**
+ * #72 — `days[].entry_count`, on a purpose-built diary rather than the golden fixture.
+ *
+ * These scenarios need entry counts and feeling sets the golden fixture does not happen to
+ * contain (in particular: many entries sharing exactly one feeling), so each test seeds its own
+ * entries directly with `better-sqlite3`, the same technique `entries-topics.test.ts` and
+ * `series.test.ts` use.
+ */
+describe('GET /monthly-summary — entry_count (#72)', () => {
+  let hf: Harness;
+  const month = '2025-03'; // Safely in the past: `average_entries_per_day`'s "days elapsed"
+  // branch only special-cases the *current* month, so a past month always divides by the full
+  // month length regardless of which day this suite happens to run on.
+
+  beforeEach(async () => {
+    hf = await bootOnFresh();
+  });
+  afterEach(async () => {
+    await teardown(hf);
+  });
+
+  function seedEntry(
+    db: InstanceType<typeof Database>,
+    id: string,
+    date: string,
+    feelingKeys: string[],
+  ): void {
+    const stamp = `${date} 12:00:00.000000`;
+    const primaryFeeling = feelingKeys[0] ?? null;
+    db.prepare(
+      `INSERT INTO diary_entries
+       (id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source, version)
+       VALUES (?, ?, ?, ?, 'freeform', 'seeded for #72', ?, ?, 1)`,
+    ).run(id, stamp, stamp, date, primaryFeeling, primaryFeeling ? 'confirmed' : 'unset');
+    feelingKeys.forEach((key, position) => {
+      db.prepare(
+        'INSERT INTO entry_feelings (entry_id, feeling_key, position) VALUES (?, ?, ?)',
+      ).run(id, key, position);
+    });
+  }
+
+  it('counts many entries that share one feeling as a full entry_count, not 1 (the headline case)', async () => {
+    const db = new Database(hf.dbPath);
+    for (let i = 0; i < 10; i += 1) {
+      seedEntry(db, `many-one-feeling-${i}`, `${month}-05`, ['anxious']);
+    }
+    db.close();
+
+    const res = await request(hf.app.getHttpServer())
+      .get(`/monthly-summary?month=${month}`)
+      .expect(200);
+    const day = res.body.days.find((d: { date: string }) => d.date === `${month}-05`);
+    expect(day.entry_count).toBe(10);
+    expect(day.feelings).toEqual(['anxious']);
+  });
+
+  it('counts an entry with no confirmed feeling toward entry_count, with an empty feelings array', async () => {
+    const db = new Database(hf.dbPath);
+    seedEntry(db, 'no-feeling-entry', `${month}-10`, []);
+    db.close();
+
+    const res = await request(hf.app.getHttpServer())
+      .get(`/monthly-summary?month=${month}`)
+      .expect(200);
+    const day = res.body.days.find((d: { date: string }) => d.date === `${month}-10`);
+    expect(day.entry_count).toBe(1);
+    expect(day.feelings).toEqual([]);
+  });
+
+  it('reports entry_count 0 for a day with no entries at all', async () => {
+    const res = await request(hf.app.getHttpServer())
+      .get(`/monthly-summary?month=${month}`)
+      .expect(200);
+    const day = res.body.days.find((d: { date: string }) => d.date === `${month}-15`);
+    expect(day.entry_count).toBe(0);
+    expect(day.feelings).toEqual([]);
+  });
+
+  it('counts several entries with different feelings correctly', async () => {
+    const db = new Database(hf.dbPath);
+    seedEntry(db, 'mixed-1', `${month}-20`, ['happy']);
+    seedEntry(db, 'mixed-2', `${month}-20`, ['sad']);
+    seedEntry(db, 'mixed-3', `${month}-20`, ['happy', 'excited']);
+    db.close();
+
+    const res = await request(hf.app.getHttpServer())
+      .get(`/monthly-summary?month=${month}`)
+      .expect(200);
+    const day = res.body.days.find((d: { date: string }) => d.date === `${month}-20`);
+    expect(day.entry_count).toBe(3);
+    expect(day.feelings).toEqual(['excited', 'happy', 'sad']);
   });
 });

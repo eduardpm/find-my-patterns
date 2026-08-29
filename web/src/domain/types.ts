@@ -316,6 +316,12 @@ export interface MonthlyDay {
   feelings: string[];
   /** The strongest intensity recorded that day, or null when nothing was rated (I6-04). */
   intensity: number | null;
+  /**
+   * The number of entries logged that day (#72). Not the same number as `feelings.length` — an
+   * entry can share a feeling with others that day, or carry none at all, so this counts entries
+   * directly rather than deriving from the feeling set.
+   */
+  entry_count: number;
 }
 
 export interface MonthlySummary {
