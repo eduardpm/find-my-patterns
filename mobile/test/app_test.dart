@@ -65,7 +65,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        Theme.of(tester.element(find.text('Server'))).brightness,
+        Theme.of(tester.element(find.text('Advanced'))).brightness,
         Brightness.dark,
       );
     });
