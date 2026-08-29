@@ -17,6 +17,8 @@ import { EchoService } from './insights/echo.service';
 import { PatternsService } from './insights/patterns.service';
 import { SeriesService } from './insights/series.service';
 import { WhenInsightsService } from './insights/when.service';
+import { QuestionYieldController } from './insights/question-yield.controller';
+import { QuestionYieldService } from './insights/question-yield.service';
 import {
   ENTRY_INFERENCE,
   ImmediateTestInference,
@@ -50,6 +52,7 @@ export class AppModule {
         FeelingsController,
         GuidingQuestionsController,
         InsightsController,
+        QuestionYieldController,
         TopicsController,
         MonthlySummaryController,
         TranscriptionController,
@@ -79,6 +82,7 @@ export class AppModule {
         PatternsService,
         WhenInsightsService,
         SeriesService,
+        QuestionYieldService,
         EchoService,
         MonthlySummaryService,
         TranscriptionService,
