@@ -14,7 +14,6 @@ import '../../core/theme/journal_metrics.dart';
 import '../../core/theme/journal_typography.dart';
 import '../../core/widgets/feeling_accent.dart';
 import '../../core/widgets/journal.dart';
-import '../../core/widgets/journal_dashed_border.dart';
 import '../../core/widgets/journal_page_wash.dart';
 import 'calendar_controller.dart';
 
@@ -24,13 +23,22 @@ final DateFormat _monthLabelFormat = DateFormat.yMMMM();
 /// Monday-first weekday headers over the grid.
 const List<String> _weekdayLabels = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
-/// The strongest rating a day cell's bar is drawn against.
+/// The strongest rating a day cell's intensity bar is drawn against.
 ///
 /// The calendar does not fetch Insights' own served constants for this — one
 /// more request just to size a 24-pixel bar is not worth it — so this reads
 /// the placeholder's `maxIntensity` instead of a bare `5`, at least naming
 /// where the number comes from.
 final int _barMaxIntensity = EngineConstants.placeholder.maxIntensity;
+
+/// The distinct-feeling count a day cell's volume bar reads as "full".
+///
+/// See [_DayCell]'s doc comment for why this reads `feelings.length` rather
+/// than an entry count: `GET /monthly-summary` (`monthly-summary.service.ts`)
+/// has no per-day entry count field to read instead. 5 rather than the
+/// feeling catalog's own size, matching the width steps UX-9b specifies:
+/// 1 distinct feeling → 20%, 5 or more → 100%.
+const int _volumeBarMaxCount = 5;
 
 /// The month-at-a-glance calendar: a Monday-first grid of every day this
 /// month, and a totals panel below it.
@@ -270,12 +278,32 @@ class _CalendarGrid extends StatelessWidget {
 
 /// One day in the grid.
 ///
-/// A day with entries and an empty day differ by border style and fill as
-/// well as by their dots, so the distinction survives greyscale and colour
-/// blindness: logged days get a filled surface with a hairline border,
-/// empty days get [DashedBorder]. Today gets a ring, not a fill — a fill
-/// would compete with "this day has entries", which is what a logged cell's
-/// background already means.
+/// A day with entries and an empty day differ by fill as well as by their
+/// dots and bars, so the distinction survives greyscale and colour
+/// blindness: a logged day gets a filled surface with a hairline border and
+/// is the loudest thing on the grid; an empty day gets nothing but its own
+/// dimmed number on the plain page — no border of any kind, dashed or
+/// otherwise (UX-9b). `DashedBorder`
+/// (`core/widgets/journal_dashed_border.dart`) stays reserved for a day
+/// this grid cannot be entered for at all (a future day, once month
+/// navigation grows one — out of scope here); every day in the current
+/// grid can be tapped, so none of them draw it. Today gets a ring, not a
+/// fill — a fill would compete with "this day has entries", which is what
+/// a logged cell's background already means.
+///
+/// **The volume signal is a proxy, not a count.** `GET /monthly-summary`
+/// (`backend/src/monthly-summary/monthly-summary.service.ts`) has no
+/// per-day entry count: `days[].feelings` is the *distinct set* of feeling
+/// keys logged that day, not one entry per slot, and `intensity` is the
+/// day's strongest rating, not its volume. Neither the client nor the
+/// backend is meant to change to add one here (UX-9b is scoped to the
+/// cell). So [_VolumeBar] reads `feelings.length` (the full list, before
+/// the dots' own cap of 3) as the closest available stand-in: a day with
+/// more distinct feelings is treated as a fuller day. This undercounts a
+/// day where many entries share one feeling — 15 entries all "grateful"
+/// reads the same as one — which the day-entries screen's own list still
+/// shows correctly; the calendar cell can only be as precise as what it is
+/// given.
 class _DayCell extends StatelessWidget {
   const _DayCell({
     required this.date,
@@ -319,10 +347,17 @@ class _DayCell extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               for (final feeling in feelings.take(3)) ...[
-                _FeelingDot(color: feeling.accent(journal)),
+                FeelingDot(color: feeling.accent(journal), size: 6),
                 const SizedBox(width: 3),
               ],
             ],
+          ),
+          const SizedBox(height: 2),
+          _VolumeBar(
+            key: ValueKey('calendarVolumeBar-$date'),
+            count: feelings.length,
+            hairline: journal.hairline,
+            fill: theme.colorScheme.primary,
           ),
           if (intensity != null) ...[
             const SizedBox(height: 2),
@@ -336,24 +371,22 @@ class _DayCell extends StatelessWidget {
       ],
     );
 
-    final inner = DecoratedBox(
-      decoration: logged
-          ? BoxDecoration(
+    // Empty cells draw nothing at all — no fill, no border, dashed or
+    // otherwise — so the dimmed number is the only mark on the page. See
+    // the class doc for why.
+    final inner = logged
+        ? DecoratedBox(
+            decoration: BoxDecoration(
               color: theme.colorScheme.surfaceContainerHighest,
               border: Border.all(color: journal.hairline),
               borderRadius: shape,
-            )
-          : const BoxDecoration(),
-      child: logged
-          ? Center(child: content)
-          : DashedBorder(
-              color: journal.hairline,
-              borderRadius: shape,
-              child: Center(child: content),
             ),
-    );
+            child: Center(child: content),
+          )
+        : Center(child: content);
 
     return Semantics(
+      key: ValueKey('calendarDayCell-$date'),
       container: true,
       button: true,
       label: _spokenLabel(date, isToday, feelings, intensity),
@@ -393,6 +426,13 @@ class _DayCell extends StatelessWidget {
 /// "no entries" is said outright, never left implied by the absence of a
 /// feelings clause, so a screen reader states plainly what an empty cell
 /// looks like to a sighted reader.
+///
+/// Never states an entry count: `GET /monthly-summary` does not carry one
+/// (see [_DayCell]'s doc comment), and a spoken label — unlike [_VolumeBar]
+/// — has no proxy worth reaching for. Enumerating the feelings already
+/// tells a screen-reader user strictly more than the sighted volume signal
+/// does: "grateful, calm, anxious" names three feelings a dot count alone
+/// would only show as "3".
 String _spokenLabel(
   CalendarDate date,
   bool isToday,
@@ -410,16 +450,43 @@ String _spokenLabel(
   return buffer.toString();
 }
 
-class _FeelingDot extends StatelessWidget {
-  const _FeelingDot({required this.color});
+/// The entry-volume proxy, as a short bar under the dots.
+///
+/// [count] is `feelings.length` at the call site — see [_DayCell]'s doc
+/// comment for why that stands in for an entry count the backend does not
+/// send. Mapped in fifths, per UX-9b: 1 distinct feeling reads as 20% full,
+/// [_volumeBarMaxCount] or more reads as 100%. A day with only one
+/// distinct feeling still draws a bar (20%, never empty) — the bar's job is
+/// telling a 1-feeling day from a 5-feeling one, not telling a logged day
+/// from an empty one, which the dots above it already do.
+class _VolumeBar extends StatelessWidget {
+  const _VolumeBar({
+    super.key,
+    required this.count,
+    required this.hairline,
+    required this.fill,
+  });
 
-  final Color color;
+  final int count;
+  final Color hairline;
+  final Color fill;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: 6,
-    height: 6,
-    decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+  Widget build(BuildContext context) => ClipRRect(
+    borderRadius: JournalShapes.full,
+    child: SizedBox(
+      width: 24,
+      height: 2,
+      child: Stack(
+        children: [
+          ColoredBox(color: hairline),
+          FractionallySizedBox(
+            widthFactor: (count / _volumeBarMaxCount).clamp(0.2, 1),
+            child: ColoredBox(color: fill),
+          ),
+        ],
+      ),
+    ),
   );
 }
 
@@ -522,7 +589,7 @@ class _TotalsPanel extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      _FeelingDot(color: entry.key.accent(journal)),
+                      FeelingDot(color: entry.key.accent(journal), size: 6),
                       const SizedBox(width: JournalSpacing.x3),
                       Text(entry.key.label, style: theme.textTheme.bodyMedium),
                     ],
