@@ -117,6 +117,8 @@ export const SCHEMA_STATEMENTS: string[] = [
      base_rate REAL NOT NULL DEFAULT 0,
      is_strong BOOLEAN NOT NULL DEFAULT 0,
      confounders JSON NOT NULL DEFAULT '[]',
+     narration_attempts INTEGER NOT NULL DEFAULT 0,
+     narration_next_attempt_at DATETIME,
      PRIMARY KEY (id),
      FOREIGN KEY(feeling_key) REFERENCES feelings ("key"),
      FOREIGN KEY(topic_id) REFERENCES topics (id)
@@ -407,5 +409,22 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
               FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE,
               FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
             )`,
+  },
+
+  // --- Per-pattern narration attempt state (#88) ------------------------------------------------
+  // The narration worker retries a rejected suggestion with exponential backoff and gives up after
+  // a cap (`src/insights/constants.ts`), rather than hammering the model on the same pattern every
+  // idle tick. Both columns are reset to their defaults by `PatternsService.storeCandidates`
+  // whenever a pattern's counts change and its suggestion reverts to the template, so a pattern
+  // that becomes narratable again always gets a fresh set of attempts.
+  {
+    sql: `ALTER TABLE patterns ADD COLUMN narration_attempts INTEGER NOT NULL DEFAULT 0`,
+    table: 'patterns',
+    column: 'narration_attempts',
+  },
+  {
+    sql: `ALTER TABLE patterns ADD COLUMN narration_next_attempt_at DATETIME`,
+    table: 'patterns',
+    column: 'narration_next_attempt_at',
   },
 ];

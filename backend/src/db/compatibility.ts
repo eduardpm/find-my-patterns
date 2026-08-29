@@ -97,6 +97,8 @@ const REQUIRED: Record<string, Record<string, string>> = {
     base_rate: 'REAL',
     is_strong: 'BOOLEAN',
     confounders: 'JSON',
+    narration_attempts: 'INTEGER',
+    narration_next_attempt_at: 'DATETIME',
   },
   pattern_entries: { pattern_id: 'VARCHAR(36)', entry_id: 'VARCHAR(36)' },
   pattern_withdrawals: {
