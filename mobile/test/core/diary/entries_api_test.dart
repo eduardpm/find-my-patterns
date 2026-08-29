@@ -150,10 +150,65 @@ void main() {
       final client = clientFor(adapter);
       final api = EntriesApi(client, FeelingsApi(client));
 
-      final echoes = await api.echo('entry-1');
+      final result = await api.echo('entry-1');
 
-      expect(echoes.single.patternId, 'p1');
+      expect(result.echoes.single.patternId, 'p1');
+      expect(result.progress, isNull);
       expect(adapter.requests.single.path, '/entries/entry-1/echo');
+    });
+
+    test(
+      'reads the near-threshold progress alongside the echoes (#37)',
+      () async {
+        final adapter = FakeHttpAdapter([
+          FakeReply(
+            200,
+            body: {
+              'echoes': <Object?>[],
+              'progress': {
+                'topics_tracked': 7,
+                'confirmed_entries': 12,
+                'pairs': [
+                  {
+                    'topic': 'work',
+                    'feeling': 'anxious',
+                    'occurrences': 2,
+                    'threshold': 3,
+                  },
+                ],
+                'surfaced_pattern_count': 0,
+                'surfaced_pattern_gate': 3,
+              },
+            },
+          ),
+        ]);
+        final client = clientFor(adapter);
+        final api = EntriesApi(client, FeelingsApi(client));
+
+        final result = await api.echo('entry-1');
+
+        expect(result.echoes, isEmpty);
+        final progress = result.progress;
+        expect(progress, isNotNull);
+        expect(progress!.topicsTracked, 7);
+        expect(progress.confirmedEntries, 12);
+        expect(progress.pairs.single.topic, 'work');
+        expect(progress.pairs.single.occurrences, 2);
+        expect(progress.surfacedPatternCount, 0);
+        expect(progress.surfacedPatternGate, 3);
+      },
+    );
+
+    test('decodes a missing progress field as null (older backend)', () async {
+      final adapter = FakeHttpAdapter([
+        FakeReply(200, body: {'echoes': <Object?>[]}),
+      ]);
+      final client = clientFor(adapter);
+      final api = EntriesApi(client, FeelingsApi(client));
+
+      final result = await api.echo('entry-1');
+
+      expect(result.progress, isNull);
     });
   });
 

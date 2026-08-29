@@ -188,8 +188,13 @@ Map<String, Object?> patternJson({
   'last_updated_at': '2026-07-28T13:05:00Z',
 };
 
-/// A `GET /entries/{id}/echo` body carrying [count] narrative sentences.
-Map<String, Object?> echoJson({int count = 1}) => {
+/// A `GET /entries/{id}/echo` body carrying [count] narrative sentences,
+/// and optionally [progress] (#37, L-2) -- omitted (`null`) by default, the
+/// same as a backend response with nothing to report.
+Map<String, Object?> echoJson({
+  int count = 1,
+  Map<String, Object?>? progress,
+}) => {
   'echoes': [
     for (var i = 0; i < count; i++)
       {
@@ -203,4 +208,30 @@ Map<String, Object?> echoJson({int count = 1}) => {
         'narrative_text': 'You often feel happy about topic-$i.',
       },
   ],
+  'progress': progress,
+};
+
+/// A `progress` object for [echoJson] (#37, L-2). Defaults describe a
+/// diary well within the cold start, with one near-threshold pair.
+Map<String, Object?> progressJson({
+  int topicsTracked = 7,
+  int confirmedEntries = 12,
+  List<Map<String, Object?>>? pairs,
+  int surfacedPatternCount = 0,
+  int surfacedPatternGate = 3,
+}) => {
+  'topics_tracked': topicsTracked,
+  'confirmed_entries': confirmedEntries,
+  'pairs':
+      pairs ??
+      [
+        {
+          'topic': 'work',
+          'feeling': 'anxious',
+          'occurrences': 2,
+          'threshold': 3,
+        },
+      ],
+  'surfaced_pattern_count': surfacedPatternCount,
+  'surfaced_pattern_gate': surfacedPatternGate,
 };

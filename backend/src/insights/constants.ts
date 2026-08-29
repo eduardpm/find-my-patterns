@@ -250,6 +250,22 @@ export const MAX_CONTEXT_PATTERNS = 8;
 export const CONFIRMED_FEELING_SOURCES = ['confirmed', 'overridden'];
 
 /**
+ * #37 (L-2): once a diary has this many surfaced topic×feeling patterns, the insight progress
+ * surface's job — filling the cold-start gap before the first pattern exists — is done, and the
+ * pattern echo owns the "Entry saved" screen from here (`ProgressService#forEntry`).
+ *
+ * Coincidentally equal to `MIN_OCCURRENCE_THRESHOLD` in today's product, but a different fact about
+ * a different unit — that one counts occurrences of a single pair, this one counts how many pairs
+ * have themselves already become patterns — so it is kept as its own named constant rather than a
+ * second use of that one. Each is free to change without silently moving the other. Not part of
+ * `EngineConstants`/`engineConstants()` below: it never travels over `GET /insights`, only over the
+ * progress payload it gates (`ProgressOut.surfaced_pattern_gate`) — the same "a client never
+ * hardcodes a number it has to compare against" rule this file's module doc comment states, applied
+ * to the one screen that actually needs this particular number.
+ */
+export const SURFACED_PATTERN_GATE = 3;
+
+/**
  * #88: pacing for the background narration worker (`src/inference/worker.ts`).
  *
  * Not part of `EngineConstants` below — these govern the worker's own request cadence, never a

@@ -30,6 +30,7 @@ import { ExportController } from './entries/export.controller';
 import { ExportService } from './entries/export.service';
 import { InsightsController } from './insights/insights.controller';
 import { EchoService } from './insights/echo.service';
+import { ProgressService } from './insights/progress.service';
 import { PatternsService } from './insights/patterns.service';
 import { SeriesService } from './insights/series.service';
 import { WhenInsightsService } from './insights/when.service';
@@ -145,6 +146,7 @@ export class AppModule {
         SeriesService,
         QuestionYieldService,
         EchoService,
+        ProgressService,
         MonthlySummaryService,
         TranscriptionService,
         TranscriptionJobsService,

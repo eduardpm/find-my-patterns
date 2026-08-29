@@ -1149,6 +1149,152 @@ void main() {
     );
   });
 
+  group('insight progress surface (#37, L-2)', () {
+    test(
+      'moves to EchoStage carrying progress even when there is no echo',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: entryJson()),
+          FakeReply(
+            200,
+            body: echoJson(count: 0, progress: progressJson()),
+          ),
+        ]);
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isFalse);
+        final stage =
+            env.container
+                    .read(entryComposerControllerProvider(_testTargetDate))
+                    .stage
+                as EchoStage;
+        expect(stage.echoes, isEmpty);
+        expect(stage.progress, isNotNull);
+        expect(stage.progress!.topicsTracked, 7);
+        expect(stage.progress!.pairs.single.topic, 'work');
+      },
+    );
+
+    test(
+      'stays off EchoStage when the progress has no content and there is '
+      'no echo or celebration -- topicsTracked zero reads as "nothing yet"',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: entryJson()),
+          FakeReply(
+            200,
+            body: echoJson(
+              count: 0,
+              progress: progressJson(topicsTracked: 0, pairs: const []),
+            ),
+          ),
+        ]);
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isTrue);
+        expect(
+          env.container
+              .read(entryComposerControllerProvider(_testTargetDate))
+              .stage,
+          isNot(isA<EchoStage>()),
+        );
+      },
+    );
+
+    test(
+      'drops the progress from EchoStage once the gate has tripped, even '
+      'though the wire body still carries pairs',
+      () async {
+        // Task 3's gate: the backend already stops computing pairs once
+        // `surfaced_pattern_count >= surfaced_pattern_gate`, but this proves
+        // the client honours `InsightProgress.hasContent` too, rather than
+        // rendering whatever `pairs` happens to carry regardless of the
+        // gate.
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: entryJson()),
+          FakeReply(
+            200,
+            body: echoJson(
+              count: 1,
+              progress: progressJson(surfacedPatternCount: 3),
+            ),
+          ),
+        ]);
+
+        await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        final stage =
+            env.container
+                    .read(entryComposerControllerProvider(_testTargetDate))
+                    .stage
+                as EchoStage;
+        // The echo alone is still enough to reach EchoStage, but its own
+        // progress must read as gated.
+        expect(stage.echoes, hasLength(1));
+        expect(stage.progress, isNull);
+      },
+    );
+
+    test(
+      'renders alongside the first-pattern celebration on the same save '
+      '-- the two gates are independent',
+      () async {
+        final env = await readyController(
+          [
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: insightsJson(patterns: [patternJson()])),
+            FakeReply(
+              200,
+              body: echoJson(
+                count: 0,
+                progress: progressJson(surfacedPatternCount: 1),
+              ),
+            ),
+          ],
+          firstPatternStore: FakeFirstPatternNotifiedStore(notified: false),
+        );
+        env.controller.isAppForegrounded = () => true;
+
+        await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        final stage =
+            env.container
+                    .read(entryComposerControllerProvider(_testTargetDate))
+                    .stage
+                as EchoStage;
+        expect(stage.celebratedPattern, isNotNull);
+        expect(stage.progress, isNotNull);
+        expect(stage.progress!.pairs.single.topic, 'work');
+      },
+    );
+  });
+
   group('dismissError', () {
     test('clears the error message', () async {
       final env = await readyController(

@@ -30,6 +30,7 @@ import type {
   TopicFeelingPairing,
 } from '../domain/types';
 import { EchoService, type EchoOut } from '../insights/echo.service';
+import { ProgressService, type ProgressOut } from '../insights/progress.service';
 import { TopicsService, type Topic } from '../topics/topics.service';
 import {
   EntriesService,
@@ -125,6 +126,7 @@ export class EntriesController {
     private readonly entries: EntriesRepository,
     private readonly service: EntriesService,
     private readonly echoes: EchoService,
+    private readonly progress: ProgressService,
     private readonly topics: TopicsService,
   ) {}
 
@@ -303,17 +305,21 @@ export class EntriesController {
   }
 
   /**
-   * The pattern echo for an entry that has already been saved (I4).
+   * The pattern echo for an entry that has already been saved (I4), plus #37 (L-2)'s near-threshold
+   * progress alongside it.
    *
    * Declared before `:entryId` so the two-segment route is matched first, and shaped as a read on
    * a stored entry so there is no version of this request a composer could make about text that is
-   * still being written (I4-02).
+   * still being written (I4-02). `progress` is additive on the same response rather than a second
+   * endpoint: the issue asks for it "alongside the echo response", and the saved screen already
+   * calls this one to render the echo panel, so a second round trip would buy nothing a client
+   * could not get from this one already returning both.
    */
   @Get(':entryId/echo')
-  echo(@Param('entryId') entryId: string): { echoes: EchoOut[] } {
+  echo(@Param('entryId') entryId: string): { echoes: EchoOut[]; progress: ProgressOut | null } {
     const entry = this.entries.findById(entryId);
     if (!entry) throw new HttpException('Entry not found', HttpStatus.NOT_FOUND);
-    return { echoes: this.echoes.forEntry(entryId) };
+    return { echoes: this.echoes.forEntry(entryId), progress: this.progress.forEntry(entryId) };
   }
 
   @Get(':entryId')

@@ -324,6 +324,64 @@ class const PatternEcho(
   final String narrativeText,
 );
 
+/// One topic×feeling pair a just-saved entry moved, still short of the
+/// engine's occurrence threshold (#37, L-2).
+///
+/// [threshold] is read from the wire rather than assumed to be 3 --
+/// `mobile/CLAUDE.md`'s one rule, same as every other number on this page --
+/// so this line goes on reading correctly the day the backend's own
+/// threshold changes.
+class const ProgressPair(
+  final String topic,
+  final String feeling,
+  final int occurrences,
+  final int threshold,
+);
+
+/// The insight progress surface (#37, L-2): near-threshold counts for the
+/// "Entry saved" screen, shown only during the cold start before the diary
+/// has any surfaced patterns of its own.
+///
+/// Counts only -- see `backend/src/insights/progress.service.ts`'s doc
+/// comment for the three properties this shares with [PatternEcho]: after
+/// the entry is stored, never during; an observation, never a prediction;
+/// and read, never recomputed.
+class const InsightProgress(
+  final int topicsTracked,
+  final int confirmedEntries,
+
+  /// Up to two pairs, nearest-to-threshold first. Empty is the ordinary
+  /// answer for an entry that moved nothing close to a pattern -- not a
+  /// failure, the same as [PatternEcho] being absent for an unrelated
+  /// entry.
+  final List<ProgressPair> pairs,
+  final int surfacedPatternCount,
+  final int surfacedPatternGate,
+) {
+  /// Task 3's gate: once the diary already has this many surfaced patterns,
+  /// this surface's job -- filling the gap before the first pattern exists
+  /// -- is done, and the pattern echo owns the "Entry saved" screen from
+  /// here. Compared here rather than against a literal `3` on either side,
+  /// so this client keeps applying the gate correctly if the backend's own
+  /// number ever moves.
+  bool get isGated => surfacedPatternCount >= surfacedPatternGate;
+
+  /// Whether this is worth putting on screen at all: gated, or with no
+  /// topic yet linked to anything, the section has nothing honest to say
+  /// and the panel that renders it shows nothing.
+  bool get hasContent => !isGated && topicsTracked > 0;
+}
+
+/// `GET /entries/{id}/echo`'s whole response: this entry's own echoes,
+/// alongside the near-threshold [progress] the same save produced.
+///
+/// Both ride on one response rather than two round trips, because the
+/// composer's "Entry saved" screen always wants both together (#37).
+class const EchoResult(
+  final List<PatternEcho> echoes,
+  final InsightProgress? progress,
+);
+
 double? _toDouble(Object? value) => (value as num?)?.toDouble();
 
 /// Matches a trailing `Z` or a numeric UTC offset such as `+02:00`.
@@ -535,4 +593,43 @@ PatternEcho patternEchoFromJson(JsonObject json) => PatternEcho(
   json['present_total'] as int? ?? 0,
   _toDouble(json['lift']),
   json['narrative_text'] as String? ?? '',
+);
+
+/// Decodes one near-threshold pair (#37, L-2).
+ProgressPair progressPairFromJson(JsonObject json) => ProgressPair(
+  json['topic']! as String,
+  json['feeling']! as String,
+  json['occurrences'] as int? ?? 0,
+  json['threshold'] as int? ?? 3,
+);
+
+/// Decodes the `progress` field of `GET /entries/{id}/echo` (#37, L-2), or
+/// `null` when it is absent or not an object -- both a backend that
+/// predates this field and one that found nothing to report look the same
+/// here, and both mean "show nothing", never an error.
+InsightProgress? insightProgressFromJson(Object? json) {
+  if (json is! JsonObject) return null;
+  return InsightProgress(
+    json['topics_tracked'] as int? ?? 0,
+    json['confirmed_entries'] as int? ?? 0,
+    [
+      for (final dto
+          in (json['pairs'] as List<Object?>?)?.cast<JsonObject>() ??
+              const <JsonObject>[])
+        progressPairFromJson(dto),
+    ],
+    json['surfaced_pattern_count'] as int? ?? 0,
+    json['surfaced_pattern_gate'] as int? ?? 3,
+  );
+}
+
+/// Decodes `GET /entries/{id}/echo`'s whole response.
+EchoResult echoResultFromJson(JsonObject json) => EchoResult(
+  [
+    for (final dto
+        in (json['echoes'] as List<Object?>?)?.cast<JsonObject>() ??
+            const <JsonObject>[])
+      patternEchoFromJson(dto),
+  ],
+  insightProgressFromJson(json['progress']),
 );

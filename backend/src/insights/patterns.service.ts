@@ -29,6 +29,7 @@ import {
   invert,
   inverseNarrative,
   isMixedValence,
+  isPairExcluded as pairIsExcluded,
   isStrong,
   recommendationHeadlineFor,
   recommendationSentenceFor,
@@ -600,8 +601,12 @@ export class PatternsService {
     // entry could otherwise form, which is rule 2's conservative default). Single-valence entries are
     // never excluded from anything — rule 1's "no behaviour change" for the common case.
     const isPairExcluded = (entry: LoadedEntry, topicId: string, feelingKey: string): boolean =>
-      (isMixedByEntry.get(entry.id) ?? false) &&
-      !entry.confirmedPairs.has(`${topicId} ${feelingKey}`);
+      pairIsExcluded(
+        isMixedByEntry.get(entry.id) ?? false,
+        entry.confirmedPairs,
+        topicId,
+        feelingKey,
+      );
 
     // Lifetime pair evidence, which is what decides whether a pattern exists at all; the window
     // decides whether it is active (I3-03).
@@ -1529,6 +1534,26 @@ export class PatternsService {
   // -------------------------------------------------------------------------------------------
   // Reading
   // -------------------------------------------------------------------------------------------
+
+  /**
+   * How many topic×feeling patterns are currently stored — #37 (L-2)'s gate for the insight
+   * progress surface ("hide once the diary has ≥3 surfaced patterns").
+   *
+   * A row count on `patterns`, not `listPatterns().length`: this is asked from the save path
+   * (`ProgressService`, alongside the echo), where paying for `listPatterns()`'s narrative text,
+   * confounder decoding and recommendation pass just to throw away everything but a number would be
+   * exactly the kind of engine work `EchoService`'s doc comment already rules out for that path. Both
+   * `active` and `historical` rows count — a pattern that already surfaced once and later went
+   * quiet is still a pattern this diary has found, and the progress surface's job ends the moment
+   * the cold start does, not the moment every pattern happens to be in-window. Context patterns
+   * (#21) are deliberately not part of this count: they are never persisted (see `ContextPatternOut`'s
+   * doc comment), and the progress surface is specifically about the topic×feeling pairs a saved
+   * entry can move — a context factor is a fact about the calendar, not something an entry "gets
+   * closer to" by being written.
+   */
+  surfacedPatternCount(): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM patterns').get() as { n: number }).n;
+  }
 
   listPatterns(): PatternOut[] {
     const rows = this.db

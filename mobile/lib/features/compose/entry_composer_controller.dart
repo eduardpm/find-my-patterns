@@ -77,12 +77,23 @@ final class const PairingStage(final Entry entry) extends ComposerStage;
 /// one of its own (L-3/#38): the first-pattern celebration is shown on
 /// exactly this "Saved" screen, alongside whatever [echoes] this entry's
 /// own topics produced, not before or after it -- so this stage is reached
-/// whenever there is [echoes] content, a celebration, or both, and never
-/// reached (see `EntryComposerController._loadEcho`) when there is
-/// neither.
+/// whenever there is [echoes] content, a celebration, [progress] content, or
+/// any combination of the three, and never reached (see
+/// `EntryComposerController._loadEcho`) when there is none of them.
+///
+/// [progress] (#37, L-2) can be non-null and worth showing on the very save
+/// that also earns [celebratedPattern]: the gate on each is independent --
+/// the celebration fires once, the moment the diary's *first* pattern ever
+/// surfaces, while [InsightProgress.hasContent] stays true until the third
+/// one does. The two are deliberately left to render together rather than
+/// suppressing one for the other: they are never about the same pair (a
+/// pair the progress surface would report is by definition still below the
+/// threshold the celebration's pattern already cleared), so a screen
+/// showing both is stating two true, unrelated facts, not repeating itself.
 final class const EchoStage(
   final List<PatternEcho> echoes, {
   final Pattern? celebratedPattern,
+  final InsightProgress? progress,
 }) extends ComposerStage;
 
 /// Everything the entry composer needs to render, gathered across four
@@ -768,22 +779,31 @@ class EntryComposerController extends Notifier<ComposerState> {
     return await _loadEcho(entryId, celebrate: celebrate);
   }
 
-  /// Loads this entry's own pattern echoes and moves to [EchoStage] if
-  /// there is [celebrate], [echoes][EchoStage.echoes], or both to show.
+  /// Loads this entry's own pattern echoes and near-threshold progress
+  /// (#37, L-2), and moves to [EchoStage] if there is [celebrate], echoes,
+  /// progress worth showing, or any combination of the three.
   ///
   /// [celebrate] -- the pattern [_checkFirstPattern] says is the diary's
   /// first, or `null` when there is none -- can keep this on [EchoStage]
-  /// even when this entry produced no echo of its own and even when the
-  /// echo fetch itself fails: the celebration is not this entry's echo and
-  /// must not be silently dropped just because the unrelated echo call had
-  /// nothing, or failed.
+  /// even when this entry produced no echo or progress of its own and even
+  /// when the echo/progress fetch itself fails: the celebration is not this
+  /// entry's echo and must not be silently dropped just because the
+  /// unrelated call had nothing, or failed.
   Future<bool> _loadEcho(String entryId, {required Pattern? celebrate}) async {
     try {
-      final echoes = await ref.read(entriesApiProvider).echo(entryId);
+      final result = await ref.read(entriesApiProvider).echo(entryId);
       if (!ref.mounted) return false;
-      if (echoes.isEmpty && celebrate == null) return true;
+      final progress = result.progress;
+      final hasProgress = progress != null && progress.hasContent;
+      if (result.echoes.isEmpty && celebrate == null && !hasProgress) {
+        return true;
+      }
       state = state.copyWith(
-        stage: EchoStage(echoes, celebratedPattern: celebrate),
+        stage: EchoStage(
+          result.echoes,
+          celebratedPattern: celebrate,
+          progress: hasProgress ? progress : null,
+        ),
       );
       return false;
     } on ApiError {
