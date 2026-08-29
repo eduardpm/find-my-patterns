@@ -16,6 +16,7 @@ import { assertCompatible } from '../src/db/compatibility';
 import { openDiary } from '../src/db/database';
 import { FEELING_GROUP_SEED, FEELING_SEED } from '../src/db/feeling-vocabulary';
 import { migrateDiary } from '../src/db/migrate';
+import { SCHEMA_STATEMENTS } from '../src/db/schema';
 
 const LEGACY = path.resolve(__dirname, 'fixtures/pre-grouped-vocabulary.db');
 
@@ -150,5 +151,133 @@ describe('migrateDiary', () => {
     const missing = path.join(dir, 'nope.db');
     expect(() => migrateDiary(missing)).toThrow(/No diary at/);
     expect(fs.existsSync(missing)).toBe(false);
+  });
+});
+
+describe('migrateDiary — #60: the Steady group valence split', () => {
+  /**
+   * A diary that already went through the grouped-vocabulary migration, at the valence scheme
+   * `feeling-vocabulary.ts` carried before #60: every feeling in "Steady", `calm`/`content`/
+   * `relaxed`/`focused`/`curious` included, inherited the group's `neutral` valence. This is the
+   * shape a real user's diary is in today, and it is what proves the migration *updates* an
+   * existing row rather than only inserting new ones — `pre-grouped-vocabulary.db` above predates
+   * the grouped vocabulary entirely, so it never exercises the update path for these five keys.
+   */
+  function buildPreSplitDiary(targetPath: string): void {
+    const raw = new Database(targetPath);
+    try {
+      raw.exec('BEGIN');
+      for (const statement of SCHEMA_STATEMENTS) raw.exec(statement);
+      raw.exec('COMMIT');
+
+      const insertGroup = raw.prepare(
+        'INSERT INTO feeling_groups ("key", label, valence, sort_order) VALUES (?, ?, ?, ?)',
+      );
+      insertGroup.run('uplifted', 'Uplifted', 'positive', 0);
+      insertGroup.run('steady', 'Steady', 'neutral', 1);
+      insertGroup.run('tense', 'Tense', 'negative', 2);
+      insertGroup.run('low', 'Low', 'negative', 3);
+
+      const insertFeeling = raw.prepare(
+        'INSERT INTO feelings ("key", label, valence, group_key, sort_order) VALUES (?, ?, ?, ?, ?)',
+      );
+      insertFeeling.run('happy', 'Happy', 'positive', 'uplifted', 0);
+      const preSplitSteady = [
+        'neutral',
+        'calm',
+        'content',
+        'relaxed',
+        'focused',
+        'curious',
+        'indifferent',
+      ];
+      preSplitSteady.forEach((key, index) =>
+        insertFeeling.run(key, key, 'neutral', 'steady', 100 + index),
+      );
+      insertFeeling.run('sad', 'Sad', 'negative', 'low', 300);
+
+      const stamp = '2026-01-01 00:00:00.000000';
+      raw
+        .prepare(
+          `INSERT INTO diary_entries
+             (id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source, version)
+           VALUES ('e1', ?, ?, '2026-01-01', 'freeform', 'Tea and a quiet evening.', 'calm', 'confirmed', 1)`,
+        )
+        .run(stamp, stamp);
+    } finally {
+      raw.close();
+    }
+  }
+
+  it('updates an existing row to the new per-feeling valence, without touching what the user wrote', () => {
+    const preSplitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diary-pre-split-'));
+    const preSplitPath = path.join(preSplitDir, 'diary.db');
+    try {
+      buildPreSplitDiary(preSplitPath);
+
+      const report = migrateDiary(preSplitPath);
+      // The five overridden feelings, plus `neutral` and `indifferent`, already existed and were
+      // refreshed in place — not reinserted.
+      expect(report.feelingsUpdated).toBeGreaterThanOrEqual(7);
+
+      const db = new Database(preSplitPath, { readonly: true });
+      try {
+        const steady = db
+          .prepare('SELECT "key", valence FROM feelings WHERE group_key = ? ORDER BY "key"')
+          .all('steady') as Array<{ key: string; valence: string }>;
+        expect(Object.fromEntries(steady.map((row) => [row.key, row.valence]))).toEqual({
+          calm: 'positive',
+          content: 'positive',
+          curious: 'positive',
+          focused: 'positive',
+          indifferent: 'neutral',
+          neutral: 'neutral',
+          relaxed: 'positive',
+        });
+        // The group itself is untouched — this is a per-feeling override, not a regrouping.
+        const group = db
+          .prepare('SELECT valence FROM feeling_groups WHERE "key" = ?')
+          .get('steady') as { valence: string };
+        expect(group.valence).toBe('neutral');
+
+        // No data loss: the entry the user wrote, and the feeling it points at, are exactly as
+        // they were before the migration ran.
+        const entry = db
+          .prepare('SELECT feeling_key, raw_text, version FROM diary_entries WHERE id = ?')
+          .get('e1') as { feeling_key: string; raw_text: string; version: number };
+        expect(entry).toEqual({
+          feeling_key: 'calm',
+          raw_text: 'Tea and a quiet evening.',
+          version: 1,
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      fs.rmSync(preSplitDir, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent — a second run leaves the split exactly as the first left it', () => {
+    const preSplitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diary-pre-split-idem-'));
+    const preSplitPath = path.join(preSplitDir, 'diary.db');
+    try {
+      buildPreSplitDiary(preSplitPath);
+      migrateDiary(preSplitPath);
+
+      const db = new Database(preSplitPath, { readonly: true });
+      const once = db.prepare('SELECT * FROM feelings ORDER BY "key"').all();
+      db.close();
+
+      const second = migrateDiary(preSplitPath);
+      expect(second.feelingsInserted).toBe(0);
+
+      const db2 = new Database(preSplitPath, { readonly: true });
+      const twice = db2.prepare('SELECT * FROM feelings ORDER BY "key"').all();
+      db2.close();
+      expect(twice).toEqual(once);
+    } finally {
+      fs.rmSync(preSplitDir, { recursive: true, force: true });
+    }
   });
 });

@@ -76,15 +76,24 @@ describe('GET /feelings', () => {
     expect(nested.sort()).toEqual(res.body.feelings.map((f: { key: string }) => f.key).sort());
   });
 
-  it('gives every group between three and eight feelings, all of its own valence', async () => {
+  it('gives every group between three and eight feelings, valence matching the group except a stated override', async () => {
+    // #60: `calm`, `content`, `relaxed`, `focused` and `curious` are pleasant states that sit in
+    // "Steady" for presentation only — the group stays `neutral`, tinting the client accordingly,
+    // but these five carry their own `positive` valence for the insight engine. Anything else
+    // diverging from its group here would be the seed drifting apart by accident, not this ticket.
+    const OVERRIDDEN: Record<string, string> = {
+      calm: 'positive',
+      content: 'positive',
+      relaxed: 'positive',
+      focused: 'positive',
+      curious: 'positive',
+    };
     const res = await request(server()).get('/feelings');
     for (const group of res.body.groups) {
       expect(group.feelings.length).toBeGreaterThanOrEqual(3);
       expect(group.feelings.length).toBeLessThanOrEqual(8);
-      // A group is tinted with one accent by both clients, which is only honest while every
-      // feeling inside it carries the group's valence.
       for (const feeling of group.feelings) {
-        expect(feeling.valence).toBe(group.valence);
+        expect(feeling.valence).toBe(OVERRIDDEN[feeling.key] ?? group.valence);
         expect(feeling.group_key).toBe(group.key);
       }
     }
