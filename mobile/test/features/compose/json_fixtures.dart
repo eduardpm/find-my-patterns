@@ -109,6 +109,32 @@ Map<String, Object?> entryJson({
   'suggested_feelings': ?suggestedFeelings,
 };
 
+/// An entry as `POST /entries` returns it the moment analysis is queued and
+/// nobody -- neither the analyser nor the user -- has chosen a feeling yet:
+/// `feeling_key`/`feeling_keys` are genuinely empty and `feeling_source` is
+/// `'unset'`, unlike [entryJson]'s default (which always carries
+/// `feeling_key: 'happy'`, `feeling_source: 'suggested'`, useful for tests
+/// where an immediate suggestion is exactly the point, but wrong for a poll
+/// sequence's *pending* replies -- a `feeling_key` already present there
+/// would seed a composer's selection before the real suggestion arrives).
+Map<String, Object?> unanalysedEntryJson({
+  String id = 'entry-1',
+  int version = 1,
+  String rawText = 'a day',
+}) => {
+  'id': id,
+  'created_at': '2026-07-28T13:05:00',
+  'entry_date': '2026-07-28',
+  'mode': 'freeform',
+  'raw_text': rawText,
+  'feeling_key': null,
+  'feeling_keys': <String>[],
+  'feeling_source': 'unset',
+  'version': version,
+  'analysis_pending': true,
+  'suggested_feelings': <Map<String, Object?>>[],
+};
+
 /// One suggested-feeling DTO, nested under an entry's `suggested_feelings`.
 Map<String, Object?> suggestedFeelingJson({
   String key = 'happy',

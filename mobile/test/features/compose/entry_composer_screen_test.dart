@@ -365,6 +365,91 @@ void main() {
     );
 
     testWidgets(
+      'pre-selects every feeling the worker already wrote onto the entry, '
+      'not just the first (#66)',
+      (tester) async {
+        // The ground-truth shape a *fixed* backend returns once the worker
+        // has run: the entry's own `feeling_keys` already carry both
+        // feelings under `feeling_source: 'suggested'`, and
+        // `suggested_feelings` mirrors that same set (issue #66 -- before
+        // the backend fix, `suggested_feelings` came back `[]` here even
+        // though the entry already carried both). This is deliberately not
+        // the single-feeling fixture the other test in this group uses, so
+        // pre-selection is proven for the multi-feeling case the backend
+        // actually produces, not a shape that happens to work by accident.
+        final delay = ManualDelay();
+        await tester.pumpWidget(
+          buildTestable(
+            replies: [
+              ...bootReplies(),
+              // Genuinely pending -- no feeling chosen yet by anyone,
+              // `entryJson()`'s default `feeling_key: 'happy'` would seed
+              // `_selected` before the suggestion ever arrives and mask
+              // exactly the gap this test exists to catch (the re-seed in
+              // `_ConfirmFeelingStepState.didUpdateWidget` only fires while
+              // `_selected` is still empty).
+              FakeReply(201, body: unanalysedEntryJson()),
+              FakeReply(200, body: unanalysedEntryJson()),
+              FakeReply(
+                200,
+                body: entryJson(
+                  feelingKey: 'happy',
+                  feelingKeys: ['happy', 'sad'],
+                  analysisPending: false,
+                  suggestedFeelings: [
+                    suggestedFeelingJson(key: 'happy'),
+                    suggestedFeelingJson(key: 'sad'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+        await tester.pumpAndSettle();
+        containerOf(
+          tester,
+        ).read(entryComposerControllerProvider.notifier).pollDelay = delay.call;
+
+        await saveFreeformEntry(tester);
+        final banner = find.text('Reading your entry…');
+        await pumpUntilFound(tester, banner);
+
+        delay.release(); // attempt 1: the worker is still analysing.
+        await pumpUntil(tester, () => delay.isWaiting);
+        delay.release(); // attempt 2: the analyser's verdict is in.
+        await pumpUntilGone(tester, banner);
+        await tester.pumpAndSettle();
+
+        // This is the bug's exact symptom (issue #66): with
+        // `suggested_feelings` suppressed, nothing was ever pre-selected
+        // and the picker fell back to its empty state.
+        expect(
+          find.text(
+            'Nothing chosen yet — pick a group to see the feelings inside '
+            'it.',
+          ),
+          findsNothing,
+        );
+        // Both feelings from the worker's own write are pre-selected --
+        // each renders both as a removable chip in the chosen-feelings row
+        // and as its own intensity dial below, so at least one of each is
+        // on screen -- not just the primary one.
+        expect(find.text('Happy'), findsWidgets);
+        expect(find.text('Sad'), findsWidgets);
+        // Only the chosen-feelings chips carry the "suggested" label, one
+        // per pre-selected feeling.
+        expect(find.text('suggested'), findsNWidgets(2));
+        // Confirm is enabled without the user picking anything by hand.
+        final confirmButton = find.widgetWithText(ElevatedButton, 'Confirm');
+        await tester.ensureVisible(confirmButton);
+        expect(
+          tester.widget<ElevatedButton>(confirmButton).onPressed,
+          isNotNull,
+        );
+      },
+    );
+
+    testWidgets(
       'a worker that never responds resolves to the manual picker -- no '
       'stuck spinner and no error',
       (tester) async {

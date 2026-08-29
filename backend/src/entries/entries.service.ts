@@ -6,6 +6,7 @@ import type { DiaryDatabase } from '../db/database';
 import type { DiaryEntry, SuggestedFeeling } from '../domain/types';
 import { ENTRY_INFERENCE, type EntryInference } from '../inference/inference';
 import { StaleEntryError } from '../common/stale-entry';
+import { CONFIRMED_FEELING_SOURCES } from '../insights/constants';
 import { EntriesRepository } from './entries.repository';
 import { GUIDED_DRAFT_SENTINEL } from './guided-draft';
 
@@ -270,9 +271,14 @@ export class EntriesService {
   /**
    * The analyser's current opinion of an entry, and whether it is still forming one.
    *
-   * `suggested` is non-null only when the analyser's latest answer *differs* from the feeling the
-   * entry actually carries -- there is nothing to propose when they already agree, and a client
-   * showing "we suggest: happy" under a feeling that is already happy is noise.
+   * `suggested` is non-null unless a *user* has already spoken for the same feelings the analyser
+   * is proposing. Agreement alone is not enough to suppress: the worker applies its own answer
+   * straight onto the entry (`feeling_source = 'suggested'`) before this ever runs, so for a
+   * freshly analysed entry the entry's feelings and the analyser's proposal are *always* identical
+   * -- suppressing on identity alone silently threw away every suggestion the moment it was
+   * created (#66). The guard is only about not re-nagging a real choice: once the entry's source is
+   * `'confirmed'` or `'overridden'`, a client showing "we suggest: happy" under a feeling the user
+   * already confirmed as happy is noise, and that is the only case this suppresses.
    */
   analysisFor(entryId: string): {
     suggested: SuggestedFeeling | null;
@@ -313,13 +319,19 @@ export class EntriesService {
     const entry = this.repo.findById(entryId);
     if (!entry) return nothing;
 
-    // Nothing to propose when the analyser and the entry already agree — a client showing
-    // "we suggest: happy" under a feeling that is already happy is noise. With a set, agreement
-    // means the same feelings, regardless of the order they were written in.
+    // Nothing to propose when a *user* has already chosen exactly what the analyser is proposing
+    // — a client showing "we suggest: happy" under a feeling the user confirmed as happy is
+    // noise. With a set, agreement means the same feelings, regardless of the order they were
+    // written in. Agreement while the source is still `'suggested'` (or `'unset'`) is not that
+    // case — it is the analyser's own write agreeing with itself, which is the normal state of a
+    // freshly analysed entry and exactly what the client needs surfaced to pre-select from.
     const current = new Set(entry.feelingKeys);
     const proposed = suggestions.map((suggestion) => suggestion.key);
     const identical = current.size === proposed.length && proposed.every((key) => current.has(key));
-    if (identical) return nothing;
+    const userAlreadyChose = (CONFIRMED_FEELING_SOURCES as readonly string[]).includes(
+      entry.feelingSource,
+    );
+    if (identical && userAlreadyChose) return nothing;
 
     return { suggested: suggestions[0], suggestedAll: suggestions, pending };
   }
