@@ -3,7 +3,21 @@ import type { NaiveDateTime, PlainDate } from '../db/codecs';
 export type EntryMode = 'guided' | 'freeform';
 export type FeelingSource = 'unset' | 'suggested' | 'confirmed' | 'overridden';
 export type Valence = 'positive' | 'neutral' | 'negative';
-export type PatternDirection = 'keep' | 'change';
+
+/**
+ * The advice badge a pattern card carries (P0-2), derived once from the pattern's `kind` and its
+ * feeling's `valence` — see `insights/patterns.service.ts#badgeDirectionFor`, the single function
+ * that owns the mapping. `'none'` is a neutral-valence feeling: no positive signal to reinforce
+ * and no negative one to discourage, so there is nothing to advise, and both clients render it as
+ * no badge rather than inventing one.
+ *
+ * Distinct from the two-valued direction persisted on the `patterns` row (`'keep' | 'change'`,
+ * still `directionFor` in the same file): that field predates this badge, feeds
+ * `inference/worker.ts`'s suggestion-phrasing prompt and is checked by `db/compatibility.ts` on
+ * every startup, and neither has a "no opinion" state to spend, so a neutral pattern still
+ * collapses to `'change'` there, unchanged.
+ */
+export type PatternDirection = 'keep' | 'change' | 'none';
 
 export interface Feeling {
   key: string;

@@ -145,7 +145,15 @@ export interface GuidingQuestion {
   is_mandatory: boolean;
 }
 
-export type PatternDirection = 'keep' | 'change';
+/**
+ * The advice badge a pattern card carries (P0-2), derived once on the backend from the pattern's
+ * `kind` and its feeling's valence — see `badgeDirectionFor` in
+ * `backend/src/insights/patterns.service.ts`, the single function that decides it. `'none'` is a
+ * neutral-valence feeling: no positive signal to reinforce and no negative one to discourage, so
+ * there is nothing to advise, and this client renders no badge at all rather than defaulting to
+ * one — see `PatternCard`.
+ */
+export type PatternDirection = 'keep' | 'change' | 'none';
 
 /** Forward: the feeling went *with* the topic. Inverse: it went with the topic's absence (I1). */
 export type PatternKind = 'forward' | 'inverse';

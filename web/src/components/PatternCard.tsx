@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { EngineConstants, Pattern, PatternEvidence } from '../domain/types';
+import type { EngineConstants, Pattern, PatternDirection, PatternEvidence } from '../domain/types';
 import { Icon, type IconName } from './Icon';
 
 /**
@@ -16,13 +16,31 @@ import { Icon, type IconName } from './Icon';
  * the topic's leading capital — applied in CSS, so the string itself is untouched.
  */
 
-const DIRECTION: Record<string, { label: string; icon: IconName }> = {
-  // Presentation only — the backend still decides *which* of these two a pattern is. Each gets a
-  // word, an arrow and a colour rather than a colour alone: red-versus-green is exactly the pair
-  // that disappears for the most common form of colour blindness (FR-027).
+// Presentation only — the backend still decides *which* of these a pattern is (P0-2). Each of the
+// two shown badges gets a word, an arrow and a colour rather than a colour alone: red-versus-green
+// is exactly the pair that disappears for the most common form of colour blindness (FR-027).
+// `'none'` (a neutral-valence feeling — no positive signal to reinforce, no negative one to
+// discourage) has no entry here on purpose: it is not a third badge, it is no badge, matching the
+// mobile client's `patternBadgeFor`. Falling back to `DIRECTION.change` for it — as this used to —
+// is the exact defect P0-2 removes: a neutral pattern reading "Worth changing" with no negative
+// signal behind it.
+const DIRECTION: Record<'keep' | 'change', { label: string; icon: IconName }> = {
   keep: { label: 'Worth keeping', icon: 'trendUp' },
   change: { label: 'Worth changing', icon: 'trendDown' },
 };
+
+/**
+ * Which badge, if any, a pattern card shows for `direction` (P0-2).
+ *
+ * The single place this decision is made on the web client, kept separately testable and mirroring
+ * `patternBadgeFor` in `mobile/lib/features/insights/pattern_card.dart`. It never re-derives
+ * keep/change from the pattern's kind or feeling; the backend owns that (`badgeDirectionFor` in
+ * `backend/src/insights/patterns.service.ts`) — this only turns the resolved value into "show no
+ * badge" vs "show this one".
+ */
+function directionBadge(direction: PatternDirection): { label: string; icon: IconName } | null {
+  return direction === 'none' ? null : DIRECTION[direction];
+}
 
 const percent = (rate: number | null): string =>
   rate === null ? '—' : `${Math.round(rate * 100)}%`;
@@ -36,7 +54,7 @@ export function PatternCard({ pattern, constants }: Props) {
   const topicId = useId();
   const evidenceId = useId();
   const [showEvidence, setShowEvidence] = useState(false);
-  const direction = DIRECTION[pattern.direction] ?? DIRECTION.change;
+  const badge = directionBadge(pattern.direction);
   const isInverse = pattern.kind === 'inverse';
   const isHistorical = pattern.status === 'historical';
 
@@ -72,10 +90,16 @@ export function PatternCard({ pattern, constants }: Props) {
           )}
           {pattern.is_strong && <span className="pattern-tag pattern-tag--strong">Strong</span>}
         </div>
-        <span className={`pattern-badge pattern-badge--${pattern.direction}`}>
-          <Icon name={direction.icon} size="1em" />
-          {direction.label}
-        </span>
+        {/*
+          A neutral-valence pattern (P0-2) carries no badge at all — neither colour has anything
+          to say about it — so nothing renders here rather than defaulting to either one.
+        */}
+        {badge && (
+          <span className={`pattern-badge pattern-badge--${pattern.direction}`}>
+            <Icon name={badge.icon} size="1em" />
+            {badge.label}
+          </span>
+        )}
       </div>
 
       <p className="pattern-card__narrative">{pattern.narrative_text}</p>

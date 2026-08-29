@@ -56,6 +56,19 @@ void main() {
     expect(find.text('KEEP DOING'), findsOneWidget);
   });
 
+  // P0-2: a neutral-valence feeling has no positive signal to reinforce and
+  // no negative one to discourage, so the card shows neither badge rather
+  // than defaulting to one.
+  testWidgets('shows no direction badge for a neutral-valence pattern', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      app(buildPattern(direction: PatternDirection.none)),
+    );
+    expect(find.text('KEEP DOING'), findsNothing);
+    expect(find.text('CONSIDER CHANGING'), findsNothing);
+  });
+
   testWidgets(
     'shows "Without it" for an inverse pattern and swaps the strength labels',
     (
@@ -235,5 +248,28 @@ void main() {
 
     expect(openedId, 'entry-42');
     expect(openedDate, const CalendarDate(2026, 8, 20));
+  });
+
+  // P0-2: `patternBadgeFor` is the single function that decides which badge
+  // a card shows, kept separately testable (no `BuildContext` needed) so
+  // ticket P0-6 can extend it with another reason to return no badge.
+  group('patternBadgeFor', () {
+    test('keep and change pass straight through', () {
+      expect(
+        patternBadgeFor(buildPattern(direction: PatternDirection.keep)),
+        PatternDirection.keep,
+      );
+      expect(
+        patternBadgeFor(buildPattern(direction: PatternDirection.change)),
+        PatternDirection.change,
+      );
+    });
+
+    test('a neutral-valence pattern (none) becomes no badge at all', () {
+      expect(
+        patternBadgeFor(buildPattern(direction: PatternDirection.none)),
+        isNull,
+      );
+    });
   });
 }

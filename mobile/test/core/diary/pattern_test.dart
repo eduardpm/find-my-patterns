@@ -6,8 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('PatternDirection', () {
-    test("'change' maps to change, else keep", () {
+    test("'change' and 'none' map to their namesakes, else keep", () {
       expect(PatternDirection.fromWire('change'), PatternDirection.change);
+      expect(PatternDirection.fromWire('none'), PatternDirection.none);
       expect(PatternDirection.fromWire('keep'), PatternDirection.keep);
       expect(PatternDirection.fromWire('anything'), PatternDirection.keep);
     });
@@ -268,6 +269,18 @@ void main() {
         expect(pattern.comparisonNote, isNull);
       },
     );
+
+    // P0-2: `patternFromJson` used to compare `json['direction']` to
+    // `'change'` directly, bypassing `PatternDirection.fromWire` entirely,
+    // so a `'none'` value from the backend silently became `keep` instead
+    // of `none`. Routing through `fromWire` fixed that.
+    test("a 'none' direction decodes to PatternDirection.none, not keep", () {
+      final pattern = patternFromJson(
+        fullPatternJson(overrides: {'direction': 'none'}),
+        catalog,
+      );
+      expect(pattern.direction, PatternDirection.none);
+    });
 
     test('feeling resolves through the catalog and drops when unknown', () {
       final pattern = patternFromJson(fullPatternJson(), catalog);

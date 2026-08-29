@@ -3,19 +3,33 @@ import 'calendar_date.dart';
 import 'entry.dart';
 import 'feeling.dart';
 
-/// Whether the suggestion tied to a pattern is to change the habit or keep
-/// it.
+/// Whether the badge tied to a pattern is to change the habit, keep it, or
+/// say nothing (P0-2).
+///
+/// The backend derives this once from the pattern's kind and its feeling's
+/// valence -- see `badgeDirectionFor` in `backend/src/insights/patterns.service.ts`,
+/// the single function that decides it -- and this client renders whatever
+/// it says, never re-deriving it from `kind` or the feeling here. [none] is
+/// a neutral-valence feeling: no positive signal to reinforce and no
+/// negative one to discourage, so there is nothing to advise.
 enum PatternDirection {
   /// The pattern is worth keeping as-is.
   keep,
 
   /// The pattern is worth changing.
-  change;
+  change,
 
-  /// `'change'` maps to [change]; anything else, including an unrecognised
-  /// value, maps to [keep].
-  static PatternDirection fromWire(String raw) =>
-      raw == 'change' ? PatternDirection.change : PatternDirection.keep;
+  /// The feeling behind this pattern is neutral. Neither badge applies.
+  none;
+
+  /// `'change'` and `'none'` map to their namesakes; anything else,
+  /// including an unrecognised value, maps to [keep] -- the same
+  /// forward-compatible default this had before [none] existed.
+  static PatternDirection fromWire(String raw) => switch (raw) {
+    'change' => PatternDirection.change,
+    'none' => PatternDirection.none,
+    _ => PatternDirection.keep,
+  };
 }
 
 /// Which side of the comparison a pattern is about.
@@ -314,9 +328,7 @@ Pattern patternFromJson(JsonObject json, FeelingCatalog catalog) => Pattern(
   json['occurrence_count']! as int,
   json['lifetime_count'] as int? ?? 0,
   PatternStatus.fromWire(json['status'] as String? ?? 'active'),
-  json['direction'] == 'change'
-      ? PatternDirection.change
-      : PatternDirection.keep,
+  PatternDirection.fromWire(json['direction'] as String? ?? 'keep'),
   json['narrative_text']! as String,
   json['suggestion_text']! as String,
   json['present_count'] as int? ?? 0,

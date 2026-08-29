@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  badgeDirectionFor,
   directionFor,
   MIN_OCCURRENCE_THRESHOLD,
   qualifyingPairs,
@@ -81,6 +82,51 @@ describe('directionFor (FR-011, I1-05)', () => {
     expect(directionFor('inverse', 'negative')).toBe('keep');
     expect(directionFor('inverse', 'positive')).toBe('change');
     expect(directionFor('inverse', 'neutral')).toBe('change');
+  });
+});
+
+// P0-2: the badge a pattern card shows. Unlike `directionFor` above (persisted, two-valued, feeds
+// `inference/worker.ts` phrasing and `db/compatibility.ts`'s startup check), this is the function
+// the wire `direction` field is computed from on every `GET /insights` read — see
+// `listPatterns()` — and it is the single place the badge's mapping is decided. Exhaustive over
+// the four kind/valence combinations plus neutral, matching the table in issue P0-2.
+describe('badgeDirectionFor — the pattern card badge (P0-2)', () => {
+  it('forward + positive: the topic coincides with feeling good — keep doing', () => {
+    expect(badgeDirectionFor('forward', 'positive')).toBe('keep');
+  });
+
+  it('forward + negative: the topic coincides with feeling bad — consider changing', () => {
+    expect(badgeDirectionFor('forward', 'negative')).toBe('change');
+  });
+
+  // I1-05: not a mirror of the forward case. The inverse card says the feeling is likelier
+  // *without* the topic, so a bad feeling on the absent side makes the topic's presence the thing
+  // worth keeping — the opposite verdict from the same valence.
+  it('inverse + positive: feeling good happens without the topic — consider changing', () => {
+    expect(badgeDirectionFor('inverse', 'positive')).toBe('change');
+  });
+
+  it('inverse + negative: feeling bad happens without the topic — the topic reads as protective', () => {
+    expect(badgeDirectionFor('inverse', 'negative')).toBe('keep');
+  });
+
+  // The bug this ticket fixes: a neutral-valence feeling (e.g. "calm", "content" — see
+  // `feeling-vocabulary.ts`'s "steady" group) has no positive signal to reinforce and no negative
+  // one to discourage, so it earns no badge at all, on either side of the kind split.
+  it('forward + neutral: no positive or negative signal — no badge', () => {
+    expect(badgeDirectionFor('forward', 'neutral')).toBe('none');
+  });
+
+  it('inverse + neutral: no positive or negative signal — no badge', () => {
+    expect(badgeDirectionFor('inverse', 'neutral')).toBe('none');
+  });
+
+  // `directionFor` still exists for the persisted, two-valued concept, and this pins the one
+  // place they intentionally disagree: `directionFor` has no `'none'` to give and collapses to
+  // `'change'`, while the badge says `'none'`.
+  it('directionFor collapses the neutral case badgeDirectionFor refuses to call a badge', () => {
+    expect(badgeDirectionFor('forward', 'neutral')).toBe('none');
+    expect(directionFor('forward', 'neutral')).toBe('change');
   });
 });
 
