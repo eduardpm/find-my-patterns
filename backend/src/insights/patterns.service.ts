@@ -104,9 +104,18 @@ export type PatternStatus = 'active' | 'historical';
  * definition is "count dropped below the minimum", produced notices that read
  * "below the minimum of 3" beside a count of 12 → 12, and left clients no way to label the two
  * cases differently because they could only branch on the code.
+ *
+ * `excluded_unpaired` is a fifth, added by #109 (E-1d). #26 (E-1b) taught the engine to exclude a
+ * mixed-valence entry's unconfirmed combinations from a pair's count; the very next recompute after
+ * that landed then withdrew every pair whose count depended entirely on now-excluded entries — and
+ * mislabelled all of them `no_longer_confirmed`, which claims the entries carry no feeling the user
+ * confirmed. That is false: the entries carry a confirmed feeling, they simply never confirmed
+ * *this pairing* of it. `excluded_unpaired` is the honest label for that specific cause, kept
+ * distinct from `no_longer_confirmed`'s genuine case — an entry with no confirmed feeling at all,
+ * which is a different diary fact and must go on reaching its own label undisturbed.
  */
 export type WithdrawalReason =
-  'below_threshold' | 'below_lift' | 'no_longer_confirmed' | 'topic_merged';
+  'below_threshold' | 'below_lift' | 'no_longer_confirmed' | 'topic_merged' | 'excluded_unpaired';
 
 /** One entry standing behind a pattern (A1-01). */
 export interface EvidenceOut {
@@ -517,13 +526,16 @@ export class PatternsService {
     );
 
     const valences = this.feelingValences();
-    const { candidates, excludedUnpaired } = this.buildCandidates(
-      entries,
-      inWindow,
+    const { candidates, excludedUnpaired, excludedFromThreshold, windowCounts } =
+      this.buildCandidates(entries, inWindow, topicNames, valences);
+    this.storeCandidates(
+      candidates,
       topicNames,
       valences,
+      excludedUnpaired,
+      excludedFromThreshold,
+      windowCounts,
     );
-    this.storeCandidates(candidates, topicNames, valences);
     return { excludedUnpaired };
   }
 
@@ -533,7 +545,19 @@ export class PatternsService {
     inWindow: LoadedEntry[],
     topicNames: Map<string, string>,
     valences: Map<string, string>,
-  ): { candidates: Candidate[]; excludedUnpaired: number } {
+  ): {
+    candidates: Candidate[];
+    excludedUnpaired: number;
+    /** [E-1d, #109] Forward `"${topicId} ${feelingKey}"` keys rule 2's exclusion, not a lack of
+     *  evidence, dropped below the threshold — `recordWithdrawal`'s only source for telling
+     *  `excluded_unpaired` apart from a pair that genuinely never had enough confirmed evidence. */
+    excludedFromThreshold: Set<string>;
+    /** [E-1d, #109] `"${topicId} ${feelingKey}"` → the windowed, exclusion-aware count for every
+     *  pair a confirmed entry forms — `recordWithdrawal`'s source for a forward withdrawal's
+     *  `new_count`, so the number a notice states is never blind to the exclusion that may be the
+     *  entire reason it is being withdrawn. */
+    windowCounts: Map<string, number>;
+  } {
     const windowTotal = inWindow.length;
 
     // Entry-level sets. An entry is either in a set or not, however many feelings it carries — a
@@ -598,6 +622,55 @@ export class PatternsService {
           if (!previous || daysBetween(previous, entry.entryDate) > 0) {
             lastOccurrence.set(key, entry.entryDate);
           }
+        }
+      }
+    }
+
+    // [E-1d, #109] The same tally as `lifetimeCounts` above, but *without* `isPairExcluded` — every
+    // confirmed entry counts, mixed-valence or not. The gap between this map and `lifetimeCounts`
+    // is exactly the evidence rule 2 removed, which is what lets `recordWithdrawal` tell "this pair
+    // fell because #26 excluded its entries" (`excluded_unpaired`) apart from "this pair genuinely
+    // never had enough confirmed evidence" (`below_threshold`) — the confusion #109 was filed over.
+    // Both maps are keyed on CONFIRMED_FEELING_SOURCES entries only (`entries` already is), so
+    // neither can be confused with `no_longer_confirmed`'s question, which is about *unconfirmed*
+    // entries instead.
+    const rawLifetimeCounts = new Map<string, number>();
+    for (const entry of entries) {
+      for (const topicId of entry.topicIds) {
+        for (const feelingKey of entry.feelingKeys) {
+          const key = `${topicId} ${feelingKey}`;
+          rawLifetimeCounts.set(key, (rawLifetimeCounts.get(key) ?? 0) + 1);
+        }
+      }
+    }
+
+    // [E-1d, #109] A pair belongs here when its confirmed evidence would have cleared
+    // `MIN_OCCURRENCE_THRESHOLD` were it not for rule 2's exclusion, and only then — a pair that
+    // never had enough evidence in the first place (even before exclusion) is `below_threshold`
+    // instead, and the exclusion had nothing to do with why it left. Forward-only: rule 2 never
+    // touches an inverse pattern's absent side (see `association` below), so an inverse pair can
+    // never land here.
+    const excludedFromThreshold = new Set<string>();
+    for (const [key, raw] of rawLifetimeCounts) {
+      if (raw < MIN_OCCURRENCE_THRESHOLD) continue;
+      if ((lifetimeCounts.get(key) ?? 0) < MIN_OCCURRENCE_THRESHOLD) excludedFromThreshold.add(key);
+    }
+
+    // [E-1d, #109] The windowed counterpart of `lifetimeCounts`, kept for every pair a confirmed
+    // entry ever forms — not only the ones that become candidates — so a *withdrawn* pair's notice
+    // can state a `new_count` that actually reflects rule 2, the same way `association` below
+    // already does for a pair still active. Recomputing it via a second loop rather than reading
+    // `association(topicId, feelingKey).presentCount` for every candidate: `association` is a
+    // closure over `entriesWithTopic`/`entriesWithFeeling`, cheap for the handful of forward
+    // candidates it is already called for, but this map is looked up for pairs that never became a
+    // candidate at all — every existing pattern the recompute is about to consider withdrawing.
+    const windowCounts = new Map<string, number>();
+    for (const entry of inWindow) {
+      for (const topicId of entry.topicIds) {
+        for (const feelingKey of entry.feelingKeys) {
+          if (isPairExcluded(entry, topicId, feelingKey)) continue;
+          const key = `${topicId} ${feelingKey}`;
+          windowCounts.set(key, (windowCounts.get(key) ?? 0) + 1);
         }
       }
     }
@@ -805,7 +878,7 @@ export class PatternsService {
     // diary as a whole, not about any one card — and a per-pattern figure would have nowhere
     // sensible to live on a pattern that never reaches the occurrence threshold in the first place,
     // which a top-level count still accounts for correctly.
-    return { candidates, excludedUnpaired };
+    return { candidates, excludedUnpaired, excludedFromThreshold, windowCounts };
   }
 
   /**
@@ -1117,6 +1190,9 @@ export class PatternsService {
     candidates: Candidate[],
     topicNames: Map<string, string>,
     valences: Map<string, string>,
+    excludedUnpaired: number,
+    excludedFromThreshold: Set<string>,
+    windowCounts: Map<string, number>,
   ): void {
     const existing = new Map<
       string,
@@ -1272,7 +1348,16 @@ export class PatternsService {
     // --- Withdrawals (A2) -----------------------------------------------------------------------
     for (const [key, pattern] of existing) {
       if (seen.has(key)) continue;
-      this.recordWithdrawal(key, pattern, topicNames, now, today);
+      this.recordWithdrawal(
+        key,
+        pattern,
+        topicNames,
+        now,
+        today,
+        excludedUnpaired,
+        excludedFromThreshold,
+        windowCounts,
+      );
       this.db.prepare('DELETE FROM pattern_entries WHERE pattern_id = ?').run(pattern.id);
       this.db.prepare('DELETE FROM patterns WHERE id = ?').run(pattern.id);
     }
@@ -1299,9 +1384,13 @@ export class PatternsService {
     topicNames: Map<string, string>,
     now: string,
     today: PlainDate,
+    excludedUnpaired: number,
+    excludedFromThreshold: Set<string>,
+    windowCounts: Map<string, number>,
   ): void {
     const topicName = topicNames.get(pattern.topic_id);
     const previousCount = Number(pattern.occurrence_count);
+    const pairKey = `${pattern.topic_id} ${pattern.feeling_key}`;
 
     // How much of the pair survives, ignoring whether the feeling was confirmed. It is the one
     // question that separates "the user rewrote the entry" from "the user un-confirmed it".
@@ -1315,11 +1404,28 @@ export class PatternsService {
       .get(pattern.topic_id, pattern.feeling_key) as { n: number };
 
     const kind: PatternKind = pattern.kind === 'inverse' ? 'inverse' : 'forward';
-    const newCount = this.currentWindowCount(pattern.topic_id, pattern.feeling_key, today, kind);
+    // [E-1d, #109] Forward reads its windowed count from `windowCounts` — `buildCandidates`'s own
+    // exclusion-aware tally — rather than the SQL below, which knows nothing about rule 2 and would
+    // report the same number before and after an exclusion caused the withdrawal (the "2 → 2" a
+    // notice must never show beside "was withdrawn"). Inverse never has an exclusion to be blind
+    // to (see `buildCandidates`'s `association`), so it keeps reading `currentWindowCount` — and
+    // that query's own `membership` branch is the only place that knows how to count it.
+    const newCount =
+      kind === 'forward'
+        ? (windowCounts.get(pairKey) ?? 0)
+        : this.currentWindowCount(pattern.topic_id, pattern.feeling_key, today, kind);
 
     // Ordered so each branch is the *only* thing that can have happened, and so the count is known
     // before the reason is chosen — deciding "below threshold" without looking at the count is how
     // the notice ended up contradicting its own numbers.
+    //
+    // [E-1d, #109] `excludedFromThreshold` is checked before `anySource` deliberately: an excluded
+    // pair's entries still carry the feeling in `entry_feelings` (that is what makes them evidence
+    // at all), so `anySource` is true of them too — checking it first would put every
+    // `excluded_unpaired` case right back through `no_longer_confirmed`, reintroducing the bug this
+    // reason exists to fix. `excludedFromThreshold` is forward-only and empty for a pair that was
+    // ever genuinely short on confirmed evidence, so it can never fire for a `no_longer_confirmed`
+    // or `below_threshold` case instead.
     let reason: WithdrawalReason;
     if (topicName === undefined) {
       reason = 'topic_merged';
@@ -1327,6 +1433,8 @@ export class PatternsService {
       // The confirmed, windowed evidence still clears the minimum, so the count is not what
       // changed. What changed is the association: lift fell below `MIN_LIFT` (A3-04).
       reason = 'below_lift';
+    } else if (kind === 'forward' && excludedFromThreshold.has(pairKey)) {
+      reason = 'excluded_unpaired';
     } else if (Number(anySource.n) >= MIN_OCCURRENCE_THRESHOLD) {
       reason = 'no_longer_confirmed';
     } else {
@@ -1340,9 +1448,17 @@ export class PatternsService {
     // One sentence per reason, and each states the threshold that actually failed.
     const occurrences = (count: number): string =>
       `${count} ${count === 1 ? 'occurrence' : 'occurrences'}`;
+    const entriesWord = (count: number): string => `${count} ${count === 1 ? 'entry' : 'entries'}`;
     const detail = {
       topic_merged: `${label} was withdrawn: its topic was merged into another, so its evidence now counts under the merged name.`,
       no_longer_confirmed: `${label} was withdrawn: entries still mention it, but none of them carries a feeling you confirmed.`,
+      // [E-1d, #109] Deliberately never says "unconfirmed" or "missing" — the feeling is confirmed;
+      // what is missing is a confirmed link between this exact topic and this exact feeling on
+      // those entries. `excludedUnpaired` is the top-level, diary-wide count (`InsightsOut`'s own
+      // field), not a number scoped to this one pair — the same number `no_longer_confirmed` and
+      // `below_threshold` above do not cite, because unlike them this reason is a diary-wide event
+      // (one engine change reclassifying many pairs at once), not a fact about this pair alone.
+      excluded_unpaired: `${label} was withdrawn: its entries carry a feeling you confirmed, but never a confirmed pairing between the two — ${entriesWord(excludedUnpaired)} diary-wide are excluded from counting until they are paired.`,
       below_lift: `${label} was withdrawn: still ${occurrences(newCount)}, but the association is no longer stronger than your usual rate by the minimum of ${MIN_LIFT}×.`,
       below_threshold: `${label} was withdrawn: ${occurrences(previousCount)}, now ${newCount} — below the minimum of ${MIN_OCCURRENCE_THRESHOLD}.`,
     }[reason];

@@ -235,9 +235,14 @@ export interface Pattern {
  * `below_lift` and `below_threshold` are deliberately separate: one means the evidence thinned out,
  * the other means the evidence held and the *association* weakened. They call for different words,
  * and a client can only tell them apart if the code does.
+ *
+ * `excluded_unpaired` (#109, E-1d) is separate from `no_longer_confirmed` for the same reason: the
+ * entries behind it carry a feeling the user confirmed, just never paired with this exact topic.
+ * Reusing `no_longer_confirmed` for that case is the bug #109 fixes — that reason's own sentence
+ * claims no confirmed feeling exists at all, which is false of these entries.
  */
 export type WithdrawalReason =
-  'below_threshold' | 'below_lift' | 'no_longer_confirmed' | 'topic_merged';
+  'below_threshold' | 'below_lift' | 'no_longer_confirmed' | 'topic_merged' | 'excluded_unpaired';
 
 /** A pattern that stopped qualifying, and the numbers that say why (A2). */
 export interface Withdrawal {
