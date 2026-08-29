@@ -1,4 +1,6 @@
 import { Module, type DynamicModule } from '@nestjs/common';
+import { AuthController } from './auth/identity.controller';
+import { AuthService } from './auth/identity.service';
 import { createDiaryProvider } from './db/database.provider';
 import {
   EntriesController,
@@ -54,6 +56,7 @@ export class AppModule {
       module: AppModule,
       controllers: [
         HealthController,
+        AuthController,
         EntriesController,
         FeelingsController,
         GuidingQuestionsController,
@@ -69,6 +72,7 @@ export class AppModule {
       ],
       providers: [
         createDiaryProvider(databasePath),
+        AuthService,
         QueuedEntryInference,
         QueuedTranscriptFormatting,
         {

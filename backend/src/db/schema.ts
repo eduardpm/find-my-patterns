@@ -227,6 +227,35 @@ export const SCHEMA_STATEMENTS: string[] = [
      report_json JSON NOT NULL,
      PRIMARY KEY (content_hash)
    )`,
+
+  // --- Multi-tenant identity (M-1a, #45) ----------------------------------------------------------
+  // The first step of the multi-tenant rewrite: accounts and bearer-token sessions. Every other
+  // table stays single-tenant until M-1b adds `user_id` scoping — this migration is identity and
+  // plumbing only. `id` is VARCHAR(36) like every other id in this schema (a UUID), not an
+  // autoincrementing integer, so M-1b can give nearly every table a `user_id VARCHAR(36)` foreign
+  // key of the same type everywhere; the fixed pre-multi-tenant "default user" both tickets need to
+  // name is `DEFAULT_USER_ID` in `src/auth/default-user.ts`, not literally row 1.
+  `CREATE TABLE users (
+     id VARCHAR(36) NOT NULL,
+     email VARCHAR(256) NOT NULL,
+     password_hash VARCHAR(256) NOT NULL,
+     created_at DATETIME NOT NULL,
+     PRIMARY KEY (id),
+     UNIQUE (email)
+   )`,
+
+  // Opaque, server-stored bearer-token sessions (`src/auth/tokens.ts` documents the choice over a
+  // JWT). Only `token_hash` — sha256 of the raw token — is ever stored, mirroring why
+  // `users.password_hash` holds a hash rather than a password: a leaked row must not itself be a
+  // usable credential.
+  `CREATE TABLE sessions (
+     token_hash VARCHAR(64) NOT NULL,
+     user_id VARCHAR(36) NOT NULL,
+     created_at DATETIME NOT NULL,
+     expires_at DATETIME NOT NULL,
+     PRIMARY KEY (token_hash),
+     FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+   )`,
 ];
 
 /**
@@ -465,6 +494,32 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
               entry_count INTEGER NOT NULL,
               report_json JSON NOT NULL,
               PRIMARY KEY (content_hash)
+            )`,
+  },
+
+  // --- Multi-tenant identity (M-1a, #45) ----------------------------------------------------------
+  // See the matching comment in SCHEMA_STATEMENTS above. `migrateDiary` (`./migrate.ts`) inserts the
+  // default user row right after these two tables are created, in the same transaction — a diary
+  // migrated today has never had accounts, so every table these tickets go on to scope belongs to
+  // that one user.
+  {
+    sql: `CREATE TABLE IF NOT EXISTS users (
+              id VARCHAR(36) NOT NULL,
+              email VARCHAR(256) NOT NULL,
+              password_hash VARCHAR(256) NOT NULL,
+              created_at DATETIME NOT NULL,
+              PRIMARY KEY (id),
+              UNIQUE (email)
+            )`,
+  },
+  {
+    sql: `CREATE TABLE IF NOT EXISTS sessions (
+              token_hash VARCHAR(64) NOT NULL,
+              user_id VARCHAR(36) NOT NULL,
+              created_at DATETIME NOT NULL,
+              expires_at DATETIME NOT NULL,
+              PRIMARY KEY (token_hash),
+              FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
             )`,
   },
 ];

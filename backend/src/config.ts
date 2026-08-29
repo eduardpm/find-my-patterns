@@ -25,6 +25,20 @@ export interface AppConfig {
   /** Built web client. Missing is fine — the API still serves (FR-016). */
   webDistPath: string;
   auth: AuthConfig;
+  /**
+   * M-1a, #45: whether every route (other than health + auth) is gated behind the new per-user
+   * bearer token, with the resolved identity attached to the request as `req.userId`.
+   *
+   * Defaults to `true` — the multi-tenant identity plumbing exists starting with this ticket, but
+   * neither client can register or log in yet (that is explicitly out of scope here), so flipping
+   * the default to `false` today would 401 every request the mobile app and the web client make.
+   * `loadConfig()`'s own doc comment is the rule this follows: "Defaults match what the clients
+   * already expect, so no client needs reconfiguring." A later ticket flips this default once a
+   * client can actually complete the register/login round trip; until then, set
+   * `SINGLE_USER_MODE=false` to exercise the real multi-tenant gate (used by this backend's own
+   * e2e suite, see `tests/contract/identity.test.ts`).
+   */
+  singleUserMode: boolean;
 }
 
 export interface AuthConfig {
@@ -125,5 +139,6 @@ export function loadConfig(): AppConfig {
     transcriptionTimeoutMs,
     webDistPath: process.env.WEB_DIST_PATH ?? path.resolve(REPO_ROOT, 'web', 'dist'),
     auth: loadAuthConfig(),
+    singleUserMode: parseBoolean('SINGLE_USER_MODE', true),
   };
 }

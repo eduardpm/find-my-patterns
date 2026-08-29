@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ensureDefaultUser } from '../auth/default-user';
 import { loadConfig } from '../config';
 import { encodeBool, encodeDate, encodeDateTime, encodeJson, nowUtc, todayLocal } from './codecs';
 import { openDiary, type DiaryDatabase } from './database';
@@ -144,6 +145,11 @@ export function seed(db: DiaryDatabase): void {
       insert.run(key, category, prompt, encodeJson(keywords), encodeBool(mandatory));
     }
   }
+
+  // M-1a (#45): every diary needs the fixed default user to exist — a fresh one gets it here, the
+  // moment it is first opened; an existing diary already has it from `migrateDiary` (`./migrate.ts`)
+  // by the time this ever runs against it. Idempotent, like everything above (FR-022).
+  ensureDefaultUser(db);
 }
 
 /**

@@ -12,6 +12,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_USER_ID } from '../src/auth/default-user';
 import { assertCompatible } from '../src/db/compatibility';
 import { encodeBool, encodeJson } from '../src/db/codecs';
 import { openDiary } from '../src/db/database';
@@ -450,5 +451,76 @@ describe('migrateDiary — #95: guiding-question copy refresh', () => {
     } finally {
       fs.rmSync(dirForTest, { recursive: true, force: true });
     }
+  });
+});
+
+describe('migrateDiary — M-1a: multi-tenant identity (#45)', () => {
+  /**
+   * `target` (from the top-level `beforeEach`) is a copy of `pre-grouped-vocabulary.db` — a real
+   * pre-migration diary that already carries 8 diary entries, 2 topics and 2 materialised patterns,
+   * plus the rows that hang off them (`entry_topics`, `pattern_entries`,
+   * `guiding_question_answers`). It predates `users`/`sessions` entirely, exactly the shape a real
+   * developer's diary is in today — this is "a copy of the existing dev DB" the acceptance
+   * criteria ask for, without touching the real one at `~/projects/find-my-patterns/data/diary.db`.
+   */
+  const CONTENT_TABLES = [
+    'diary_entries',
+    'topics',
+    'patterns',
+    'entry_topics',
+    'pattern_entries',
+    'guiding_question_answers',
+  ];
+
+  function rowCounts(dbPath: string): Record<string, number> {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      return Object.fromEntries(
+        CONTENT_TABLES.map((table) => [
+          table,
+          (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n,
+        ]),
+      );
+    } finally {
+      db.close();
+    }
+  }
+
+  it('adds users and sessions, and the default user, without losing a single row the user wrote', () => {
+    const before = openDiary(target);
+    expect(() => assertCompatible(before)).toThrow(/users/);
+    before.close();
+    const countsBefore = rowCounts(target);
+    expect(countsBefore.diary_entries).toBeGreaterThan(0);
+    expect(countsBefore.topics).toBeGreaterThan(0);
+    expect(countsBefore.patterns).toBeGreaterThan(0);
+
+    migrateDiary(target);
+
+    expect(rowCounts(target)).toEqual(countsBefore);
+
+    const users = read<{ id: string; email: string; password_hash: string }>(
+      'SELECT id, email, password_hash FROM users',
+    );
+    expect(users).toEqual([
+      {
+        id: DEFAULT_USER_ID,
+        email: 'owner@default-user.invalid',
+        password_hash: 'disabled:no-password-set',
+      },
+    ]);
+    expect(read<{ n: number }>('SELECT COUNT(*) AS n FROM sessions')[0].n).toBe(0);
+
+    const after = openDiary(target);
+    expect(() => assertCompatible(after)).not.toThrow();
+    after.close();
+  });
+
+  it('is idempotent — running it again leaves the one default user exactly as it was', () => {
+    migrateDiary(target);
+    const once = read<Record<string, unknown>>('SELECT * FROM users');
+
+    migrateDiary(target);
+    expect(read<Record<string, unknown>>('SELECT * FROM users')).toEqual(once);
   });
 });
