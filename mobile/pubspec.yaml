@@ -23,6 +23,7 @@ dependencies:
   intl: ^0.20.3
   path_provider: ^2.1.5
   record: ^7.1.1
+  share_plus: ^13.3.0
   shared_preferences: ^2.5.5
   timezone: ^0.11.1
 

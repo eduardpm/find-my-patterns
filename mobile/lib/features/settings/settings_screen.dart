@@ -14,6 +14,7 @@ import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_page_wash.dart';
 import '../../core/widgets/server_form.dart';
 import 'appearance_card.dart';
+import 'export/export_row.dart';
 import 'reminders_card.dart';
 
 /// The shared Settings screen: where the backend is, how the app looks, and
@@ -122,6 +123,8 @@ class SettingsScreen extends ConsumerWidget {
                               BackendAddress.unset)
                           .isConfigured,
                 ),
+                const SizedBox(height: JournalSpacing.x4),
+                const ExportRow(),
                 const SizedBox(height: JournalSpacing.x4),
                 _Section(
                   title: 'About',

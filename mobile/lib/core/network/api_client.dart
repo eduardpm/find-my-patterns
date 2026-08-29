@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
@@ -146,6 +148,32 @@ class ApiClient {
     ),
   );
 
+  /// Downloads [path] as raw bytes instead of JSON — the diary export
+  /// (`GET /export`) is the only endpoint that answers a file rather than an
+  /// object.
+  ///
+  /// Reads the filename the server suggests off `Content-Disposition` when it
+  /// sends one, so a caller never has to compose its own.
+  Future<DownloadedFile> getBytes(String path) async {
+    final response = await _sendRaw(
+      () => _dio.get<List<int>>(
+        path,
+        options: Options(responseType: ResponseType.bytes),
+      ),
+    );
+    // `_sendRaw` is shared with every JSON-returning method, so its return
+    // type is erased to `Response<Object?>` — the cast below recovers what
+    // `responseType: ResponseType.bytes` above actually guarantees dio hands
+    // back.
+    final data = response.data;
+    return DownloadedFile(
+      bytes: Uint8List.fromList(data is List<int> ? data : const []),
+      filename: _filenameFromContentDisposition(
+        response.headers.value('content-disposition'),
+      ),
+    );
+  }
+
   /// Puts [body] to [path], ignoring any response body.
   Future<void> put(String path, {JsonObject? body}) async {
     await _send(() => _dio.put<Object?>(path, data: body));
@@ -188,7 +216,15 @@ class ApiClient {
     throw const NetworkFailure('The server did not return a JSON object');
   }
 
-  Future<Object?> _send(Future<Response<Object?>> Function() request) async {
+  Future<Object?> _send(Future<Response<Object?>> Function() request) async =>
+      (await _sendRaw(request)).data;
+
+  /// The shared core [_send] wraps: same failure handling, but hands back the
+  /// whole [Response] rather than only its body — [getBytes] needs the
+  /// headers too, to read `Content-Disposition`.
+  Future<Response<Object?>> _sendRaw(
+    Future<Response<Object?>> Function() request,
+  ) async {
     final Response<Object?> response;
     try {
       response = await request();
@@ -200,7 +236,7 @@ class ApiClient {
 
     final status = response.statusCode ?? 0;
     return switch (status) {
-      >= 200 && < 300 => response.data,
+      >= 200 && < 300 => response,
       401 => throw const Unauthorized(),
       _ => throw HttpFailure(
         _errorMessage(response, status),
@@ -212,6 +248,16 @@ class ApiClient {
 
   static String _networkMessage(DioException e) =>
       'Could not reach the server (${e.message ?? e.type.name})';
+
+  /// Parses the `filename="..."` parameter off a
+  /// `Content-Disposition: attachment; filename="..."` header — the exact
+  /// shape `GET /export` sends (`export.controller.ts`). `null` when [header]
+  /// is `null` or carries no filename; the caller falls back to a name of its
+  /// own in that case.
+  static String? _filenameFromContentDisposition(String? header) {
+    if (header == null) return null;
+    return RegExp('filename="([^"]+)"').firstMatch(header)?.group(1);
+  }
 
   static String _errorMessage(Response<Object?> response, int status) =>
       switch (response.data) {
@@ -260,4 +306,18 @@ class const ConnectionResult._(final bool ok, final String detail) {
 
   /// A failed probe, described by [detail].
   factory failed(String detail) => ConnectionResult._(false, detail);
+}
+
+/// The result of [ApiClient.getBytes]: a file's raw content and the name the
+/// server suggested for it.
+class DownloadedFile {
+  /// Creates a downloaded file.
+  const DownloadedFile({required this.bytes, required this.filename});
+
+  /// The file's raw content.
+  final Uint8List bytes;
+
+  /// The name from `Content-Disposition`, or `null` if the response carried
+  /// none.
+  final String? filename;
 }

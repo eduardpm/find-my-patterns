@@ -19,8 +19,8 @@ void main() {
   }
 
   testWidgets(
-    'shows appearance, reminders, topics, advanced and about sections, in '
-    'that order',
+    'shows appearance, reminders, topics, advanced, export and about '
+    'sections, in that order',
     (tester) async {
       useTallScreen(tester);
       await tester.pumpWidget(Harness().scope(_app()));
@@ -30,6 +30,8 @@ void main() {
       expect(find.text('Reminders'), findsOneWidget);
       expect(find.text('Topics and aliases'), findsOneWidget);
       expect(find.text('Advanced'), findsOneWidget);
+      // Issue #34: "above About" — placed between Advanced and About.
+      expect(find.text('Export my diary'), findsOneWidget);
       expect(find.text('About'), findsOneWidget);
       expect(
         find.text('${AppConfig.appName} ${AppConfig.appVersion}'),
@@ -40,11 +42,13 @@ void main() {
       final remindersTop = tester.getTopLeft(find.text('Reminders')).dy;
       final topicsTop = tester.getTopLeft(find.text('Topics and aliases')).dy;
       final advancedTop = tester.getTopLeft(find.text('Advanced')).dy;
+      final exportTop = tester.getTopLeft(find.text('Export my diary')).dy;
       final aboutTop = tester.getTopLeft(find.text('About')).dy;
       expect(appearanceTop, lessThan(remindersTop));
       expect(remindersTop, lessThan(topicsTop));
       expect(topicsTop, lessThan(advancedTop));
-      expect(advancedTop, lessThan(aboutTop));
+      expect(advancedTop, lessThan(exportTop));
+      expect(exportTop, lessThan(aboutTop));
     },
   );
 

@@ -86,4 +86,8 @@ abstract final class AppConfig {
 
   /// One transcription job, polled until it finishes.
   static String transcriptionPath(String jobId) => '$transcriptionsPath/$jobId';
+
+  /// The whole-diary export (M-6): `GET`, streaming back either a Markdown or
+  /// a JSON document of every entry.
+  static String exportPath(String format) => '/export?format=$format';
 }
