@@ -78,9 +78,19 @@ class SettingsScreen extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Topics and aliases',
-                        style: theme.textTheme.titleMedium,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Topics and aliases',
+                              style: theme.textTheme.titleMedium,
+                            ),
+                          ),
+                          Icon(
+                            Icons.chevron_right,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ],
                       ),
                       const SizedBox(height: JournalSpacing.x2),
                       Text(
