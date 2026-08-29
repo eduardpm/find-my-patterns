@@ -208,13 +208,15 @@ class _PatternCardState extends State<PatternCard> {
           ],
           // A confounder annotates a pattern, it never hides one --
           // withholding the evidence would contradict the app's own reason
-          // for existing.
+          // for existing. Issue #24 task 3: each one is independently
+          // tappable to reveal the split behind the note, keyed by its own
+          // topic so expanding one never touches another's state.
           for (final confounder in pattern.confounders) ...[
             const SizedBox(height: JournalSpacing.x2),
-            _PatternNote(
-              text: confounder.note,
-              icon: Icons.link,
-              container: theme.colorScheme.primaryContainer,
+            _ConfounderNote(
+              key: ValueKey('confounder-${confounder.topic}'),
+              topic: pattern.topic,
+              confounder: confounder,
             ),
           ],
           const SizedBox(height: JournalSpacing.x2),
@@ -632,11 +634,10 @@ String _percentOrDash(double? rate) => switch (rate) {
 };
 
 class _PatternNote extends StatelessWidget {
-  const _PatternNote({required this.text, this.icon, this.container});
+  const _PatternNote({required this.text, this.icon});
 
   final String text;
   final IconData? icon;
-  final Color? container;
 
   @override
   Widget build(BuildContext context) {
@@ -648,7 +649,7 @@ class _PatternNote extends StatelessWidget {
         vertical: JournalSpacing.x3,
       ),
       decoration: BoxDecoration(
-        color: container ?? theme.colorScheme.surfaceContainerHighest,
+        color: theme.colorScheme.surfaceContainerHighest,
         borderRadius: JournalShapes.small,
       ),
       child: Row(
@@ -663,6 +664,246 @@ class _PatternNote extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A confounder annotation that expands in place into a small split view
+/// (issue #24, task 3) -- the same "expands in place on the card, never by
+/// navigating elsewhere" shape [_EvidenceTrail] already uses, but scoped
+/// per confounder rather than per pattern: a card can carry more than one
+/// (`Pattern.confounders`), and each one's disclosure has to be independent
+/// of the others, which is what the `ValueKey` at the call site is for.
+///
+/// This does not extend or wrap [_PatternNote]. [_PatternNote] is a
+/// deliberately dumb, stateless leaf shared by [Pattern.comparisonNote] and
+/// [Pattern.historicalNote] -- neither of which is interactive -- and
+/// giving it a toggle state and a tap handler it does not use would be new
+/// surface area on a widget two unrelated call sites depend on staying
+/// simple. A confounder annotation needs to own its own expanded/collapsed
+/// state, which is a different widget shape (`StatefulWidget`) than either
+/// of those ever needs, so it gets its own class that copies
+/// [_PatternNote]'s visual treatment -- the [Icons.link] glyph, the muted
+/// `primaryContainer` tint, [JournalShapes.small] -- rather than sharing
+/// the implementation.
+class _ConfounderNote extends StatefulWidget {
+  const _ConfounderNote({
+    super.key,
+    required this.topic,
+    required this.confounder,
+  });
+
+  /// The pattern's own topic -- the X in "With X only".
+  final String topic;
+
+  final Confounder confounder;
+
+  @override
+  State<_ConfounderNote> createState() => _ConfounderNoteState();
+}
+
+class _ConfounderNoteState extends State<_ConfounderNote> {
+  bool _expanded = false;
+
+  void _toggle() => setState(() => _expanded = !_expanded);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final confounder = widget.confounder;
+    // Task 4: once expanded, the semantics label carries the split's own
+    // sentence too, so a screen reader user hears the counts as part of
+    // the same control they just activated rather than having to go
+    // looking for a second, separately-announced region.
+    final semanticsLabel = _expanded
+        ? '${confounder.note} ${_confounderSplitSentence(widget.topic, confounder)}'
+        : confounder.note;
+
+    return Semantics(
+      container: true,
+      button: true,
+      label: semanticsLabel,
+      child: ExcludeSemantics(
+        child: Container(
+          width: double.infinity,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primaryContainer,
+            borderRadius: JournalShapes.small,
+          ),
+          child: InkWell(
+            onTap: _toggle,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: JournalSpacing.x3,
+                vertical: JournalSpacing.x3,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.link,
+                        size: 16,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: JournalSpacing.x2),
+                      Expanded(
+                        child: Text(
+                          confounder.note,
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                      ),
+                      const SizedBox(width: JournalSpacing.x2),
+                      Icon(
+                        _expanded ? Icons.expand_less : Icons.expand_more,
+                        size: 18,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                  // The split sits inside the note's own container rather
+                  // than as a second panel below it, so it reads as this
+                  // note's evidence, not as a peer of the 2x2 strength
+                  // panel above.
+                  if (_expanded) ...[
+                    const SizedBox(height: JournalSpacing.x3),
+                    _ConfounderSplit(
+                      topic: widget.topic,
+                      confounder: confounder,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The two mini-columns behind a confounder note: how often [topic] (X)
+/// shows up without [Confounder.topic] (Y), and how often Y shows up
+/// without X.
+///
+/// [Confounder] carries the full 2x2 -- `bothCount`, `onlyThisCount`,
+/// `onlyOtherCount`, `neitherCount` -- not two ready-made `present/total`
+/// pairs, so this widget is the one place that decides what "present/total"
+/// means for each side. Each side is stated over its own denominator --
+/// entries that mention that topic at all, i.e. `bothCount` plus that
+/// side's "only" count -- rather than over the full 2x2 total
+/// (`neitherCount` included). "1 of 4 entries with coffee" is a number the
+/// reader can act on; "1 of 40 diary entries" buries the same fact under a
+/// total that was never part of the question. Both denominators are always
+/// printed alongside their numerators, never implied.
+class _ConfounderSplit extends StatelessWidget {
+  const _ConfounderSplit({required this.topic, required this.confounder});
+
+  final String topic;
+  final Confounder confounder;
+
+  @override
+  Widget build(BuildContext context) {
+    final other = confounder.topic;
+    final xTotal = confounder.bothCount + confounder.onlyThisCount;
+    final yTotal = confounder.bothCount + confounder.onlyOtherCount;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: _ConfounderColumn(
+            label: 'With $topic only',
+            present: confounder.onlyThisCount,
+            total: xTotal,
+            // `inseparable` is true exactly when `onlyThisCount == 0`: no
+            // entry in the diary has X without Y, so there is nothing left
+            // to divide by that would mean anything. A bare "0 of n" would
+            // read as a fact this pairing has learned ("this never
+            // happens"); it is really an admission the diary hasn't given
+            // the engine an entry to separate the two topics with yet, so
+            // this column says that instead of printing the zero.
+            insufficientText: confounder.inseparable
+                ? 'Not enough entries to separate yet'
+                : null,
+          ),
+        ),
+        const SizedBox(width: JournalSpacing.x3),
+        Expanded(
+          child: _ConfounderColumn(
+            label: 'With $other only',
+            present: confounder.onlyOtherCount,
+            total: yTotal,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// One mini-column: an [Eyebrow] label, then either `present of total
+/// entries` or, when [insufficientText] is given, that explanation in its
+/// place -- the same "state the reason where the number would go" habit
+/// `_percentOrDash` and `Pattern.comparisonNote` already use elsewhere on
+/// this card.
+class _ConfounderColumn extends StatelessWidget {
+  const _ConfounderColumn({
+    required this.label,
+    required this.present,
+    required this.total,
+    this.insufficientText,
+  });
+
+  final String label;
+  final int present;
+  final int total;
+  final String? insufficientText;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Eyebrow(label),
+        const SizedBox(height: JournalSpacing.x1),
+        if (insufficientText case final text?)
+          Text(
+            text,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontStyle: FontStyle.italic,
+            ),
+          )
+        else
+          Text(
+            '$present of $total entries',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The sentence appended to a confounder note's semantics label once it is
+/// expanded (task 4) -- the split's own numbers, read as a continuation of
+/// the note a screen reader user just activated. Mirrors [_ConfounderSplit]
+/// and [_ConfounderColumn] exactly: same two denominators, same
+/// inseparable wording, so the spoken sentence never drifts from what is
+/// drawn on screen.
+String _confounderSplitSentence(String topic, Confounder confounder) {
+  final other = confounder.topic;
+  final xTotal = confounder.bothCount + confounder.onlyThisCount;
+  final yTotal = confounder.bothCount + confounder.onlyOtherCount;
+  final xPart = confounder.inseparable
+      ? 'With $topic only: not enough entries to separate yet'
+      : 'With $topic only: ${confounder.onlyThisCount} of $xTotal entries';
+  final yPart =
+      'With $other only: ${confounder.onlyOtherCount} of $yTotal entries';
+  return '$xPart. $yPart.';
 }
 
 final DateFormat _evidenceDateFormat = DateFormat('d MMM');
