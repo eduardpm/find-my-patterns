@@ -55,6 +55,15 @@ class DaySummaryCard extends StatelessWidget {
         ? summary!.feelings
         : _distinctFeelings(entries);
     final intensity = summary?.intensity;
+    // The roll-up says *how much* the day registered but never *which*
+    // feeling reached it -- naming it falls to the entries' own per-feeling
+    // ratings, the same facts the fallback above already trusts. A day
+    // whose entries cannot account for the roll-up's own number (a summary
+    // that outran the entries load, say) hides the row rather than naming
+    // it wrong.
+    final strongest = intensity == null
+        ? null
+        : _strongestFeeling(entries, intensity);
 
     final spanText = _timeSpan(count, first, last);
     final countText = count == 1 ? '1 entry' : '$count entries';
@@ -65,7 +74,12 @@ class DaySummaryCard extends StatelessWidget {
     if (feelings.isNotEmpty) {
       spoken.write('. ${feelings.map((f) => f.label).join(', ')}');
     }
-    if (intensity != null) spoken.write('. Strongest $intensity of 5');
+    if (strongest != null) {
+      spoken.write('. Strongest: ${strongest.feeling.label} $intensity/5');
+      if (strongest.tiedCount > 0) {
+        spoken.write(', plus ${strongest.tiedCount} more at the same rating');
+      }
+    }
 
     return Semantics(
       container: true,
@@ -110,7 +124,7 @@ class DaySummaryCard extends StatelessWidget {
                   ],
                 ],
               ),
-              if (feelings.isNotEmpty || intensity != null) ...[
+              if (feelings.isNotEmpty || strongest != null) ...[
                 const SizedBox(height: JournalSpacing.x4),
                 Divider(color: journal.hairline, height: 1),
                 const SizedBox(height: JournalSpacing.x4),
@@ -127,19 +141,22 @@ class DaySummaryCard extends StatelessWidget {
                       ),
                   ],
                 ),
-              if (intensity != null) ...[
+              if (strongest != null) ...[
                 const SizedBox(height: JournalSpacing.x3),
                 Row(
                   children: [
                     const Eyebrow('Strongest'),
                     const SizedBox(width: JournalSpacing.x3),
-                    _IntensityBar(intensity: intensity),
+                    _IntensityBar(intensity: intensity!),
                     const SizedBox(width: JournalSpacing.x2),
-                    Text(
-                      '$intensity of 5',
-                      style: JournalType.tabularFigures(
-                        theme.textTheme.bodySmall!,
-                      ).copyWith(color: journal.onSurfaceVariant),
+                    Flexible(
+                      child: FeelingChip(
+                        label: strongest.feeling.label,
+                        color: strongest.feeling.accent(journal),
+                        intensityLabel: strongest.tiedCount > 0
+                            ? '$intensity/5 +${strongest.tiedCount}'
+                            : '$intensity/5',
+                      ),
                     ),
                   ],
                 ),
@@ -161,6 +178,44 @@ List<Feeling> _distinctFeelings(List<Entry> entries) {
     }
   }
   return result;
+}
+
+/// The feeling that reached the day's strongest rating, first by day order,
+/// plus how many others tied it.
+class const _Strongest(final Feeling feeling, final int tiedCount);
+
+/// Finds which feeling(s) on [entries] reached [intensity] -- the day's own
+/// maximum, as already reported by the backend roll-up.
+///
+/// [entries] arrive from the backend in day order (`ORDER BY created_at`),
+/// and each feeling is read in the order it was chosen on its entry, so
+/// walking them in place is walking the day in order; a feeling rated on
+/// more than one entry is judged by its own highest rating, and counted
+/// once. Several feelings can tie for the maximum -- the first one seen
+/// becomes [_Strongest.feeling] and the rest are folded into
+/// [_Strongest.tiedCount]. Returns null when no entry accounts for
+/// [intensity] at all.
+_Strongest? _strongestFeeling(List<Entry> entries, int intensity) {
+  final order = <String>[];
+  final byKey = <String, Feeling>{};
+  final maxByKey = <String, int>{};
+  for (final entry in entries) {
+    for (final feeling in entry.feelings) {
+      final rating = entry.feelingIntensities[feeling.key];
+      if (rating == null) continue;
+      if (!byKey.containsKey(feeling.key)) {
+        order.add(feeling.key);
+        byKey[feeling.key] = feeling;
+      }
+      final current = maxByKey[feeling.key];
+      if (current == null || rating > current) maxByKey[feeling.key] = rating;
+    }
+  }
+  final atMax = [
+    for (final key in order)
+      if (maxByKey[key] == intensity) byKey[key]!,
+  ];
+  return atMax.isEmpty ? null : _Strongest(atMax.first, atMax.length - 1);
 }
 
 /// "7:15 AM – 10:40 PM" in the locale's short time format, or "at 7:15 AM"
