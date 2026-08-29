@@ -260,6 +260,10 @@ describe('#21 — weekday, day type, time of day and season through the engine',
       [
         'constants',
         'context_patterns',
+        // E-1b: `excluded_unpaired` is additive (acceptance criterion 5) — a diary-wide count of
+        // entries the mixed-valence pairing rule excluded from at least one pair, zero here since
+        // this diary has no mixed-valence entries at all.
+        'excluded_unpaired',
         'insufficient_data',
         'new_withdrawal_count',
         'patterns',

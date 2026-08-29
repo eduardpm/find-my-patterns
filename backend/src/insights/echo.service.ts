@@ -2,6 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import { decodeJson, encodeDate, encodeJson, todayLocal } from '../db/codecs';
 import { DIARY_DB } from '../db/database.provider';
 import type { DiaryDatabase } from '../db/database';
+import { isMixedValence } from './analysis';
+import { CONFIRMED_FEELING_SOURCES } from './constants';
 import { TopicsService } from '../topics/topics.service';
 import { PatternsService } from './patterns.service';
 
@@ -53,8 +55,9 @@ export class EchoService {
    */
   forEntry(entryId: string): EchoOut[] {
     const entry = this.db
-      .prepare('SELECT id, entry_date, raw_text FROM diary_entries WHERE id = ?')
-      .get(entryId) as { id: string; entry_date: string; raw_text: string } | undefined;
+      .prepare('SELECT id, entry_date, raw_text, feeling_source FROM diary_entries WHERE id = ?')
+      .get(entryId) as
+      { id: string; entry_date: string; raw_text: string; feeling_source: string } | undefined;
     if (!entry) return [];
 
     // I4-01: the entry's topics are computed here rather than read from `entry_topics`, because
@@ -75,17 +78,64 @@ export class EchoService {
       ).map((row) => [row.id, row.topic_id]),
     );
 
+    // E-1b (task 3): the same mixed-valence pairing rule `PatternsService` applies while counting,
+    // applied here to the one entry in hand. Read straight off the tables the engine reads, rather
+    // than through `PatternsService`, because there is no per-entry query surfaced there to reuse —
+    // its counting runs over the whole diary at once, never over one entry (C-06).
+    //
+    // Feelings are read only when the entry's own feeling assignment is a genuine confirmation
+    // (`CONFIRMED_FEELING_SOURCES`, same as everywhere else this rule applies) — an entry whose
+    // feelings are still `suggested` or `unset` is not evidence for anything yet, so it has no
+    // feeling to test for a mix and the check below never fires for it, unchanged from before.
+    const entryFeelingKeys = CONFIRMED_FEELING_SOURCES.includes(entry.feeling_source)
+      ? (
+          this.db
+            .prepare('SELECT feeling_key FROM entry_feelings WHERE entry_id = ?')
+            .all(entryId) as Array<{ feeling_key: string }>
+        ).map((row) => row.feeling_key)
+      : [];
+    const valenceOf = new Map(
+      (
+        this.db.prepare('SELECT "key", valence FROM feelings').all() as Array<{
+          key: string;
+          valence: string;
+        }>
+      ).map((row) => [row.key, row.valence]),
+    );
+    const entryIsMixed = isMixedValence(entryFeelingKeys, (key) => valenceOf.get(key));
+    const confirmedPairingPlaceholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
+    const confirmedPairs = new Set(
+      (
+        this.db
+          .prepare(
+            `SELECT topic_id, feeling_key FROM entry_topic_feelings
+             WHERE entry_id = ? AND source IN (${confirmedPairingPlaceholders})`,
+          )
+          .all(entryId, ...CONFIRMED_FEELING_SOURCES) as Array<{
+          topic_id: string;
+          feeling_key: string;
+        }>
+      ).map((row) => `${row.topic_id} ${row.feeling_key}`),
+    );
+
     // I4-05: an echo is only ever an *active* pattern, and only a forward one — "you felt X in 8 of
     // 12 entries mentioning this" is an observation about the entry in hand. An inverse pattern is
     // about the entries that do *not* mention it, so echoing it here would be a non sequitur.
-    const matches = this.patterns
-      .listPatterns()
-      .filter(
-        (pattern) =>
-          pattern.status === 'active' &&
-          pattern.kind === 'forward' &&
-          topicIds.has(patternTopics.get(pattern.id) ?? ''),
-      );
+    const matches = this.patterns.listPatterns().filter((pattern) => {
+      if (pattern.status !== 'active' || pattern.kind !== 'forward') return false;
+      const topicId = patternTopics.get(pattern.id);
+      if (!topicId || !topicIds.has(topicId)) return false;
+      // E-1b (task 3): the entry is only disqualified from a pattern it itself would not have
+      // contributed to — which requires the entry to actually carry the pattern's exact feeling.
+      // An entry mentioning the topic under a *different* feeling was never evidence for this pair
+      // in the first place, mixed or not, so the rule has nothing to say about it and the echo
+      // proceeds exactly as before (this is the general "you usually feel X here" observation,
+      // unrelated to what the user felt just now).
+      if (entryIsMixed && entryFeelingKeys.includes(pattern.feeling)) {
+        return confirmedPairs.has(`${topicId} ${pattern.feeling}`);
+      }
+      return true;
+    });
 
     const today = encodeDate(todayLocal());
     const log = this.readLog();

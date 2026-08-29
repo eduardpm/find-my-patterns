@@ -29,6 +29,20 @@ export interface InsightsOut {
    * "not enough topic evidence" before this array existed, and stays that way).
    */
   context_patterns: ContextPatternOut[];
+  /**
+   * E-1b acceptance criterion 5: how many in-window entries are mixed-valence and never went
+   * through the pairing step at all — zero rows in `entry_topic_feelings`, not merely "confirmed
+   * some pairs and left a cross combination unlinked". That distinction is deliberate: an entry
+   * that confirmed (topic, feelingA) and (otherTopic, feelingB) has permanently and intentionally
+   * excluded (topic, feelingB) — pairing it further changes nothing, so counting it here would be
+   * false transparency. Only an entry with *no* confirmed pairing at all is one where confirming
+   * anything would move it from counting toward nothing to counting toward whatever it confirms,
+   * which is the literal claim the eventual UI notice ("n entries not counted until you pair
+   * them") makes. Additive and top-level (not per-pattern, and not per-entry) — see
+   * `PatternsService#buildCandidates` for the full reasoning. Zero on every diary with no
+   * mixed-valence, never-paired entries, which is the common case rule 1 leaves untouched.
+   */
+  excluded_unpaired: number;
 }
 
 @Controller('insights')
@@ -52,7 +66,7 @@ export class InsightsController {
    */
   @Get()
   async get(): Promise<InsightsOut> {
-    await this.patterns.recomputePatterns();
+    const { excludedUnpaired } = await this.patterns.recomputePatterns();
     const patterns = this.patterns.listPatterns();
     const withdrawals = this.patterns.listWithdrawals();
     return {
@@ -69,6 +83,7 @@ export class InsightsController {
       // recompute step for it to depend on. Ordering after `recomputePatterns()` regardless, so a
       // request that also just wrote entries sees the same up-to-date `diary_entries` rows.
       context_patterns: this.patterns.contextPatterns(),
+      excluded_unpaired: excludedUnpaired,
     };
   }
 
