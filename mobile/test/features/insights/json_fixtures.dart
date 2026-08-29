@@ -140,6 +140,26 @@ Map<String, Object?> bucketJson({
   'sufficient': sufficient,
 };
 
+/// One point in `GET /insights/series`'s `points` array.
+Map<String, Object?> seriesPointJson({
+  String date = '2026-08-25',
+  double? score = 0.2,
+  int entryCount = 1,
+  int confirmedFeelingCount = 1,
+}) => {
+  'date': date,
+  'score': score,
+  'entry_count': entryCount,
+  'confirmed_feeling_count': confirmedFeelingCount,
+};
+
+/// `GET /insights/series`'s whole response. Empty by default: the
+/// mood-trend chart's own empty state is what most screen-level tests want,
+/// since they are not about the chart.
+Map<String, Object?> seriesJson({
+  List<Map<String, Object?>> points = const [],
+}) => {'granularity': 'day', 'points': points, 'constants': _constantsJson()};
+
 /// `GET /insights/when`'s whole response.
 Map<String, Object?> whenInsightsJson({
   int totalEntries = 12,

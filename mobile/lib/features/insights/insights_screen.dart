@@ -12,6 +12,7 @@ import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_page_wash.dart';
 import '../../core/widgets/journal_scrollbar.dart';
 import '../../core/widgets/status_views.dart';
+import 'charts/mood_trend_chart.dart';
 import 'insights_controller.dart';
 import 'pattern_card.dart';
 import 'when_panel.dart';
@@ -261,6 +262,11 @@ class _Content extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // CH-1: the mood-over-time chart, above even the withdrawal
+        // notices -- it is the one thing on this screen that answers "how
+        // have I been" at a glance, before any pattern-level detail.
+        const MoodTrendChart(),
+        const SizedBox(height: JournalSpacing.x4),
         // The one thing a user must never have to notice for themselves is
         // a pattern they were told about quietly going away.
         if (data.withdrawals.isNotEmpty) ...[
