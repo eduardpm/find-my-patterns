@@ -427,6 +427,67 @@ export function templateSuggestionFor(feelingLabel: string, topic: string): stri
 }
 
 // ---------------------------------------------------------------------------------------------
+// "Worth trying" recommendations (R-1)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * R-1's card sentence, for a pattern whose badge already reads `'keep'` (`badgeDirectionFor` in
+ * `patterns.service.ts`) — the topic is either protective (an inverse pattern, negative feeling: the
+ * bad feeling is likelier *without* the topic) or worth continuing (a forward pattern, positive
+ * feeling: the good feeling is likelier *with* it).
+ *
+ * `lift` is a required `number`, not `number | null`, on purpose — a `'keep'` badge is only ever
+ * given for a lift `badgeDirectionFor` already confirmed is defined and at or above `MIN_LIFT`
+ * (P0-6). There is deliberately no branch here for a missing one: a caller holding a null lift has
+ * no business calling this function, and threading a `comparisonReason` switch through it the way
+ * `forwardNarrative`/`inverseNarrative` do for their own, wider range of inputs would just be dead
+ * code that could never run.
+ *
+ * Every number in the sentence is one the pattern's own card already shows (`present_count`,
+ * `present_total`, `absent_count`, `absent_total`, `lift`) — R-0's "cites the user's own entries" —
+ * and the copy states an association only, never a cause: "may help" for the inverse case, never
+ * "will fix" or "protects you from" (I1-07 makes the same call for the inverse card's own
+ * narrative). The sentence is composed here, in full, because `mobile/CLAUDE.md`'s one rule is that
+ * the backend owns the wording; a client that built this prose from `action_topic` alone would be
+ * doing the one thing that rule forbids.
+ */
+export function recommendationSentenceFor(
+  kind: 'forward' | 'inverse',
+  feelingLabel: string,
+  topic: string,
+  lift: number,
+  presentCount: number,
+  presentTotal: number,
+  absentCount: number,
+  absentTotal: number,
+): string {
+  const liftText = `${lift.toFixed(1)}×`;
+  if (kind === 'inverse') {
+    return (
+      `On days without ${topic}, ${feelingLabel} is ${liftText} more likely ` +
+      `(${presentCount} of ${presentTotal} without vs ${absentCount} of ${absentTotal} with). ` +
+      `More ${topic} days may help — here's the evidence.`
+    );
+  }
+  return (
+    `On days with ${topic}, ${feelingLabel} is ${liftText} more likely ` +
+    `(${presentCount} of ${presentTotal} with vs ${absentCount} of ${absentTotal} without). ` +
+    `Keep doing ${topic} — here's the evidence.`
+  );
+}
+
+/**
+ * R-1's card headline — the action, not the evidence (`recommendationSentenceFor` states that). Two
+ * phrasings, matching the two kinds `badgeDirectionFor` can call `'keep'` for: more of a protective
+ * absence (inverse), or continuing what the diary already shows works (forward). Sent as its own
+ * field rather than left for the client to build from `action_topic` — see
+ * `recommendationSentenceFor`'s doc comment for why that line is not the client's to cross.
+ */
+export function recommendationHeadlineFor(kind: 'forward' | 'inverse', topic: string): string {
+  return kind === 'inverse' ? `More ${topic} days` : `Keep doing ${topic}`;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Confounders (I2)
 // ---------------------------------------------------------------------------------------------
 

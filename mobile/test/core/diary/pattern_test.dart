@@ -334,6 +334,54 @@ void main() {
       );
       expect(pattern.historicalNote, 'Held often enough once.');
     });
+
+    // R-1: `recommendation` is `null` for almost every pattern -- absent
+    // entirely is what a pattern the engine did not promote, and a backend
+    // that predates this field, both decode to.
+    test('recommendation defaults to null when the field is absent', () {
+      final pattern = patternFromJson(fullPatternJson(), catalog);
+      expect(pattern.recommendation, isNull);
+    });
+
+    test('decodes a "Worth trying" recommendation when the pattern carries '
+        'one (R-1)', () {
+      final pattern = patternFromJson(
+        fullPatternJson(
+          overrides: {
+            'recommendation': {
+              'action_topic': 'exercise',
+              'headline': 'More exercise days',
+              'sentence':
+                  'On days without exercise, anxious is 2.7× more likely '
+                  '(4 of 6 without vs 1 of 4 with). More exercise days may '
+                  "help — here's the evidence.",
+              'pattern_ref': 'p1',
+            },
+          },
+        ),
+        catalog,
+      );
+      final recommendation = pattern.recommendation!;
+      expect(recommendation.actionTopic, 'exercise');
+      expect(recommendation.headline, 'More exercise days');
+      expect(
+        recommendation.sentence,
+        contains('4 of 6 without vs 1 of 4 with'),
+      );
+      // The tap-through key: the pattern this recommendation points back at.
+      expect(recommendation.patternRef, 'p1');
+    });
+
+    test(
+      'a non-object recommendation value decodes to null rather than throwing',
+      () {
+        final pattern = patternFromJson(
+          fullPatternJson(overrides: {'recommendation': 'not an object'}),
+          catalog,
+        );
+        expect(pattern.recommendation, isNull);
+      },
+    );
   });
 
   group('withdrawalFromJson', () {

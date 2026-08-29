@@ -58,6 +58,18 @@ Confounder buildConfounder({
   note,
 );
 
+/// R-1: a "Worth trying" recommendation, with defaults that read as a
+/// plausible inverse, protective-topic card.
+Recommendation buildRecommendation({
+  String actionTopic = 'exercise',
+  String headline = 'More exercise days',
+  String sentence =
+      'On days without exercise, anxious is 2.7× more likely '
+      '(4 of 6 without vs 1 of 4 with). More exercise days may help — '
+      "here's the evidence.",
+  String patternRef = 'pattern-1',
+}) => Recommendation(actionTopic, headline, sentence, patternRef);
+
 /// A pattern with defaults that read as a plausible "happening now",
 /// forward, change-worthy card. Override only what a test is about.
 Pattern buildPattern({
@@ -88,6 +100,7 @@ Pattern buildPattern({
   List<Confounder> confounders = const [],
   List<PatternEvidence> evidence = const [],
   DateTime? lastUpdatedAt,
+  Recommendation? recommendation,
 }) => Pattern(
   id,
   kind,
@@ -116,6 +129,7 @@ Pattern buildPattern({
   confounders,
   evidence,
   lastUpdatedAt ?? DateTime.utc(2026, 8, 20),
+  recommendation,
 );
 
 /// A withdrawal notice with plausible defaults.

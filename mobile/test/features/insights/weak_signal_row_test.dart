@@ -104,6 +104,7 @@ void main() {
       pattern.confounders,
       pattern.evidence,
       pattern.lastUpdatedAt,
+      pattern.recommendation,
     );
 
     await tester.pumpWidget(app(withoutFeeling));

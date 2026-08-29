@@ -182,6 +182,20 @@ export interface Confounder {
   note: string;
 }
 
+/**
+ * R-1: a "Worth trying" card, attached to the pattern it was derived from — `null` for almost
+ * every pattern, and present only for the top few (by lift) whose `direction` reads `'keep'`. See
+ * `RecommendationOut` in `backend/src/insights/patterns.service.ts` for the full reasoning; `web`
+ * has no UI for this yet (that is mobile's `features/insights/` work), so this type exists for wire
+ * accuracy only.
+ */
+export interface PatternRecommendation {
+  action_topic: string;
+  headline: string;
+  sentence: string;
+  pattern_ref: string;
+}
+
 export interface Pattern {
   id: string;
   kind: PatternKind;
@@ -212,6 +226,7 @@ export interface Pattern {
   confounders: Confounder[];
   evidence: PatternEvidence[];
   last_updated_at: string;
+  recommendation: PatternRecommendation | null;
 }
 
 /**
