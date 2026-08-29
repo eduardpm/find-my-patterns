@@ -102,4 +102,68 @@ describe('startup compatibility check', () => {
     expect(() => assertCompatible(db)).toThrow(/unreadable row/);
     db.close();
   });
+
+  describe('entry_topic_feelings (E-1a)', () => {
+    it('refuses a pairing row naming a feeling key outside the vocabulary', () => {
+      const raw = new Database(workingCopy);
+      // Off for the same reason `db/database.ts` keeps it off on the guarded connection: a
+      // deliberately invalid `feeling_key` is exactly what this test needs to write.
+      raw.pragma('foreign_keys = OFF');
+      const [entry, topic] = [
+        raw.prepare('SELECT id FROM diary_entries LIMIT 1').get() as { id: string },
+        raw.prepare('SELECT id FROM topics LIMIT 1').get() as { id: string },
+      ];
+      raw
+        .prepare(
+          `INSERT INTO entry_topic_feelings (entry_id, topic_id, feeling_key, source)
+           VALUES (?, ?, 'not-a-real-feeling', 'suggested')`,
+        )
+        .run(entry.id, topic.id);
+      raw.close();
+
+      const db = openDiary(workingCopy);
+      expect(() => assertCompatible(db)).toThrow(/unreadable row/);
+      db.close();
+    });
+
+    it('refuses a pairing row whose source is outside suggested/confirmed/overridden', () => {
+      const raw = new Database(workingCopy);
+      const [entry, topic, feeling] = [
+        raw.prepare('SELECT id FROM diary_entries LIMIT 1').get() as { id: string },
+        raw.prepare('SELECT id FROM topics LIMIT 1').get() as { id: string },
+        raw.prepare('SELECT "key" FROM feelings LIMIT 1').get() as { key: string },
+      ];
+      raw
+        .prepare(
+          `INSERT INTO entry_topic_feelings (entry_id, topic_id, feeling_key, source)
+           VALUES (?, ?, ?, 'unset')`,
+        )
+        .run(entry.id, topic.id, feeling.key);
+      raw.close();
+
+      const db = openDiary(workingCopy);
+      expect(() => assertCompatible(db)).toThrow(/unreadable row/);
+      db.close();
+    });
+
+    it('accepts a well-formed pairing row', () => {
+      const raw = new Database(workingCopy);
+      const [entry, topic, feeling] = [
+        raw.prepare('SELECT id FROM diary_entries LIMIT 1').get() as { id: string },
+        raw.prepare('SELECT id FROM topics LIMIT 1').get() as { id: string },
+        raw.prepare('SELECT "key" FROM feelings LIMIT 1').get() as { key: string },
+      ];
+      raw
+        .prepare(
+          `INSERT INTO entry_topic_feelings (entry_id, topic_id, feeling_key, source)
+           VALUES (?, ?, ?, 'suggested')`,
+        )
+        .run(entry.id, topic.id, feeling.key);
+      raw.close();
+
+      const db = openDiary(workingCopy);
+      expect(() => assertCompatible(db)).not.toThrow();
+      db.close();
+    });
+  });
 });

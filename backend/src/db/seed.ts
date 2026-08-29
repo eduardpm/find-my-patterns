@@ -1,5 +1,7 @@
-import { encodeBool, encodeJson } from './codecs';
-import type { DiaryDatabase } from './database';
+import { randomUUID } from 'node:crypto';
+import { loadConfig } from '../config';
+import { encodeBool, encodeDate, encodeDateTime, encodeJson, nowUtc, todayLocal } from './codecs';
+import { openDiary, type DiaryDatabase } from './database';
 import { FEELING_GROUP_SEED, FEELING_SEED } from './feeling-vocabulary';
 
 /**
@@ -144,5 +146,79 @@ export function seed(db: DiaryDatabase): void {
     for (const [key, category, prompt, keywords, mandatory] of GUIDING_QUESTIONS) {
       insert.run(key, category, prompt, encodeJson(keywords), encodeBool(mandatory));
     }
+  }
+}
+
+/**
+ * One mixed-valence example entry, with plausible suggested topic↔feeling pairings (E-1a) — the
+ * exact shape the pairing feature exists for: one part of the day was hard, another part was
+ * good, and a client building the confirm-pairing screen needs a real entry to develop against
+ * rather than an empty diary.
+ *
+ * **Deliberately not called by {@link seed}.** `seed()` runs on *every* server boot
+ * (`db/database.provider.ts`) and must leave a populated diary — or a freshly created empty one —
+ * exactly as the person left it (FR-022); writing a diary entry nobody wrote into every fresh
+ * diary a real user creates would be precisely the kind of silent surprise FR-022 exists to
+ * prevent. This is invoked explicitly and only: `npm run seed-example-data -- <path-to-a-scratch-diary>`.
+ */
+export function seedExampleMixedValenceEntry(db: DiaryDatabase): { entryId: string } {
+  const now = encodeDateTime(nowUtc());
+  const entryId = randomUUID();
+  const rawText =
+    'Missed my workout again, which was disappointing — I keep meaning to go and then just do ' +
+    'not. But I called my family in the evening and that felt really warm; it was good to hear ' +
+    'their voices.';
+
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO diary_entries
+       (id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source, version)
+       VALUES (?, ?, ?, ?, 'freeform', ?, 'disappointed', 'suggested', 1)`,
+    ).run(entryId, now, now, encodeDate(todayLocal()), rawText);
+
+    const insertFeeling = db.prepare(
+      'INSERT INTO entry_feelings (entry_id, feeling_key, position) VALUES (?, ?, ?)',
+    );
+    insertFeeling.run(entryId, 'disappointed', 0);
+    insertFeeling.run(entryId, 'grateful', 1);
+
+    const findTopic = db.prepare('SELECT id FROM topics WHERE name = ?');
+    const insertTopic = db.prepare(
+      `INSERT INTO topics (id, name, aliases, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?)`,
+    );
+    const linkTopic = db.prepare(
+      `INSERT OR IGNORE INTO entry_topics (entry_id, topic_id, extracted_by) VALUES (?, ?, 'llm')`,
+    );
+    const insertPairing = db.prepare(
+      `INSERT INTO entry_topic_feelings (entry_id, topic_id, feeling_key, source)
+       VALUES (?, ?, ?, 'suggested')`,
+    );
+
+    const topicIds: Record<string, string> = {};
+    for (const name of ['exercise', 'family']) {
+      const existing = findTopic.get(name) as { id: string } | undefined;
+      const topicId = existing?.id ?? randomUUID();
+      if (!existing) insertTopic.run(topicId, name, encodeJson([]), now, now);
+      linkTopic.run(entryId, topicId);
+      topicIds[name] = topicId;
+    }
+
+    insertPairing.run(entryId, topicIds.exercise, 'disappointed');
+    insertPairing.run(entryId, topicIds.family, 'grateful');
+  });
+
+  return { entryId };
+}
+
+if (require.main === module) {
+  const target = process.argv[2] ?? loadConfig().databasePath;
+  try {
+    const db = openDiary(target);
+    const { entryId } = seedExampleMixedValenceEntry(db);
+    db.close();
+    console.log(`Seeded one mixed-valence example entry (${entryId}) into ${target}`);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
   }
 }

@@ -16,12 +16,14 @@ import type { Request } from 'express';
 import { guidedDraftAnswerSchema, orderIndexQuerySchema, parseOrThrow } from '../common/validation';
 import { TranscriptionJobsService } from '../transcription/transcription-jobs.service';
 import { toEntryOut } from './entries.controller';
+import { EntriesRepository } from './entries.repository';
 import { EmptyGuidedDraftError, EntriesService, GuidedDraftNotFoundError } from './entries.service';
 
 @Controller('guided-entry-drafts')
 export class GuidedDraftsController {
   constructor(
     private readonly entries: EntriesService,
+    private readonly entriesRepo: EntriesRepository,
     private readonly transcriptionJobs: TranscriptionJobsService,
   ) {}
 
@@ -106,9 +108,17 @@ export class GuidedDraftsController {
   finalize(@Param('draftKey') draftKey: string): Record<string, unknown> {
     try {
       const { entry, suggestion } = this.entries.finalizeGuidedDraft(draftKey);
-      if (suggestion) return toEntryOut(entry, suggestion);
+      const pairings = this.entriesRepo.findTopicFeelingPairings(entry.id);
+      if (suggestion) return toEntryOut(entry, suggestion, false, [], null, pairings);
       const analysis = this.entries.analysisFor(entry.id);
-      return toEntryOut(entry, analysis.suggested, analysis.pending, analysis.suggestedAll);
+      return toEntryOut(
+        entry,
+        analysis.suggested,
+        analysis.pending,
+        analysis.suggestedAll,
+        null,
+        pairings,
+      );
     } catch (error) {
       if (error instanceof EmptyGuidedDraftError) {
         throw new HttpException('The draft has no answers.', HttpStatus.UNPROCESSABLE_ENTITY);

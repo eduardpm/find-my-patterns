@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Res,
 } from '@nestjs/common';
@@ -19,11 +20,17 @@ import {
   entryCreateSchema,
   entryUpdateSchema,
   parseOrThrow,
+  topicFeelingsUpdateSchema,
   versionQuerySchema,
 } from '../common/validation';
-import type { DiaryEntry, GuidedAnswer, SuggestedFeeling } from '../domain/types';
+import type {
+  DiaryEntry,
+  GuidedAnswer,
+  SuggestedFeeling,
+  TopicFeelingPairing,
+} from '../domain/types';
 import { EchoService, type EchoOut } from '../insights/echo.service';
-import { EntriesService, EntryNotFoundError } from './entries.service';
+import { EntriesService, EntryNotFoundError, InvalidPairingError } from './entries.service';
 import {
   EntriesRepository,
   FeelingsRepository,
@@ -41,6 +48,7 @@ export function toEntryOut(
   analysisPending = false,
   suggestedAll: SuggestedFeeling[] = [],
   guidedAnswers: GuidedAnswer[] | null = null,
+  topicFeelings: TopicFeelingPairing[] = [],
 ): Record<string, unknown> {
   return {
     id: entry.id,
@@ -79,6 +87,17 @@ export function toEntryOut(
             answer_text: answer.answerText,
             order_index: answer.orderIndex,
           })),
+    // E-1a: which of this entry's topics pair with which of its feelings, and whether that pairing
+    // is still just a suggestion or something the user has confirmed or overridden. Served on
+    // every entry read exactly like `feeling_keys` — a stored fact, not a derived, suppressible
+    // proposal the way `suggested_feeling` is. Additive: a client built before this field existed
+    // reads every other key exactly as before and simply never looks at this one.
+    topic_feelings: topicFeelings.map((pairing) => ({
+      topic_id: pairing.topicId,
+      topic: pairing.topic,
+      feeling_key: pairing.feelingKey,
+      source: pairing.source,
+    })),
   };
 }
 
@@ -104,9 +123,17 @@ export class EntriesController {
   create(@Body() body: unknown): Record<string, unknown> {
     const input = parseOrThrow(entryCreateSchema, body ?? {});
     const { entry, suggestion } = this.service.createEntry(input);
-    if (suggestion) return toEntryOut(entry, suggestion, false, [suggestion]);
+    const pairings = this.entries.findTopicFeelingPairings(entry.id);
+    if (suggestion) return toEntryOut(entry, suggestion, false, [suggestion], null, pairings);
     const analysis = this.service.analysisFor(entry.id);
-    return toEntryOut(entry, analysis.suggested, analysis.pending, analysis.suggestedAll);
+    return toEntryOut(
+      entry,
+      analysis.suggested,
+      analysis.pending,
+      analysis.suggestedAll,
+      null,
+      pairings,
+    );
   }
 
   @Patch(':entryId')
@@ -124,6 +151,7 @@ export class EntriesController {
             analysis.pending,
             analysis.suggestedAll,
             this.entries.findGuidedAnswers(updated.id),
+            this.entries.findTopicFeelingPairings(updated.id),
           ),
         );
     } catch (err) {
@@ -138,6 +166,50 @@ export class EntriesController {
       }
       throw err;
     }
+  }
+
+  /**
+   * Store the confirmed/overridden pairing set for an entry, replacing whatever was there before
+   * (E-1a). `PUT` because this is a full-set overwrite, not an incremental patch — the same
+   * semantics `PUT /guided-entry-drafts/{id}/questions/{key}` already uses for a single answer.
+   */
+  @Put(':entryId/topic-feelings')
+  setTopicFeelings(
+    @Param('entryId') entryId: string,
+    @Body() body: unknown,
+  ): Record<string, unknown> {
+    const input = parseOrThrow(topicFeelingsUpdateSchema, body ?? {});
+    try {
+      this.service.setTopicFeelingPairings(
+        entryId,
+        input.pairings.map((pairing) => ({
+          topicId: pairing.topic_id,
+          feelingKey: pairing.feeling_key,
+        })),
+      );
+    } catch (err) {
+      if (err instanceof EntryNotFoundError) {
+        throw new HttpException('Entry not found', HttpStatus.NOT_FOUND);
+      }
+      if (err instanceof InvalidPairingError) {
+        throw new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY);
+      }
+      throw err;
+    }
+    // The service call above already proved the entry exists (it throws EntryNotFoundError
+    // otherwise), so a null here would mean it was deleted in the instant between that write and
+    // this read — treated the same as never having existed rather than a crash.
+    const entry = this.entries.findById(entryId);
+    if (!entry) throw new HttpException('Entry not found', HttpStatus.NOT_FOUND);
+    const analysis = this.service.analysisFor(entryId);
+    return toEntryOut(
+      entry,
+      analysis.suggested,
+      analysis.pending,
+      analysis.suggestedAll,
+      this.entries.findGuidedAnswers(entryId),
+      this.entries.findTopicFeelingPairings(entryId),
+    );
   }
 
   @Delete(':entryId')
@@ -191,6 +263,7 @@ export class EntriesController {
           analysis.pending,
           analysis.suggestedAll,
           this.entries.findGuidedAnswers(e.id),
+          this.entries.findTopicFeelingPairings(e.id),
         );
       }),
     };
@@ -221,6 +294,7 @@ export class EntriesController {
       analysis.pending,
       analysis.suggestedAll,
       this.entries.findGuidedAnswers(entryId),
+      this.entries.findTopicFeelingPairings(entryId),
     );
   }
 }

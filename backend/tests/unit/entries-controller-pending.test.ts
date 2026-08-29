@@ -65,6 +65,15 @@ function stubService(options: {
   return { service, analysisForCalls };
 }
 
+/**
+ * A stub carrying only what `create`/`finalize` touch on `EntriesRepository` — the pairings read
+ * that E-1a added. No test in this file cares about pairings themselves (that is
+ * `entries-topic-feelings.test.ts`'s job); this exists only so `toEntryOut` has something to call.
+ */
+function stubEntriesRepo(): { findTopicFeelingPairings: () => never[] } {
+  return { findTopicFeelingPairings: () => [] };
+}
+
 describe('POST /entries -- analysis_pending honesty', () => {
   it('reports the job as pending when createEntry could not suggest synchronously', () => {
     const entry = fakeEntry();
@@ -72,7 +81,11 @@ describe('POST /entries -- analysis_pending honesty', () => {
       createResult: { entry, suggestion: null },
       analysis: { suggested: null, suggestedAll: [], pending: true },
     });
-    const controller = new EntriesController(undefined as never, service, undefined as never);
+    const controller = new EntriesController(
+      stubEntriesRepo() as never,
+      service,
+      undefined as never,
+    );
 
     const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
 
@@ -89,7 +102,11 @@ describe('POST /entries -- analysis_pending honesty', () => {
       createResult: { entry, suggestion: null },
       analysis: { suggested: suggestion, suggestedAll: [suggestion], pending: false },
     });
-    const controller = new EntriesController(undefined as never, service, undefined as never);
+    const controller = new EntriesController(
+      stubEntriesRepo() as never,
+      service,
+      undefined as never,
+    );
 
     const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
 
@@ -105,7 +122,11 @@ describe('POST /entries -- analysis_pending honesty', () => {
       createResult: { entry, suggestion },
       analysis: { suggested: null, suggestedAll: [], pending: true }, // would be wrong if used
     });
-    const controller = new EntriesController(undefined as never, service, undefined as never);
+    const controller = new EntriesController(
+      stubEntriesRepo() as never,
+      service,
+      undefined as never,
+    );
 
     const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
 
@@ -122,7 +143,11 @@ describe('POST /guided-entry-drafts/{key}/finalize -- analysis_pending honesty',
       finalizeResult: { entry, suggestion: null },
       analysis: { suggested: null, suggestedAll: [], pending: true },
     });
-    const controller = new GuidedDraftsController(service, undefined as never);
+    const controller = new GuidedDraftsController(
+      service,
+      stubEntriesRepo() as never,
+      undefined as never,
+    );
 
     const body = controller.finalize('draft-1');
 

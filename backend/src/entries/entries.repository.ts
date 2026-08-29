@@ -10,6 +10,8 @@ import type {
   FeelingSource,
   GuidedAnswer,
   GuidingQuestion,
+  PairingSource,
+  TopicFeelingPairing,
   Valence,
 } from '../domain/types';
 import type { PlainDate } from '../db/codecs';
@@ -160,6 +162,44 @@ export class EntriesRepository {
       answerText: r.answer_text,
       orderIndex: Number(r.order_index),
     }));
+  }
+
+  /**
+   * The entry's topic↔feeling pairings (E-1a), joined out to the topic's name — an entry serves no
+   * topics of its own anywhere else, so this is the only place a client can learn which topics a
+   * pairing is even about. Ordered for a stable, deterministic wire shape rather than SQLite's
+   * insertion order.
+   */
+  findTopicFeelingPairings(entryId: string): TopicFeelingPairing[] {
+    const rows = this.db
+      .prepare(
+        `SELECT etf.topic_id, t.name AS topic, etf.feeling_key, etf.source
+         FROM entry_topic_feelings etf JOIN topics t ON t.id = etf.topic_id
+         WHERE etf.entry_id = ? ORDER BY t.name, etf.feeling_key`,
+      )
+      .all(entryId) as Array<{
+      topic_id: string;
+      topic: string;
+      feeling_key: string;
+      source: string;
+    }>;
+    return rows.map((r) => ({
+      topicId: r.topic_id,
+      topic: r.topic,
+      feelingKey: r.feeling_key,
+      source: r.source as PairingSource,
+    }));
+  }
+
+  /** The topic ids currently linked to an entry — the set a pairing write is validated against. */
+  entryTopicIds(entryId: string): string[] {
+    return (
+      this.db
+        .prepare('SELECT topic_id FROM entry_topics WHERE entry_id = ?')
+        .all(entryId) as Array<{
+        topic_id: string;
+      }>
+    ).map((r) => r.topic_id);
   }
 }
 

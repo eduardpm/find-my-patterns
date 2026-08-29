@@ -154,6 +154,39 @@ describe('migrateDiary', () => {
   });
 });
 
+describe('migrateDiary — E-1a: the mixed-valence pairing table', () => {
+  it('adds entry_topic_feelings, empty, without touching anything the user wrote', () => {
+    const before = openDiary(target);
+    expect(() => assertCompatible(before)).toThrow(/entry_topic_feelings/);
+    before.close();
+
+    const writtenBefore = read<Record<string, unknown>>(
+      `SELECT id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source,
+              version FROM diary_entries ORDER BY id`,
+    );
+
+    migrateDiary(target);
+
+    expect(read<{ n: number }>('SELECT COUNT(*) AS n FROM entry_topic_feelings')[0].n).toBe(0);
+    expect(
+      read<Record<string, unknown>>(
+        `SELECT id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source,
+                version FROM diary_entries ORDER BY id`,
+      ),
+    ).toEqual(writtenBefore);
+
+    const after = openDiary(target);
+    expect(() => assertCompatible(after)).not.toThrow();
+    after.close();
+  });
+
+  it('is idempotent — creating it twice is the same as creating it once', () => {
+    migrateDiary(target);
+    migrateDiary(target);
+    expect(read<{ n: number }>('SELECT COUNT(*) AS n FROM entry_topic_feelings')[0].n).toBe(0);
+  });
+});
+
 describe('migrateDiary — #60: the Steady group valence split', () => {
   /**
    * A diary that already went through the grouped-vocabulary migration, at the valence scheme

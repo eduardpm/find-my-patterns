@@ -17,6 +17,7 @@
     "format": "prettier --write .",
     "init-db": "node --env-file-if-exists=../.env dist/db/init.js",
     "migrate-db": "node --env-file-if-exists=../.env dist/db/migrate.js",
+    "seed-example-data": "node --env-file-if-exists=../.env dist/db/seed.js",
     "backup": "node --env-file-if-exists=../.env dist/db/backup.js",
     "auth:hash-password": "node dist/auth/hash-password.js"
   },

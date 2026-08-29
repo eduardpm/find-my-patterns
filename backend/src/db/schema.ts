@@ -184,6 +184,27 @@ export const SCHEMA_STATEMENTS: string[] = [
      PRIMARY KEY (id),
      FOREIGN KEY(pattern_feeling) REFERENCES feelings ("key")
    )`,
+
+  // --- Mixed-valence pairing (E-1a) -----------------------------------------------------------
+  // Topics and feelings both attach to the whole entry, which is wrong the moment an entry mixes
+  // valence: "missed my workout, disappointing — but a lovely call with my family" would otherwise
+  // feed *four* topic×feeling counts into the pattern engine, two of them false
+  // (workout×grateful, family×disappointed). This table is the sub-entry link the LLM proposes and
+  // the user confirms or overrides, carrying the same `suggested / confirmed / overridden` source
+  // semantics `diary_entries.feeling_source` already carries — only a confirmed or overridden row
+  // may ever count as evidence (that counting rule is E-1b, not here). The primary key is the
+  // triple rather than a surrogate id: a (topic, feeling) pairing on one entry is either present or
+  // it is not, so there is nothing a second row for the same triple could mean.
+  `CREATE TABLE entry_topic_feelings (
+     entry_id VARCHAR(36) NOT NULL,
+     topic_id VARCHAR(36) NOT NULL,
+     feeling_key VARCHAR(32) NOT NULL,
+     source VARCHAR(16) NOT NULL,
+     PRIMARY KEY (entry_id, topic_id, feeling_key),
+     FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
+     FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE,
+     FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
+   )`,
 ];
 
 /**
@@ -371,6 +392,20 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
               created_at DATETIME NOT NULL,
               PRIMARY KEY (id),
               FOREIGN KEY(pattern_feeling) REFERENCES feelings ("key")
+            )`,
+  },
+
+  // --- Mixed-valence pairing (E-1a) -----------------------------------------------------------
+  {
+    sql: `CREATE TABLE IF NOT EXISTS entry_topic_feelings (
+              entry_id VARCHAR(36) NOT NULL,
+              topic_id VARCHAR(36) NOT NULL,
+              feeling_key VARCHAR(32) NOT NULL,
+              source VARCHAR(16) NOT NULL,
+              PRIMARY KEY (entry_id, topic_id, feeling_key),
+              FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
+              FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE,
+              FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
             )`,
   },
 ];
