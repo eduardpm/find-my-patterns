@@ -65,10 +65,7 @@ export const entryUpdateSchema = z.object({
    * which is how a rating is cleared.
    */
   feeling_intensities: z
-    .record(
-      z.enum(FEELING_KEYS),
-      z.number().int().min(MIN_INTENSITY).max(MAX_INTENSITY),
-    )
+    .record(z.enum(FEELING_KEYS), z.number().int().min(MIN_INTENSITY).max(MAX_INTENSITY))
     .nullish(),
   version: z.number().int(),
 });
