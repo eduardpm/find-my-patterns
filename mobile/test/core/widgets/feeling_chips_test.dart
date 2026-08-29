@@ -35,6 +35,40 @@ const low = FeelingGroup('low', 'Low', Valence.negative, [sad]);
 
 const allGroups = [uplifted, steady, tense, low];
 
+// A second, long-label vocabulary reserved for the #111 textScale-2.0
+// overflow check below: real words from the backend's own vocabulary
+// (`specs/research/unified-backlog.md`'s catalogue) chosen because they are
+// long enough that halving each chip's line share -- the direct consequence
+// of chips finally sitting side by side -- is exactly the new condition
+// that could overflow a `Row` that never had to share space before.
+const affectionate = Feeling(
+  'affectionate',
+  'Affectionate',
+  Valence.positive,
+  'uplifted',
+);
+const disappointed = Feeling(
+  'disappointed',
+  'Disappointed',
+  Valence.negative,
+  'low',
+);
+const longLabelUplifted = FeelingGroup(
+  'uplifted',
+  'Uplifted',
+  Valence.positive,
+  [affectionate, happy],
+);
+const longLabelTense = FeelingGroup('tense', 'Tense', Valence.negative, [
+  overwhelmed,
+  frustrated,
+]);
+const longLabelLow = FeelingGroup('low', 'Low', Valence.negative, [
+  disappointed,
+  sad,
+]);
+const longLabelGroups = [longLabelUplifted, longLabelTense, longLabelLow];
+
 /// A controlled-component test harness: owns `selected` the way a real
 /// screen would, feeding it back into [FeelingChips] on every
 /// [FeelingChips.onSelectionChange] call, and exposes every callback
@@ -508,4 +542,95 @@ void main() {
       expect(find.text('suggested'), findsOneWidget);
     });
   });
+
+  group(
+    'FeelingChips — chip layout wraps at 360dp, not one per row (#111)',
+    () {
+      // #111: `FeelingChip`'s pill used to expand to the full line width
+      // (`Container(alignment: Alignment.center)`), so every chip here landed
+      // on a row of its own -- exactly the "Stressed, Anxious, Overwhelmed..."
+      // stack the issue found on-device. A `find.byType(Wrap)` check passed
+      // throughout that bug (#11, #15 both shipped with it in place), so
+      // these compare rendered row position instead -- the same `dy`
+      // meaning "the same Wrap row" that a real thumb would see.
+      testWidgets(
+        'two feelings in the same group sheet share a row at 360dp',
+        (tester) async {
+          tester.view.physicalSize = const Size(360, 900);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          await tester.pumpWidget(const _Harness());
+          await tester.tap(find.text('Uplifted'));
+          await tester.pumpAndSettle();
+
+          final happyTop = tester.getTopLeft(find.text('Happy'));
+          final excitedTop = tester.getTopLeft(find.text('Excited'));
+          expect(
+            excitedTop.dy,
+            happyTop.dy,
+            reason:
+                'Happy and Excited are both short words and must share the '
+                'Uplifted section\'s first Wrap row at 360dp; one full-width '
+                'chip per row would put Excited on a row of its own below',
+          );
+          expect(excitedTop.dx, greaterThan(happyTop.dx));
+        },
+      );
+
+      testWidgets(
+        'two chosen feelings in the summary row above the groups also '
+        'share a row at 360dp',
+        (tester) async {
+          tester.view.physicalSize = const Size(360, 900);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          await tester.pumpWidget(
+            const _Harness(initial: [happy, excited]),
+          );
+
+          final happyTop = tester.getTopLeft(find.text('Happy'));
+          final excitedTop = tester.getTopLeft(find.text('Excited'));
+          expect(
+            excitedTop.dy,
+            happyTop.dy,
+            reason:
+                'the chosen-feelings row above the group chips is the other '
+                'call site #111 named; it must wrap exactly like the sheet '
+                'does',
+          );
+          expect(excitedTop.dx, greaterThan(happyTop.dx));
+        },
+      );
+
+      testWidgets(
+        'no overflow at 360dp and 2x text scale once long labels sit '
+        'side by side',
+        (tester) async {
+          tester.view.physicalSize = const Size(360, 1200);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          // Chips sharing a row is new as of this fix, and it halves (or
+          // worse) the line width each one gets -- a condition the old
+          // one-chip-per-row layout never exercised, however long the word.
+          // "Affectionate"/"Overwhelmed"/"Disappointed" are the app's longest
+          // feeling words, and 2x is the accessibility ceiling `pattern_echo_
+          // panel_test.dart` and `when_panel_test.dart` already check other
+          // widgets against.
+          await tester.pumpWidget(
+            MediaQuery(
+              data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+              child: const _Harness(groups: longLabelGroups),
+            ),
+          );
+          await tester.tap(find.text('Uplifted'));
+          await tester.pumpAndSettle();
+
+          expect(tester.takeException(), isNull);
+        },
+      );
+    },
+  );
 }

@@ -136,6 +136,53 @@ class FeelingChip extends StatelessWidget {
     final textColor = on ? color : theme.colorScheme.onSurface;
     final fontWeight = on ? FontWeight.bold : FontWeight.w500;
 
+    final content = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FeelingDot(color: color),
+        const SizedBox(width: JournalSpacing.x2),
+        // `Flexible` rather than a bare `Text`: two chips sharing a `Wrap`
+        // row (the fix this file exists for, #111) means each one can be
+        // offered less width than its longest word needs once a reader's
+        // text scale is turned up -- "Affectionate" or "Disappointed" at
+        // 2x can outgrow the space left after the dot and padding. `Row`
+        // gives `Flexible`'s child the leftover width rather than its own
+        // unbounded natural size, so the label wraps onto a second line
+        // and the pill grows taller instead of painting past its own
+        // border -- the label still reads in full, just never truncated
+        // or clipped, which an `Expanded`/ellipsis would each have done.
+        Flexible(
+          child: Text(
+            label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: textColor,
+              fontWeight: fontWeight,
+            ),
+          ),
+        ),
+        if (intensityLabel case final intensityLabel?) ...[
+          const SizedBox(width: JournalSpacing.x2),
+          Text(
+            intensityLabel,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        if (suggested) ...[
+          const SizedBox(width: JournalSpacing.x2),
+          Text('suggested', style: theme.textTheme.labelSmall),
+        ],
+        if (removable) ...[
+          const SizedBox(width: JournalSpacing.x2),
+          Text(
+            '×',
+            style: theme.textTheme.labelLarge?.copyWith(color: textColor),
+          ),
+        ],
+      ],
+    );
+
     final chip = Container(
       constraints: _selectable
           ? const BoxConstraints(
@@ -147,46 +194,40 @@ class FeelingChip extends StatelessWidget {
         horizontal: JournalSpacing.x4,
         vertical: JournalSpacing.x2,
       ),
-      alignment: Alignment.center,
+      // No `alignment` here -- that was the whole defect (#111). A
+      // `Container` with a non-null `alignment` inserts an `Align` that, for
+      // any axis where the ambient constraints are bounded, sizes itself to
+      // the *full* bound rather than to its child, because `Align` only
+      // shrink-wraps an axis when that axis's incoming max is unbounded or
+      // a width/heightFactor forces it to. Every call site here sits inside
+      // a `Wrap`, which does give a bounded max width once a screen is
+      // involved, so the chip claimed the whole row and the `Wrap` never
+      // got a second chip to place beside it. Nothing here needs
+      // `Container`'s own centring anyway: the `Row` above is already
+      // `mainAxisSize: MainAxisSize.min`, so it is exactly as wide as its
+      // contents, and `Padding` alone gives it equal insets on every side
+      // -- with no slack between content and box, that already reads as
+      // centred without any `Align` involved.
+      //
+      // The one place a size larger than the content can still appear is
+      // the `_selectable` branch's `minWidth`/`minHeight` -- the 48dp tap
+      // target, which is bigger than a short label like "Sad" plus its
+      // padding. That gap still needs its content centred, but by an inner
+      // `Center` with both factors pinned to 1 rather than by `Container`'s
+      // `alignment`: a `widthFactor`/`heightFactor` of 1 forces `Align` to
+      // shrink-wrap *regardless* of the ambient constraints' boundedness
+      // (see `RenderPositionedBox._shrinkWrapWidth`/`_shrinkWrapHeight`),
+      // so it only grows past the label's natural size to satisfy our own
+      // `BoxConstraints.minWidth`/`minHeight` below it -- never to fill
+      // whatever width the enclosing `Wrap` happens to have on offer.
       decoration: BoxDecoration(
         color: resolvedBackground,
         borderRadius: JournalShapes.full,
         border: Border.all(color: borderColor, width: borderWidth),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FeelingDot(color: color),
-          const SizedBox(width: JournalSpacing.x2),
-          Text(
-            label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: textColor,
-              fontWeight: fontWeight,
-            ),
-          ),
-          if (intensityLabel case final intensityLabel?) ...[
-            const SizedBox(width: JournalSpacing.x2),
-            Text(
-              intensityLabel,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-          if (suggested) ...[
-            const SizedBox(width: JournalSpacing.x2),
-            Text('suggested', style: theme.textTheme.labelSmall),
-          ],
-          if (removable) ...[
-            const SizedBox(width: JournalSpacing.x2),
-            Text(
-              '×',
-              style: theme.textTheme.labelLarge?.copyWith(color: textColor),
-            ),
-          ],
-        ],
-      ),
+      child: _selectable
+          ? Center(widthFactor: 1, heightFactor: 1, child: content)
+          : content,
     );
 
     if (!_selectable) return chip;
