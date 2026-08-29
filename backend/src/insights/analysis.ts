@@ -24,6 +24,7 @@ import {
   HOUR_BLOCKS,
   MAX_INTENSITY,
   MIN_COMPARISON_ENTRIES,
+  MIN_CONFOUNDER_CO_OCCURRENCES,
   MIN_LIFT,
   RECENCY_WINDOW_DAYS,
   SEASONS,
@@ -450,6 +451,12 @@ export interface ConfounderSplit {
  * decides whether the warning means anything: with `onlyThisCount === 0` the diary contains no
  * entry that could tell the two apart, and saying "could really be about Y" would imply a
  * comparison that was never made (I2-04).
+ *
+ * `bothCount` must also clear `MIN_CONFOUNDER_CO_OCCURRENCES` on its own (#98): the rate check
+ * above says nothing about sample size, so without this a single shared entry could pass at rate
+ * 1.0 and come back `inseparable` — a tiny-sample flag of exactly the kind FR-008 exists to reject.
+ * The production caller happens to pre-filter to `MIN_OCCURRENCE_THRESHOLD`, but this function is
+ * exported and tested standalone and should not depend on a guarantee only its one caller keeps.
  */
 export function confounderSplit(
   topicName: string,
@@ -459,6 +466,7 @@ export function confounderSplit(
   onlyOtherCount: number,
   neitherCount: number,
 ): ConfounderSplit | null {
+  if (bothCount < MIN_CONFOUNDER_CO_OCCURRENCES) return null;
   const thisTotal = bothCount + onlyThisCount;
   if (thisTotal === 0) return null;
   const coOccurrenceRate = bothCount / thisTotal;
