@@ -90,5 +90,66 @@ void main() {
       );
       handle.dispose();
     });
+
+    // Regression test for issue #5: the header row's title used to sit in
+    // a `mainAxisSize.min` inner `Row`, which gave its `Flexible` text
+    // unbounded width and let it push the dismiss button off the card —
+    // Flutter's "RIGHT OVERFLOWED BY 20 PIXELS" stripes at 1080x2400. A
+    // narrow width plus a large text scale is what used to trigger it.
+    for (final textScale in [1.0, 1.3, 2.0]) {
+      testWidgets(
+        'has no overflow at 320dp width and ${textScale}x text scale',
+        (tester) async {
+          await tester.pumpWidget(
+            MediaQuery(
+              data: MediaQueryData(
+                size: const Size(320, 800),
+                textScaler: TextScaler.linear(textScale),
+              ),
+              child: host(
+                PatternEchoPanel(
+                  echoes: const [meetingsEcho, lateNightEcho],
+                  onDismiss: () {},
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          expect(tester.takeException(), isNull);
+          // The title wraps rather than being clipped, and the dismiss
+          // control stays fully readable/tappable — findsOneWidget (rather
+          // than findsNothing) confirms neither was replaced by an
+          // overflow-error render object.
+          expect(
+            find.text('You have written about this before'),
+            findsOneWidget,
+          );
+          expect(find.byTooltip('Dismiss'), findsOneWidget);
+        },
+      );
+    }
+
+    testWidgets(
+      'keeps the dismiss control at the touch-target floor at 320dp and 2x scale',
+      (tester) async {
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(
+              size: Size(320, 800),
+              textScaler: TextScaler.linear(2),
+            ),
+            child: host(
+              PatternEchoPanel(echoes: const [meetingsEcho], onDismiss: () {}),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final dismissSize = tester.getSize(find.byTooltip('Dismiss'));
+        expect(dismissSize.width, greaterThanOrEqualTo(44));
+        expect(dismissSize.height, greaterThanOrEqualTo(44));
+      },
+    );
   });
 }

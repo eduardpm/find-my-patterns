@@ -42,25 +42,36 @@ class PatternEchoPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.auto_awesome,
-                    size: 18,
-                    color: theme.colorScheme.primary,
-                  ),
-                  const SizedBox(width: JournalSpacing.x2),
-                  Flexible(
-                    child: Text(
-                      'You have written about this before',
-                      style: theme.textTheme.titleMedium,
-                    ),
-                  ),
-                ],
+              Padding(
+                // Nudges the icon down to sit with the title's cap height
+                // rather than the full row height, which grows once the
+                // title wraps to a second line.
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(
+                  Icons.auto_awesome,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
               ),
+              const SizedBox(width: JournalSpacing.x2),
+              // `Expanded` — not the `Flexible` inside a `mainAxisSize.min`
+              // inner `Row` this replaced — is what actually bounds the
+              // title's width. A `min`-sized `Row` gets loose (unbounded)
+              // constraints from its parent `Row`, so a `Flexible` text
+              // inside it never wraps; it lays out at its natural width and
+              // pushes the trailing dismiss button off the card edge. This
+              // is the RenderFlex overflow from issue #5.
+              Expanded(
+                child: Text(
+                  'You have written about this before',
+                  style: theme.textTheme.titleMedium,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: JournalSpacing.x2),
               // `tooltip` alone would only reach the semantics tree's
               // `tooltip` field, not its `label` — the accessible name a
               // screen reader announces — so this replaces `IconButton`'s
@@ -72,10 +83,19 @@ class PatternEchoPanel extends StatelessWidget {
                 label: 'Dismiss',
                 onTap: onDismiss,
                 child: ExcludeSemantics(
-                  child: IconButton(
-                    onPressed: onDismiss,
-                    tooltip: 'Dismiss',
-                    icon: const Icon(Icons.close),
+                  child: SizedBox(
+                    // The constitution's touch-target floor (48dp), fixed
+                    // so the control never shrinks or grows with the title
+                    // — it stays a stable, fully on-card tap target at any
+                    // width or text scale.
+                    width: JournalSpacing.x7,
+                    height: JournalSpacing.x7,
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: onDismiss,
+                      tooltip: 'Dismiss',
+                      icon: const Icon(Icons.close),
+                    ),
                   ),
                 ),
               ),
