@@ -72,6 +72,11 @@ abstract final class AppConfig {
   static const String withdrawalAcknowledgePath =
       '/insights/withdrawals/acknowledge';
 
+  /// [R-2] The week's highlight pattern, top recommendation and movement
+  /// figure -- fetched when the digest sheet opens, never at the moment the
+  /// scheduled notification fires.
+  static const String digestPath = '/insights/digest';
+
   /// A month's worth of entry density, for the calendar.
   static const String monthlySummaryPath = '/monthly-summary';
 

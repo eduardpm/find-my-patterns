@@ -15,6 +15,7 @@ import {
   contextNarrative,
   daysBetween,
   dayTypeFor,
+  digestHighlightSentenceFor,
   forwardNarrative,
   historicalNote,
   hourBlockKey,
@@ -23,6 +24,7 @@ import {
   isMixedValence,
   isPairExcluded,
   isStrong,
+  movementSentenceFor,
   percent,
   recommendationHeadlineFor,
   recommendationSentenceFor,
@@ -392,5 +394,49 @@ describe('mixed-valence pairing (E-1b, #26)', () => {
     it('does not exclude a mixed-valence entry from the exact pair it confirmed', () => {
       expect(isPairExcluded(true, new Set(['topic-a happy']), 'topic-a', 'happy')).toBe(false);
     });
+  });
+});
+
+describe('weekly digest sentences (R-2)', () => {
+  it('states this week’s own count before appending the pattern’s existing narrative', () => {
+    const narrative =
+      'You felt anxious in 4 of 6 entries without exercise in the last 30 days (67%), and in 1 of ' +
+      '4 entries with it (25%).';
+    expect(digestHighlightSentenceFor('exercise', 3, narrative)).toBe(
+      `exercise came up in 3 entries this week. ${narrative}`,
+    );
+  });
+
+  it('pluralises the weekly count correctly, singular included', () => {
+    expect(digestHighlightSentenceFor('reading', 1, 'x')).toBe(
+      'reading came up in 1 entry this week. x',
+    );
+    expect(digestHighlightSentenceFor('reading', 0, 'x')).toBe(
+      'reading came up in 0 entries this week. x',
+    );
+  });
+
+  it('states a downward movement with both raw counts, never a bare percentage', () => {
+    expect(movementSentenceFor('anxious', 3, 6)).toBe(
+      'anxious appeared in 3 entries this week, down from 6 last week.',
+    );
+  });
+
+  it('states an upward movement', () => {
+    expect(movementSentenceFor('calm', 5, 2)).toBe(
+      'calm appeared in 5 entries this week, up from 2 last week.',
+    );
+  });
+
+  it('states no movement without inventing a direction', () => {
+    expect(movementSentenceFor('sad', 2, 2)).toBe(
+      'sad appeared in 2 entries this week, the same as last week.',
+    );
+  });
+
+  it('pluralises the current count correctly, singular included', () => {
+    expect(movementSentenceFor('calm', 1, 3)).toBe(
+      'calm appeared in 1 entry this week, down from 3 last week.',
+    );
   });
 });

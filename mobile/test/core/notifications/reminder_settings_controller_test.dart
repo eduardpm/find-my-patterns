@@ -200,6 +200,51 @@ void main() {
         expect(plugin.scheduledCalls, isEmpty);
       },
     );
+
+    test(
+      're-arms the digest afterwards, so cancelAll above does not leave it '
+      'silently cancelled (R-2)',
+      () async {
+        container = buildContainer(
+          settings: const AppSettings(
+            digest: DigestTime(
+              weekday: DateTime.sunday,
+              hour: 18,
+              minute: 0,
+              enabled: true,
+            ),
+          ),
+        );
+        await container.read(reminderServiceProvider).initialize();
+        await container.read(remindersControllerProvider.future);
+
+        await container.read(remindersControllerProvider.notifier).save(const [
+          ReminderTime(hour: 8, minute: 0, enabled: true),
+        ]);
+
+        // One reminder alarm plus the re-armed digest alarm -- both present
+        // after the same `cancelAll` that would otherwise have wiped the
+        // digest's own independently-scheduled notification.
+        expect(plugin.scheduledCalls, hasLength(2));
+      },
+    );
+
+    test(
+      'does not re-arm the digest when it is off, only cancel it',
+      () async {
+        await container.read(remindersControllerProvider.future);
+
+        await container.read(remindersControllerProvider.notifier).save(const [
+          ReminderTime(hour: 8, minute: 0, enabled: true),
+        ]);
+
+        // The one reminder alarm, and nothing scheduled for the (off)
+        // digest -- `DigestSettingsController.rearm` cancels rather than
+        // schedules when `AppSettings.digest.enabled` is false.
+        expect(plugin.scheduledCalls, hasLength(1));
+        expect(plugin.cancelledIds, isNotEmpty);
+      },
+    );
   });
 
   group('openSystemSettings', () {

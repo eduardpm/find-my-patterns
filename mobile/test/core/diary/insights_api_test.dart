@@ -1,8 +1,10 @@
 import 'package:dio/dio.dart';
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
+import 'package:find_my_patterns/core/diary/digest.dart';
 import 'package:find_my_patterns/core/diary/feeling.dart';
 import 'package:find_my_patterns/core/diary/feelings_api.dart';
 import 'package:find_my_patterns/core/diary/insights_api.dart';
+import 'package:find_my_patterns/core/diary/pattern.dart';
 import 'package:find_my_patterns/core/network/api_client.dart';
 import 'package:find_my_patterns/core/network/api_error.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
@@ -168,6 +170,101 @@ void main() {
               ),
         ),
       );
+    });
+  });
+
+  group('digest (R-2)', () {
+    test('decodes the empty shape', () async {
+      final env = apiFor([
+        FakeReply(200, body: {'empty': true, 'entry_count': 0}),
+      ]);
+
+      final digest = await env.api.digest();
+
+      expect(digest.empty, isTrue);
+      expect(digest.entryCount, 0);
+      expect(digest.week, isNull);
+      expect(digest.highlight, isNull);
+      expect(digest.recommendation, isNull);
+      expect(digest.movement, isNull);
+      expect(env.adapter.requests.last.path, '/insights/digest');
+    });
+
+    test(
+      'decodes a full response: highlight, recommendation and movement',
+      () async {
+        final env = apiFor([
+          FakeReply(
+            200,
+            body: {
+              'empty': false,
+              'week': '2026-08-24',
+              'entry_count': 10,
+              'highlight': {
+                'pattern_ref': 'p1',
+                'kind': 'forward',
+                'topic': 'reading',
+                'feeling': 'anxious',
+                'week_count': 3,
+                'lift': 1.5,
+                'sentence': 'reading came up in 3 entries this week.',
+              },
+              'recommendation': {
+                'action_topic': 'reading',
+                'headline': 'Keep doing reading',
+                'sentence': 'On days with reading, calm is 4.5x more likely.',
+                'pattern_ref': 'p1',
+              },
+              'movement': {
+                'feeling': 'anxious',
+                'current_count': 3,
+                'previous_count': 6,
+                'direction': 'down',
+                'sentence':
+                    'anxious appeared in 3 entries this week, down '
+                    'from 6 last week.',
+              },
+            },
+          ),
+        ]);
+
+        final digest = await env.api.digest();
+
+        expect(digest.empty, isFalse);
+        expect(digest.entryCount, 10);
+        expect(digest.week, const CalendarDate(2026, 8, 24));
+        expect(digest.highlight!.patternRef, 'p1');
+        expect(digest.highlight!.kind, PatternKind.forward);
+        expect(digest.highlight!.topic, 'reading');
+        expect(digest.highlight!.feeling!.key, 'anxious');
+        expect(digest.highlight!.weekCount, 3);
+        expect(digest.highlight!.lift, 1.5);
+        expect(
+          digest.highlight!.sentence,
+          'reading came up in 3 entries this week.',
+        );
+        expect(digest.recommendation!.headline, 'Keep doing reading');
+        expect(digest.recommendation!.patternRef, 'p1');
+        expect(digest.movement!.feeling!.key, 'anxious');
+        expect(digest.movement!.currentCount, 3);
+        expect(digest.movement!.previousCount, 6);
+        expect(digest.movement!.direction, DigestMovementDirection.down);
+      },
+    );
+
+    test('every part is absent when the backend omits it', () async {
+      final env = apiFor([
+        FakeReply(
+          200,
+          body: {'empty': false, 'week': '2026-08-24', 'entry_count': 1},
+        ),
+      ]);
+
+      final digest = await env.api.digest();
+
+      expect(digest.highlight, isNull);
+      expect(digest.recommendation, isNull);
+      expect(digest.movement, isNull);
     });
   });
 

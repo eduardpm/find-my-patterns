@@ -42,6 +42,15 @@ abstract interface class NotificationsPlugin {
   /// Cancels every notification scheduled through this plugin.
   Future<void> cancelAll();
 
+  /// Cancels the single notification scheduled under [id], leaving every
+  /// other one alone.
+  ///
+  /// `ReminderService.cancelDigest` (R-2) is the one caller: the weekly
+  /// digest is scheduled independently of the reminder alarms [cancelAll]
+  /// was written for, under its own fixed id, and turning it off must not
+  /// touch a reminder that happens to be armed at the same time.
+  Future<void> cancel({required int id});
+
   /// Shows a notification immediately, rather than scheduling it for later.
   ///
   /// `ReminderService` uses this for the first-pattern celebration (#38):
@@ -136,6 +145,9 @@ class const DefaultNotificationsPlugin() implements NotificationsPlugin {
 
   @override
   Future<void> cancelAll() => _plugin.cancelAll();
+
+  @override
+  Future<void> cancel({required int id}) => _plugin.cancel(id: id);
 
   @override
   Future<void> show({

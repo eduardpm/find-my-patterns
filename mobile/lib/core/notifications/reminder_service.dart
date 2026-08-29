@@ -7,15 +7,17 @@ import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 import 'device_time_zone.dart';
+import 'digest_schedule.dart';
 import 'notifications_plugin.dart';
 import 'reminder_schedule.dart';
 
 /// A local notification the user tapped, cold or warm -- routed to whatever
 /// that particular notification means to open.
 ///
-/// A sealed supertype rather than one payload-agnostic class: [ReminderTap]
-/// and [FirstPatternTap] (#38) go to different places -- the composer and
-/// Insights respectively -- and `flutter_local_notifications`'
+/// A sealed supertype rather than one payload-agnostic class: [ReminderTap],
+/// [FirstPatternTap] (#38) and [DigestTap] (R-2) go to three different
+/// places -- the composer, Insights, and the digest sheet -- and
+/// `flutter_local_notifications`'
 /// `FlutterLocalNotificationsPlugin.initialize` takes exactly one `onTap`
 /// callback for the whole app, so every kind of tap this app can receive
 /// has to funnel through the same [ReminderService] and come back out
@@ -62,6 +64,28 @@ final class const FirstPatternTap() extends NotificationTap {
   String toString() => 'FirstPatternTap()';
 }
 
+/// A tap on the weekly digest notification (R-2) -- opens the digest sheet
+/// rather than the composer or Insights.
+///
+/// Carries nothing, the same as [FirstPatternTap] and for the same reason:
+/// there is exactly one digest schedule per device
+/// (`core/settings/settings.dart`'s `DigestTime`, not a list like
+/// [ReminderTap]'s slots), so there is nothing to distinguish one digest tap
+/// from another. The tap's own recipient always fetches `GET
+/// /insights/digest` fresh rather than reading anything off the tap itself
+/// -- see the digest sheet's own doc comment for why a notification tap
+/// never carries digest content.
+final class const DigestTap() extends NotificationTap {
+  @override
+  bool operator ==(Object other) => other is DigestTap;
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() => 'DigestTap()';
+}
+
 /// The channel and notification the user's reminders are shown under.
 ///
 /// Originally ported from `ReminderNotifier` (Kotlin) and
@@ -93,6 +117,34 @@ const String _firstPatternPayload = 'first_pattern';
 /// negative id can never collide with, and so can never silently replace
 /// or be replaced by, a scheduled reminder.
 const int _firstPatternNotificationId = -1;
+
+/// The weekly digest notification's fixed copy (R-2, task 2).
+///
+/// Deliberately generic and never computed from the diary: this is scheduled
+/// up to a week ahead of when it fires (`scheduleDigest`'s
+/// `matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime`), so there
+/// is no live digest to summarise yet at the moment the text is baked in. The
+/// digest sheet the tap opens fetches `GET /insights/digest` fresh instead --
+/// see [DigestTap]'s own doc comment.
+const String _digestNotificationTitle = 'Your week in patterns';
+const String _digestNotificationBody = 'One pattern, one recommendation.';
+
+/// The payload `scheduleDigest` sends, and the second sentinel
+/// [ReminderService._tapFromPayload] checks before falling through to
+/// [int.tryParse].
+///
+/// Distinct from [_firstPatternPayload] and, being non-numeric, from every
+/// reminder slot id for the same reason that one is.
+const String _digestPayload = 'weekly_digest';
+
+/// The notification id [ReminderService.scheduleDigest] shows under.
+///
+/// There is exactly one digest schedule, so unlike a reminder slot this
+/// needs no id derived per instance -- one fixed constant is enough. `-2`,
+/// not `-1`: [_firstPatternNotificationId] already claims `-1`, and every
+/// reminder slot id is non-negative (`0..1439`), so the two negative ids
+/// together can never collide with each other or with a reminder.
+const int _digestNotificationId = -2;
 
 /// Schedules and reacts to the user's configured check-in reminders.
 ///
@@ -231,6 +283,70 @@ class ReminderService {
   /// Cancels every scheduled reminder.
   Future<void> cancelAll() => plugin.cancelAll();
 
+  /// Schedules the weekly digest notification (R-2) for [slot], replacing
+  /// whichever day/time it was previously armed for.
+  ///
+  /// Uses `DateTimeComponents.dayOfWeekAndTime` rather than
+  /// [DateTimeComponents.time] the way [scheduleAll] does for a daily
+  /// reminder: the digest fires once a week, on the weekday [slot] names, not
+  /// every day. Scheduled under the fixed [_digestNotificationId] rather
+  /// than an id derived from [slot] -- there is only ever one digest
+  /// schedule, so calling this again with a new day or time overwrites the
+  /// old one instead of leaving a stale alarm behind the way a second,
+  /// differently-timed call would if each got its own id.
+  ///
+  /// Deliberately separate from [scheduleAll]/[_scheduleSlot]: those exist to
+  /// fan a *list* of reminder slots out to individual alarms, sharing one
+  /// title, body and payload; this schedules exactly one alarm, with its own
+  /// fixed copy and payload, and gains nothing from forcing the two through
+  /// one generalised method.
+  Future<void> scheduleDigest(DigestSlot slot) async {
+    final now = DateTime.now();
+    final scheduledDate = tz.TZDateTime.from(
+      nextWeeklyOccurrence(slot, now: now),
+      tz.local,
+    );
+    try {
+      await _zonedScheduleDigest(
+        scheduledDate,
+        AndroidScheduleMode.exactAllowWhileIdle,
+      );
+    } on PlatformException {
+      // Same degrade-rather-than-lose-it fallback [_scheduleSlot] uses for a
+      // reminder: the exact-alarm permission being absent should not mean no
+      // digest ever fires.
+      await _zonedScheduleDigest(
+        scheduledDate,
+        AndroidScheduleMode.inexactAllowWhileIdle,
+      );
+    }
+  }
+
+  Future<void> _zonedScheduleDigest(
+    tz.TZDateTime scheduledDate,
+    AndroidScheduleMode mode,
+  ) => plugin.zonedSchedule(
+    id: _digestNotificationId,
+    title: _digestNotificationTitle,
+    body: _digestNotificationBody,
+    scheduledDate: scheduledDate,
+    notificationDetails: _notificationDetails,
+    androidScheduleMode: mode,
+    matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+    payload: _digestPayload,
+  );
+
+  /// Cancels the weekly digest notification, and only that one.
+  ///
+  /// A targeted [NotificationsPlugin.cancel], not [cancelAll]: the digest
+  /// setting can turn off while reminders stay armed, and the reverse
+  /// already happens the other way — see
+  /// `RemindersController._reschedule`'s own doc comment in
+  /// `reminder_settings_controller.dart` for why a reminders save re-arms
+  /// the digest afterwards rather than the two features fighting over one
+  /// blunt cancel-everything call.
+  Future<void> cancelDigest() => plugin.cancel(id: _digestNotificationId);
+
   /// Shows the first-pattern celebration (#38) immediately, under the same
   /// channel and permission handling as a reminder.
   ///
@@ -310,14 +426,15 @@ class ReminderService {
   /// payload is silently dropped rather than guessed at, the same way it
   /// always has been for a reminder.
   ///
-  /// [_firstPatternPayload] is checked first, before [int.tryParse]: it is
-  /// not numeric, so there is no ambiguity between the two branches, but
-  /// checking it first keeps this reading as "first, the one fixed
-  /// sentinel; otherwise, a slot id" rather than relying on the parse
-  /// failing to fall through correctly.
+  /// [_firstPatternPayload] and [_digestPayload] are checked first, before
+  /// [int.tryParse]: neither is numeric, so there is no ambiguity between
+  /// any of the three branches, but checking the two fixed sentinels first
+  /// keeps this reading as "first, the fixed sentinels; otherwise, a slot
+  /// id" rather than relying on the parse failing to fall through correctly.
   NotificationTap? _tapFromPayload(String? payload) {
     if (payload == null) return null;
     if (payload == _firstPatternPayload) return const FirstPatternTap();
+    if (payload == _digestPayload) return const DigestTap();
     final slotId = int.tryParse(payload);
     return slotId == null ? null : ReminderTap(slotId);
   }

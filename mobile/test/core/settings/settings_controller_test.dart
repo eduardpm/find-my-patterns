@@ -166,4 +166,24 @@ void main() {
       expect(container.read(settingsProvider).value?.reminders, isEmpty);
     });
   });
+
+  group('saveDigestSchedule (R-2)', () {
+    test('stores the schedule and updates the state', () async {
+      final container = containerWith(store);
+      await container.read(settingsProvider.future);
+
+      const schedule = DigestTime(
+        weekday: DateTime.wednesday,
+        hour: 7,
+        minute: 30,
+        enabled: true,
+      );
+      await container
+          .read(settingsProvider.notifier)
+          .saveDigestSchedule(schedule);
+
+      expect(store.savedDigestSchedules.single, schedule);
+      expect(container.read(settingsProvider).value?.digest, schedule);
+    });
+  });
 }

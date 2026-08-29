@@ -20,6 +20,9 @@ class FakeSettingsStore implements SettingsStore {
   /// Every reminder list handed to [saveReminders], in order.
   final List<List<ReminderTime>> savedReminders = [];
 
+  /// Every schedule handed to [saveDigestSchedule], in order.
+  final List<DigestTime> savedDigestSchedules = [];
+
   /// Set to make [load] fail, standing in for unreadable storage.
   Object? loadError;
 
@@ -51,5 +54,11 @@ class FakeSettingsStore implements SettingsStore {
   Future<void> saveReminders(List<ReminderTime> reminders) async {
     savedReminders.add(reminders);
     _settings = _settings.copyWith(reminders: reminders);
+  }
+
+  @override
+  Future<void> saveDigestSchedule(DigestTime schedule) async {
+    savedDigestSchedules.add(schedule);
+    _settings = _settings.copyWith(digest: schedule);
   }
 }

@@ -1,12 +1,14 @@
 import '../config/app_config.dart';
 import '../network/api_client.dart';
+import '../network/api_error.dart';
 import 'calendar_date.dart';
+import 'digest.dart';
 import 'feelings_api.dart';
 import 'mood_series.dart';
 import 'pattern.dart';
 
 /// Talks to `GET /insights`, `GET /insights/when`, `GET /insights/series`,
-/// and the withdrawal acknowledgement endpoint.
+/// `GET /insights/digest`, and the withdrawal acknowledgement endpoint.
 class InsightsApi {
   /// Creates an API over an [ApiClient], resolving feeling keys through a
   /// [FeelingsApi].
@@ -47,6 +49,25 @@ class InsightsApi {
     '${AppConfig.seriesPath}?from=$from&to=$to&granularity=day',
     moodSeriesFromJson,
   );
+
+  /// [R-2] The current week's digest -- one highlight pattern, one
+  /// recommendation, one movement figure, or the empty shape when nothing
+  /// was written this week.
+  ///
+  /// Called only when the digest sheet opens (a tap on the weekly digest
+  /// notification), never when that notification is merely scheduled or
+  /// shown -- see `mobile/lib/core/notifications/reminder_service.dart`'s
+  /// digest copy doc comment for why the notification itself never carries
+  /// digest content. A caller that gets an [ApiError] here (the backend is
+  /// unreachable) falls back to opening Insights instead of showing a sheet
+  /// with nothing in it -- see `app.dart`'s digest-tap handler.
+  Future<Digest> digest() async {
+    final catalog = await _feelings.catalog();
+    return _client.getObject(
+      AppConfig.digestPath,
+      (json) => digestFromJson(json, catalog),
+    );
+  }
 
   /// Marks every current withdrawal notice as seen.
   ///

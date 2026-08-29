@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/diary_providers.dart';
+import 'package:find_my_patterns/core/diary/digest.dart';
 import 'package:find_my_patterns/core/diary/entry.dart';
 import 'package:find_my_patterns/core/diary/insights_api.dart';
 import 'package:find_my_patterns/core/diary/mood_series.dart';
@@ -71,6 +72,9 @@ class _ControllableInsightsApi implements InsightsApi {
     seriesCalls++;
     return seriesCompleter.future;
   }
+
+  @override
+  Future<Digest> digest() => throw UnimplementedError();
 }
 
 void main() {
