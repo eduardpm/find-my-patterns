@@ -5,6 +5,9 @@ import { MAX_INTENSITY, MIN_INTENSITY } from '../insights/constants';
 /** Every value `diary_entries.feeling_source` is allowed to hold. */
 const FEELING_SOURCES = ['unset', 'suggested', 'confirmed', 'overridden'];
 
+/** Every value `diary_entries.origin` is allowed to hold (L-1b, #35). */
+const ENTRY_ORIGINS = ['app', 'daylio_import'];
+
 /** Every value `entry_topic_feelings.source` is allowed to hold (E-1a) — no `'unset'`: a pairing
  * that was never proposed or chosen simply has no row, the same way a topic no entry mentions has
  * no `entry_topics` row. */
@@ -64,6 +67,7 @@ const REQUIRED: Record<string, Record<string, string>> = {
     feeling_source: 'VARCHAR(16)',
     version: 'INTEGER',
     feeling_intensity: 'INTEGER',
+    origin: 'VARCHAR(16)',
   },
   guiding_question_answers: {
     id: 'VARCHAR(36)',
@@ -143,6 +147,13 @@ const REQUIRED: Record<string, Record<string, string>> = {
     topic_id: 'VARCHAR(36)',
     feeling_key: 'VARCHAR(32)',
     source: 'VARCHAR(16)',
+  },
+  csv_imports: {
+    content_hash: 'VARCHAR(64)',
+    source: 'VARCHAR(16)',
+    imported_at: 'DATETIME',
+    entry_count: 'INTEGER',
+    report_json: 'JSON',
   },
 };
 
@@ -243,7 +254,7 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
     db
       .prepare(
         `SELECT id, created_at, updated_at, entry_date, mode, feeling_key, feeling_source, version,
-                feeling_intensity FROM diary_entries`,
+                feeling_intensity, origin FROM diary_entries`,
       )
       .all() as Array<Record<string, unknown>>,
     problems,
@@ -254,6 +265,9 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
       if (!['guided', 'freeform'].includes(String(row.mode))) throw new Error('unsupported mode');
       if (!FEELING_SOURCES.includes(String(row.feeling_source))) {
         throw new Error('unsupported feeling source');
+      }
+      if (!ENTRY_ORIGINS.includes(String(row.origin))) {
+        throw new Error('unsupported entry origin');
       }
       if (row.feeling_intensity !== null && row.feeling_intensity !== undefined) {
         const intensity = Number(row.feeling_intensity);
@@ -366,6 +380,23 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
       if (!feelingKeys.has(String(row.feeling_key))) throw new Error('unknown feeling key');
       if (!PAIRING_SOURCES.includes(String(row.source)))
         throw new Error('unsupported pairing source');
+    },
+  );
+
+  validateRows(
+    'csv_imports',
+    db
+      .prepare(
+        'SELECT content_hash AS id, source, imported_at, entry_count, report_json FROM csv_imports',
+      )
+      .all() as Array<Record<string, unknown>>,
+    problems,
+    (row) => {
+      decodeDateTime(String(row.imported_at));
+      if (!Number.isInteger(Number(row.entry_count)) || Number(row.entry_count) < 0) {
+        throw new Error('invalid entry count');
+      }
+      JSON.parse(String(row.report_json));
     },
   );
 

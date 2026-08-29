@@ -6,8 +6,9 @@ two human- and machine-readable formats, and stays **free forever**: paywalling 
 Daylio's most common one-star complaint, and this product's monetization rules forbid it (see
 `specs/research/daylio-competitive-analysis.md` §11).
 
-This is also the contract the Daylio import (L-1b) is built against — a field renamed or dropped
-here without bumping `schema_version` breaks that ticket silently.
+This is also the contract the Daylio import (L-1b, #35) is built against — a field renamed or
+dropped here without bumping `schema_version` breaks that ticket silently. See `docs/import.md` for
+the importer itself.
 
 ## Endpoint
 

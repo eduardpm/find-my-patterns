@@ -39,6 +39,8 @@ import { HealthController } from './health.controller';
 import { TranscriptionController } from './transcription/transcription.controller';
 import { TranscriptionJobsService } from './transcription/transcription-jobs.service';
 import { TranscriptionService } from './transcription/transcription.service';
+import { DaylioImportController } from './import/daylio-import.controller';
+import { DaylioImportService } from './import/daylio-import.service';
 
 @Module({})
 export class AppModule {
@@ -63,6 +65,7 @@ export class AppModule {
         TranscriptionController,
         GuidedDraftsController,
         ExportController,
+        DaylioImportController,
       ],
       providers: [
         createDiaryProvider(databasePath),
@@ -95,6 +98,7 @@ export class AppModule {
         TranscriptionService,
         TranscriptionJobsService,
         ExportService,
+        DaylioImportService,
       ],
     };
   }

@@ -5,6 +5,7 @@ import type { DiaryDatabase } from '../db/database';
 import type {
   DiaryEntry,
   EntryMode,
+  EntryOrigin,
   Feeling,
   FeelingGroup,
   FeelingSource,
@@ -35,6 +36,7 @@ interface EntryRow {
   feeling_source: string;
   version: number;
   feeling_intensity: number | null;
+  origin: string;
 }
 
 function toEntry(
@@ -58,6 +60,7 @@ function toEntry(
         ? null
         : Number(row.feeling_intensity),
     feelingIntensities,
+    origin: row.origin as EntryOrigin,
   };
 }
 

@@ -20,6 +20,7 @@ const NO_STORE_PREFIXES = [
   '/transcriptions',
   '/guided-entry-drafts',
   '/export',
+  '/import',
 ];
 
 export interface CreateAppOptions {

@@ -1,10 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { decodeDate, encodeDate, encodeDateTime, nowUtc, todayLocal } from '../db/codecs';
-import type { PlainDate } from '../db/codecs';
+import type { NaiveDateTime, PlainDate } from '../db/codecs';
 import { DIARY_DB } from '../db/database.provider';
 import type { DiaryDatabase } from '../db/database';
-import type { DiaryEntry, SuggestedFeeling, TopicFeelingPairing } from '../domain/types';
+import type {
+  DiaryEntry,
+  EntryOrigin,
+  SuggestedFeeling,
+  TopicFeelingPairing,
+} from '../domain/types';
 import { ENTRY_INFERENCE, type EntryInference } from '../inference/inference';
 import { StaleEntryError } from '../common/stale-entry';
 import { daysBetween } from '../insights/analysis';
@@ -39,6 +44,20 @@ export interface EntryCreateInput {
   guided_answers: GuidedAnswerInput[];
   /** Backdates the entry (#36). Omitted files it under the server's own `todayLocal()`. */
   entry_date?: string;
+}
+
+/**
+ * An already-parsed, already-mapped external row, ready to become a stored entry (L-1b, #35).
+ * `feelingKey` must already be a validated member of `FEELING_KEYS` — mapping and "skip and
+ * report the unmapped ones" both happen upstream, in the importer itself, never here.
+ */
+export interface ImportedEntryInput {
+  rawText: string;
+  entryDate: PlainDate;
+  /** The moment the source app recorded this entry, exactly as its own export stated it. */
+  createdAt: NaiveDateTime;
+  feelingKey: string;
+  origin: EntryOrigin;
 }
 
 export interface EntryUpdateInput {
@@ -151,6 +170,65 @@ export class EntriesService {
     const suggestion = text.trim() ? this.analyzeStoredEntry(id) : null;
 
     return { entry: this.repo.findById(id)!, suggestion };
+  }
+
+  /**
+   * Create an entry from an already-parsed, already-mapped external row (L-1b, #35) — the Daylio
+   * CSV importer's write path, and the only other producer of `diary_entries` rows besides
+   * `createEntry`.
+   *
+   * Three ways this deliberately diverges from `createEntry`:
+   *
+   *  - **No inference is enqueued.** The feeling did not come from a suggestion the user might
+   *    confirm — it was read straight off the CSV and conservatively mapped
+   *    (`import/daylio-mood-map.ts`) — so there is nothing left for the local analyser to propose.
+   *    Enqueuing it anyway would queue one job per imported entry (thousands, for years of
+   *    history) for no benefit: `analyzeStoredEntry` only ever writes while
+   *    `feeling_source = 'unset'`, and this method never leaves it there.
+   *  - **`feeling_source` is written as `'overridden'` from the first insert**, never `'unset'`
+   *    then `'suggested'`. `improvement-opportunities.md` §8 is explicit that an import must mark
+   *    entries so "nothing is silently treated as evidence the user didn't see" — `'overridden'`
+   *    is the vocabulary's strongest marker for "a person's own words, not a model's guess", which
+   *    is what a Daylio mood rating is. Note the consequence stated in the PR description:
+   *    `CONFIRMED_FEELING_SOURCES` includes `'overridden'`, so these entries *do* count as pattern
+   *    evidence — that is this ticket's intended behaviour, not an oversight.
+   *  - **No [MAX_BACKDATE_DAYS] limit.** That cap exists for *manual* backdating (#36) — "I forgot
+   *    to write for a few days" — and years of imported history is exactly what it would reject.
+   *    Only "not in the future" is enforced here; the 30-day floor is not this method's business.
+   */
+  createImportedEntry(input: ImportedEntryInput): DiaryEntry {
+    const age = daysBetween(input.entryDate, todayLocal());
+    if (age < 0) {
+      throw new InvalidEntryDateError('Entry date cannot be in the future.');
+    }
+
+    const id = randomUUID();
+    const createdAt = encodeDateTime(input.createdAt);
+
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO diary_entries
+           (id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source,
+            version, origin)
+           VALUES (?, ?, ?, ?, 'freeform', ?, ?, 'overridden', 1, ?)`,
+        )
+        .run(
+          id,
+          createdAt,
+          // `updated_at` mirrors `created_at`: nothing has touched this row's content since the
+          // moment it describes, and that moment is the historical one from the CSV — not the
+          // moment the import job happened to run.
+          createdAt,
+          encodeDate(input.entryDate),
+          input.rawText,
+          input.feelingKey,
+          input.origin,
+        );
+      this.replaceFeelings(id, [input.feelingKey]);
+    });
+
+    return this.repo.findById(id)!;
   }
 
   /**
