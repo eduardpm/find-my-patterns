@@ -1,3 +1,6 @@
+/// @docImport '../../core/widgets/feeling_chips.dart';
+library;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -11,6 +14,7 @@ import '../../core/diary/monthly_summary.dart';
 import '../../core/diary/pattern.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/journal_metrics.dart';
+import '../../core/theme/journal_palette.dart';
 import '../../core/theme/journal_typography.dart';
 import '../../core/widgets/feeling_accent.dart';
 import '../../core/widgets/journal.dart';
@@ -564,14 +568,16 @@ class _IntensityBar extends StatelessWidget {
   );
 }
 
-/// This month's average entries per day, and a count for every feeling that
-/// was logged at least once.
+/// This month's average entries per day, a feeling-mix bar (CH-3), and a
+/// count for every feeling that was logged at least once.
 ///
 /// [MonthlySummary.totalsByFeeling] arrives already in the backend's own
 /// feeling order — built by walking its served vocabulary — so this never
-/// re-sorts it. The dividing rule between the average and the per-feeling
-/// rows appears only when there is something to separate: a month with no
-/// entries must not end on a rule with nothing under it.
+/// re-sorts it, and the bar's segments and the count rows below both walk
+/// it in that same order. The dividing rule between the average and the
+/// rest appears only when there is something to separate: a month with no
+/// entries must not end on a rule with nothing under it, and draws no bar
+/// at all (see [_buildFeelingMix]'s empty-month caller below).
 class _TotalsPanel extends StatelessWidget {
   const _TotalsPanel(this.summary);
 
@@ -585,6 +591,10 @@ class _TotalsPanel extends StatelessWidget {
       for (final entry in summary.totalsByFeeling.entries)
         if (entry.value > 0) entry,
     ];
+    // Null exactly when there is nothing logged — an empty month draws no
+    // bar and no rows, so nothing downstream ever needs to build a mix for
+    // zero feelings.
+    final mix = logged.isEmpty ? null : _buildFeelingMix(logged, journal);
 
     return JournalCard(
       child: Column(
@@ -610,12 +620,18 @@ class _TotalsPanel extends StatelessWidget {
               ),
             ],
           ),
-          if (logged.isNotEmpty) ...[
+          if (mix != null) ...[
             const SizedBox(height: JournalSpacing.x4),
             SizedBox(
               width: double.infinity,
               height: 1,
               child: ColoredBox(color: journal.hairline),
+            ),
+            const SizedBox(height: JournalSpacing.x3),
+            _FeelingMixBar(
+              key: const ValueKey('feelingMixBar'),
+              segments: mix.segments,
+              semanticsLabel: _feelingMixSemanticsLabel(logged),
             ),
             const SizedBox(height: JournalSpacing.x3),
           ],
@@ -627,7 +643,18 @@ class _TotalsPanel extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      FeelingDot(color: entry.key.accent(journal), size: 6),
+                      // The dot matches this row's *segment* colour, not
+                      // necessarily the feeling's own valence accent — see
+                      // [_buildFeelingMix]. The two are identical unless
+                      // this feeling's slice was too thin and got folded
+                      // into the trailing "other" segment, in which case
+                      // the dot turns that segment's neutral colour so the
+                      // list stays truthful about which paint on the bar
+                      // this row's count actually contributed to.
+                      FeelingDot(
+                        color: mix!.swatchByFeelingKey[entry.key.key]!,
+                        size: 6,
+                      ),
                       const SizedBox(width: JournalSpacing.x3),
                       Text(entry.key.label, style: theme.textTheme.bodyMedium),
                     ],
@@ -645,4 +672,133 @@ class _TotalsPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The fraction, expressed as an exact integer ratio, under which a
+/// feeling's slice is too thin to draw on its own and is folded into the
+/// trailing "other" segment instead — "~4%" from the issue, as
+/// `1 / _mixMergeDenominator` so the comparison in [_buildFeelingMix] stays
+/// integer arithmetic (`count * _mixMergeDenominator >= total`) and never
+/// drifts on floating-point counts.
+const int _mixMergeDenominator = 25;
+
+/// One painted slice of the feeling-mix bar: either one feeling's own
+/// share, or the trailing "other" bucket several thin shares were merged
+/// into.
+class _FeelingMixSegment {
+  const _FeelingMixSegment({required this.color, required this.count});
+
+  /// This segment's fill — a feeling's own valence accent, or
+  /// [_buildFeelingMix]'s neutral "other" colour.
+  final Color color;
+
+  /// This segment's share of the month's total, in entries. [_FeelingMixBar]
+  /// uses these as `Expanded` flex values directly, so a segment's rendered
+  /// width is exactly proportional to its count without any of the callers
+  /// doing floating-point division themselves.
+  final int count;
+}
+
+/// Splits [logged] into the bar's segments and, in the same pass, a colour
+/// for every feeling's row swatch below — so the two can never disagree
+/// about which paint a feeling's count landed under.
+///
+/// Walks [logged] once, in the backend order [MonthlySummary.totalsByFeeling]
+/// already arrives in. A feeling whose count clears
+/// `1 / _mixMergeDenominator` (~4%) of the month's total keeps its own
+/// segment, in that order, painted in its own valence accent
+/// ([FeelingAccent.accent] — the same lookup [FeelingChip] resolves its
+/// colour through, so the bar and the chips always agree). Everything under
+/// that threshold is summed into one "other" segment, painted in
+/// [JournalColors.onSurfaceVariant] — a neutral rather than any one
+/// feeling's own hue, since "other" may merge feelings of every valence —
+/// and **appended last**, regardless of where in backend order its
+/// contributors sat. That is the deterministic tie-break this bar needs:
+/// two months with the same thin feelings in a different backend order
+/// still draw the same bar, because "other" only ever has one possible
+/// position. A month where every feeling is under threshold still draws
+/// one bar: entirely "other".
+({List<_FeelingMixSegment> segments, Map<String, Color> swatchByFeelingKey})
+_buildFeelingMix(List<MapEntry<Feeling, int>> logged, JournalColors journal) {
+  final total = logged.fold(0, (sum, entry) => sum + entry.value);
+  final otherColor = journal.onSurfaceVariant;
+  final segments = <_FeelingMixSegment>[];
+  final swatchByFeelingKey = <String, Color>{};
+  var otherCount = 0;
+
+  for (final entry in logged) {
+    final clearsThreshold = entry.value * _mixMergeDenominator >= total;
+    if (clearsThreshold) {
+      final color = entry.key.accent(journal);
+      segments.add(_FeelingMixSegment(color: color, count: entry.value));
+      swatchByFeelingKey[entry.key.key] = color;
+    } else {
+      otherCount += entry.value;
+      swatchByFeelingKey[entry.key.key] = otherColor;
+    }
+  }
+  if (otherCount > 0) {
+    segments.add(_FeelingMixSegment(color: otherColor, count: otherCount));
+  }
+
+  return (segments: segments, swatchByFeelingKey: swatchByFeelingKey);
+}
+
+/// `"Feeling mix this month: grateful 3, happy 1, anxious 5"` — every logged
+/// feeling in backend order, exactly as [_TotalsPanel]'s own rows list them,
+/// regardless of which bar segment (its own, or "other") its count landed
+/// in: a screen reader is told the same precise breakdown the sighted count
+/// list already shows, not a summary of the bar's own merged segments.
+String _feelingMixSemanticsLabel(List<MapEntry<Feeling, int>> logged) {
+  final parts = [
+    for (final entry in logged) '${entry.key.label} ${entry.value}',
+  ];
+  return 'Feeling mix this month: ${parts.join(', ')}';
+}
+
+/// The stacked bar itself: one [ClipRRect]-rounded row of solid-colour
+/// segments, each an `Expanded` sized by [_FeelingMixSegment.count] so
+/// widths land exactly proportional to counts with no manual division.
+///
+/// Decorative: the segments carry no text of their own and are excluded
+/// from the semantics tree in favour of the single [semanticsLabel], the
+/// same pattern [FeelingDot] uses for the same reason.
+class _FeelingMixBar extends StatelessWidget {
+  const _FeelingMixBar({
+    super.key,
+    required this.segments,
+    required this.semanticsLabel,
+  });
+
+  /// This month's segments, already in the order [_buildFeelingMix] built
+  /// them: real feelings first in backend order, "other" last if present.
+  final List<_FeelingMixSegment> segments;
+
+  /// The full breakdown a screen reader announces for this bar — see
+  /// [_feelingMixSemanticsLabel].
+  final String semanticsLabel;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    label: semanticsLabel,
+    child: ExcludeSemantics(
+      child: ClipRRect(
+        borderRadius: JournalShapes.small,
+        child: SizedBox(
+          width: double.infinity,
+          height: JournalSpacing.x2,
+          child: Row(
+            children: [
+              for (final segment in segments)
+                Expanded(
+                  flex: segment.count,
+                  child: ColoredBox(color: segment.color),
+                ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
