@@ -243,16 +243,18 @@ class TodayController extends Notifier<TodayState> {
       return;
     }
     try {
-      final days = await ref
+      final series = await ref
           .read(insightsApiProvider)
-          .seriesDays(
+          .series(
             from: today.addDays(-(writingStreakQueryWindowDays - 1)),
             to: today,
           );
       if (generation != _generation) return;
       state = state.copyWith(
         streakDays: computeWritingStreak(
-          entryDates: {for (final day in days) day.date},
+          // A day only appears in `points` when it has at least one entry,
+          // which is exactly the set the streak counts over.
+          entryDates: {for (final point in series.points) point.date},
           today: today,
         ),
       );
