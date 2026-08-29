@@ -15,6 +15,7 @@ import { GuidedDraftsController } from './entries/guided-drafts.controller';
 import { InsightsController } from './insights/insights.controller';
 import { EchoService } from './insights/echo.service';
 import { PatternsService } from './insights/patterns.service';
+import { SeriesService } from './insights/series.service';
 import { WhenInsightsService } from './insights/when.service';
 import {
   ENTRY_INFERENCE,
@@ -77,6 +78,7 @@ export class AppModule {
         TopicsService,
         PatternsService,
         WhenInsightsService,
+        SeriesService,
         EchoService,
         MonthlySummaryService,
         TranscriptionService,
