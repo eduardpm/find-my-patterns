@@ -194,11 +194,20 @@ export function qualifyingPairs(
  * one, the topic's absence is what coincides with feeling bad, so the topic itself is the thing
  * worth keeping.
  *
- * Extending this for another reason to show no badge (P0-6: an undefined or below-threshold lift)
- * is one more early return here, ahead of the kind/valence switch — the callers below (and the
- * client) go on reading whatever this function returns without change.
+ * P0-6: a `lift` that could not be computed (division by zero on either side, so `null`) or that
+ * fell below `minLift` earns no badge either, checked in an early return ahead of the kind/valence
+ * switch below. A card that prints "LIFT —" and still says "consider changing" is advice built on
+ * the one number the card itself says it cannot state — exactly the claim-with-no-number the rest
+ * of this engine refuses to make. The callers below (and the client) go on reading whatever this
+ * function returns without change; only the input they already had — the lift — is new.
  */
-export function badgeDirectionFor(kind: PatternKind, valence: string): PatternDirection {
+export function badgeDirectionFor(
+  kind: PatternKind,
+  valence: string,
+  lift: number | null,
+  minLift: number = MIN_LIFT,
+): PatternDirection {
+  if (lift === null || lift < minLift) return 'none';
   if (valence !== 'positive' && valence !== 'negative') return 'none';
   if (kind === 'inverse') return valence === 'negative' ? 'keep' : 'change';
   return valence === 'positive' ? 'keep' : 'change';
@@ -212,10 +221,12 @@ export function badgeDirectionFor(kind: PatternKind, valence: string): PatternDi
  * `db/compatibility.ts` on every startup, `['keep', 'change'].includes(...)` and nothing else.
  * Neither has a "no opinion" state to spend, so unlike the badge, a neutral-valence pattern here
  * still collapses to `'change'` — exactly what it did before the badge grew a `'none'` state, and
- * changing it would mean teaching both of those a third state they have no use for.
+ * changing it would mean teaching both of those a third state they have no use for. For the same
+ * reason it is unaffected by P0-6's lift check: it is evaluated as if the lift always cleared the
+ * minimum, so only kind and valence ever decide it.
  */
 export function directionFor(kind: PatternKind, valence: string): 'keep' | 'change' {
-  const badge = badgeDirectionFor(kind, valence);
+  const badge = badgeDirectionFor(kind, valence, Number.POSITIVE_INFINITY);
   return badge === 'none' ? 'change' : badge;
 }
 
@@ -893,6 +904,9 @@ export class PatternsService {
         : null;
       const daysSince = lastOccurrence ? daysBetween(lastOccurrence, today) : null;
       const status = String(r.status) as PatternStatus;
+      // Read once and reused below: the badge (P0-6) and the card's own "LIFT —" figure must be
+      // the same fact, so there is exactly one place that decides what a stored `NULL` becomes.
+      const lift = r.lift === null || r.lift === undefined ? null : Number(r.lift);
 
       return {
         id: String(r.id),
@@ -902,10 +916,12 @@ export class PatternsService {
         occurrence_count: Number(r.occurrence_count),
         lifetime_count: Number(r.lifetime_count),
         status,
-        // Computed fresh from kind + valence on every read, not echoed from the persisted
+        // Computed fresh from kind + valence + lift on every read, not echoed from the persisted
         // `direction` column — that column is a different, two-valued concept (see
-        // `directionFor`'s doc comment) and re-serving it here is the exact bug this fixes.
-        direction: badgeDirectionFor(kind, String(r.valence)),
+        // `directionFor`'s doc comment) and re-serving it here is the exact bug P0-2 fixed. P0-6
+        // adds `lift` to the inputs so a card whose ratio is undefined or too weak never carries
+        // advice it cannot back with a number.
+        direction: badgeDirectionFor(kind, String(r.valence), lift),
         narrative_text: String(r.narrative_text),
         suggestion_text: String(r.suggestion_text),
         present_count: presentCount,
@@ -915,7 +931,7 @@ export class PatternsService {
         present_rate: presentTotal > 0 ? presentCount / presentTotal : null,
         absent_rate: absentTotal > 0 ? absentCount / absentTotal : null,
         base_rate: Number(r.base_rate),
-        lift: r.lift === null || r.lift === undefined ? null : Number(r.lift),
+        lift,
         comparison_reason: r.comparison_reason === null ? null : String(r.comparison_reason),
         comparison_note: comparisonNoteFor(
           r.comparison_reason === null ? null : String(r.comparison_reason),

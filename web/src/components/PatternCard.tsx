@@ -36,7 +36,10 @@ const DIRECTION: Record<'keep' | 'change', { label: string; icon: IconName }> = 
  * `patternBadgeFor` in `mobile/lib/features/insights/pattern_card.dart`. It never re-derives
  * keep/change from the pattern's kind or feeling; the backend owns that (`badgeDirectionFor` in
  * `backend/src/insights/patterns.service.ts`) — this only turns the resolved value into "show no
- * badge" vs "show this one".
+ * badge" vs "show this one". Since P0-6, `direction` already accounts for an undefined or
+ * below-threshold lift too (the backend folds that into the same `'none'` this function already
+ * handled for a neutral valence), so nothing here re-checks `pattern.lift` — that would be this
+ * client disagreeing with the backend about the same diary.
  */
 function directionBadge(direction: PatternDirection): { label: string; icon: IconName } | null {
   return direction === 'none' ? null : DIRECTION[direction];
@@ -165,11 +168,18 @@ export function PatternCard({ pattern, constants }: Props) {
         Set apart from the narrative because it is a different kind of statement: the narrative is
         what the diary says, the suggestion is what to do about it. Running them together as two
         plain paragraphs made the advice read as more findings.
+
+        P0-6: no badge means no tip either. A badge-less card — a neutral feeling (P0-2) or, as of
+        P0-6, a lift the card itself prints as "—" — has nothing to back advice with, so the strip
+        stays out rather than offering it anyway. The narrative, the figures and the notes above are
+        unaffected; only this closing suggestion goes quiet.
       */}
-      <p className="pattern-card__suggestion">
-        <Icon name="spark" size="1.1em" />
-        <span>{pattern.suggestion_text}</span>
-      </p>
+      {badge && (
+        <p className="pattern-card__suggestion">
+          <Icon name="spark" size="1.1em" />
+          <span>{pattern.suggestion_text}</span>
+        </p>
+      )}
 
       <div className="pattern-card__footer">
         <p className="muted pattern-card__counts">

@@ -52,18 +52,16 @@ class PatternCard extends StatefulWidget {
 
 /// Which badge, if any, a pattern card shows for [pattern] (P0-2).
 ///
-/// The single place this decision is made, so ticket P0-6 -- which adds a
-/// second reason to show no badge, an undefined or below-threshold lift --
-/// has one obvious function to extend rather than a scatter of conditions
-/// across the widget tree: an early `return null` here, ahead of the switch
-/// below, once [Pattern.lift] is available to check.
-///
 /// [Pattern.direction] already resolves keep/change/no-opinion on the
-/// backend, from the pattern's kind and its feeling's valence -- this only
-/// translates that resolved value into what the badge shows. It never
-/// re-derives keep or change from [Pattern.kind] or the feeling itself; the
-/// backend owns that logic (see `badgeDirectionFor` in
-/// `backend/src/insights/patterns.service.ts`).
+/// backend, from the pattern's kind, its feeling's valence, and -- since
+/// P0-6 -- its lift: `badgeDirectionFor` in
+/// `backend/src/insights/patterns.service.ts` withholds the badge for a
+/// pattern whose lift is undefined or below the minimum, the same early
+/// return this file once expected to make locally. This function only
+/// translates the already-resolved value into what the badge shows and
+/// never re-derives keep or change -- or now, re-checks the lift -- itself;
+/// doing either here would be this client disagreeing with the backend
+/// about the same diary (see the module doc comment above).
 PatternDirection? patternBadgeFor(Pattern pattern) =>
     switch (pattern.direction) {
       PatternDirection.none => null,
@@ -196,8 +194,14 @@ class _PatternCardState extends State<PatternCard> {
               container: theme.colorScheme.primaryContainer,
             ),
           ],
-          const SizedBox(height: JournalSpacing.x3),
-          _SuggestionBlock(text: pattern.suggestionText),
+          // P0-6: no badge means no tip either. Advice to keep or change something is exactly
+          // what a badge-less card has nothing to back -- whether because the feeling is neutral
+          // (P0-2) or, as of P0-6, because the lift behind it is undefined or too weak to trust.
+          // The counts and the narrative above still stand; only the advisory strip goes quiet.
+          if (badge != null) ...[
+            const SizedBox(height: JournalSpacing.x3),
+            _SuggestionBlock(text: pattern.suggestionText),
+          ],
           const SizedBox(height: JournalSpacing.x3),
           DecoratedBox(
             decoration: BoxDecoration(color: journal.hairline),

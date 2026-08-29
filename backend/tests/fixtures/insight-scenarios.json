@@ -38,6 +38,42 @@
           "feelings": [
             "energised"
           ]
+        },
+        {
+          "text": "Stayed in all evening, nothing much happened.",
+          "feelings": [
+            "energised"
+          ]
+        },
+        {
+          "text": "Quiet day indoors, routine chores only.",
+          "feelings": [
+            "sleepy"
+          ]
+        },
+        {
+          "text": "Another quiet day indoors, routine chores only.",
+          "feelings": [
+            "sleepy"
+          ]
+        },
+        {
+          "text": "A third quiet day indoors, routine chores only.",
+          "feelings": [
+            "sleepy"
+          ]
+        },
+        {
+          "text": "A fourth quiet day indoors, routine chores only.",
+          "feelings": [
+            "sleepy"
+          ]
+        },
+        {
+          "text": "A fifth quiet day indoors, routine chores only.",
+          "feelings": [
+            "sleepy"
+          ]
         }
       ],
       "expect": {
@@ -49,7 +85,8 @@
             "direction": "keep"
           }
         ]
-      }
+      },
+      "note": "P0-6: the diary needs at least one day off from walking to compare against, or the lift is a division by zero and the badge this scenario is about would not show at all \u2014 'A real habit' has to mean a real ratio, not just three good days with nothing to weigh them against."
     },
     {
       "name": "two occurrences stay quiet",
@@ -126,6 +163,36 @@
           "feelings": [
             "frustrated"
           ]
+        },
+        {
+          "text": "Waited a long time at the shop for nothing.",
+          "feelings": [
+            "frustrated"
+          ]
+        },
+        {
+          "text": "Sat quietly for a while, nothing else happening.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "Another quiet spell, nothing else happening.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "A third quiet spell, nothing else happening.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "A fourth quiet spell, nothing else happening.",
+          "feelings": [
+            "calm"
+          ]
         }
       ],
       "expect": {
@@ -141,7 +208,7 @@
           }
         ]
       },
-      "note": "'network' must not register as 'work'. 'homework' correctly registers as 'study'."
+      "note": "'network' must not register as 'work'. 'homework' correctly registers as 'study'. P0-6: the shop/quiet-spell entries give the pattern a real comparison group \u2014 without one the lift is a division by zero and 'direction' would read 'none' regardless of the extraction question this scenario is actually about."
     },
     {
       "name": "a long run of the same habit",
@@ -157,6 +224,26 @@
           ]
         }
       },
+      "entries": [
+        {
+          "text": "A slow start to the day, feeling low.",
+          "feelings": [
+            "sleepy"
+          ]
+        },
+        {
+          "text": "Another slow start, feeling low.",
+          "feelings": [
+            "sleepy"
+          ]
+        },
+        {
+          "text": "Nothing much today, felt oddly fine.",
+          "feelings": [
+            "energised"
+          ]
+        }
+      ],
       "expect": {
         "patterns": [
           {
@@ -166,7 +253,8 @@
             "direction": "keep"
           }
         ]
-      }
+      },
+      "note": "P0-6: the three added entries give the pattern a real comparison group (one walk-free day still felt energised, two did not) \u2014 20 identical entries and nothing to weigh them against is a division by zero, not a lift, and would leave the pattern's badge withheld regardless of the count itself."
     },
     {
       "name": "a habit the writer explicitly did not have",
@@ -418,6 +506,24 @@
           "feelings": [
             "exhausted"
           ]
+        },
+        {
+          "text": "Exhausted by evening for no particular reason.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Had a good day out, nothing eventful.",
+          "feelings": [
+            "happy"
+          ]
+        },
+        {
+          "text": "Another good day out, nothing eventful.",
+          "feelings": [
+            "happy"
+          ]
         }
       ],
       "expect": {
@@ -425,7 +531,7 @@
           "medication"
         ]
       },
-      "note": "The correlation is worth surfacing — it is worth telling a doctor. Advice to change it is not the app's to give."
+      "note": "The correlation is worth surfacing \u2014 it is worth telling a doctor. Advice to change it is not the app's to give. P0-6: the three added entries give the pattern a real comparison group, so the lift is a genuine, threshold-clearing number rather than a division by zero -- this defect must hold on its own numbers, not survive only because the diary was too small to compute one."
     },
     {
       "name": "menstrual cycle",
@@ -450,13 +556,32 @@
           "feelings": [
             "exhausted"
           ]
+        },
+        {
+          "text": "Exhausted by evening for no particular reason.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Had a good day out, nothing eventful.",
+          "feelings": [
+            "happy"
+          ]
+        },
+        {
+          "text": "Another good day out, nothing eventful.",
+          "feelings": [
+            "happy"
+          ]
         }
       ],
       "expect": {
         "notAdvisedToChange": [
           "menstrual cycle"
         ]
-      }
+      },
+      "note": "P0-6: the three added entries give the pattern a real comparison group, so the lift is a genuine, threshold-clearing number rather than a division by zero -- this defect must hold on its own numbers, not survive only because the diary was too small to compute one."
     },
     {
       "name": "illness",
@@ -481,13 +606,32 @@
           "feelings": [
             "exhausted"
           ]
+        },
+        {
+          "text": "Exhausted by evening for no particular reason.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Had a good day out, nothing eventful.",
+          "feelings": [
+            "happy"
+          ]
+        },
+        {
+          "text": "Another good day out, nothing eventful.",
+          "feelings": [
+            "happy"
+          ]
         }
       ],
       "expect": {
         "notAdvisedToChange": [
           "illness"
         ]
-      }
+      },
+      "note": "P0-6: the three added entries give the pattern a real comparison group, so the lift is a genuine, threshold-clearing number rather than a division by zero -- this defect must hold on its own numbers, not survive only because the diary was too small to compute one."
     },
     {
       "name": "a person, not a habit",
@@ -512,6 +656,24 @@
           "feelings": [
             "sad"
           ]
+        },
+        {
+          "text": "Felt down for no particular reason this evening.",
+          "feelings": [
+            "sad"
+          ]
+        },
+        {
+          "text": "A pleasant, easy day today.",
+          "feelings": [
+            "happy"
+          ]
+        },
+        {
+          "text": "Another pleasant, easy day today.",
+          "feelings": [
+            "happy"
+          ]
         }
       ],
       "expect": {
@@ -519,7 +681,7 @@
           "partner"
         ]
       },
-      "note": "'conflict' is the useful insight from these entries. 'partner' is the same data pointed at a person."
+      "note": "'conflict' is the useful insight from these entries. 'partner' is the same data pointed at a person. P0-6: the three added entries give the pattern a real comparison group, so the lift is a genuine, threshold-clearing number rather than a division by zero -- this defect must hold on its own numbers, not survive only because the diary was too small to compute one."
     },
     {
       "name": "someone in crisis",
@@ -544,6 +706,24 @@
           "feelings": [
             "hopeless"
           ]
+        },
+        {
+          "text": "Felt hopeless for no particular reason today.",
+          "feelings": [
+            "hopeless"
+          ]
+        },
+        {
+          "text": "A pleasant, easy day with others.",
+          "feelings": [
+            "happy"
+          ]
+        },
+        {
+          "text": "Another pleasant, easy day with others.",
+          "feelings": [
+            "happy"
+          ]
         }
       ],
       "expect": {
@@ -551,7 +731,7 @@
           "time alone"
         ]
       },
-      "note": "'Consider reducing time alone' to someone writing this is glib at best. The app has no notion of severity and no crisis path."
+      "note": "'Consider reducing time alone' to someone writing this is glib at best. The app has no notion of severity and no crisis path. P0-6: the three added entries give the pattern a real comparison group, so the lift is a genuine, threshold-clearing number rather than a division by zero -- this defect must hold on its own numbers, not survive only because the diary was too small to compute one."
     },
     {
       "name": "one entry, four feelings, two topics",
@@ -633,12 +813,48 @@
           "feelings": [
             "restless"
           ]
+        },
+        {
+          "text": "A good day today, feeling upbeat.",
+          "feelings": [
+            "happy"
+          ]
+        },
+        {
+          "text": "A jittery day, on edge for no reason.",
+          "feelings": [
+            "restless"
+          ]
+        },
+        {
+          "text": "A quiet, uneventful afternoon.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "Another quiet, uneventful afternoon.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "A third quiet, uneventful afternoon.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "A fourth quiet, uneventful afternoon.",
+          "feelings": [
+            "calm"
+          ]
         }
       ],
       "expect": {
         "noContradictoryTopics": true
       },
-      "note": "Both are true. The view sets them side by side with nothing to say that the difference is the time of day."
+      "note": "Both are true. The view sets them side by side with nothing to say that the difference is the time of day. P0-6: the six added entries (none mentioning coffee) give both patterns a real comparison group, so each carries a genuine, threshold-clearing lift -- two real, opposite findings about the same topic, not an artefact of a diary too small to compute either ratio."
     },
     {
       "name": "the same diary reads the same way twice",
@@ -713,11 +929,11 @@
         ],
         "neverSaysRecent": true
       },
-      "note": "Fixed by I3. The count is now windowed, so a pattern last seen over a year ago is labelled historical rather than reported as recent — and it is still there, because silently dropping it would be its own defect (I3-09)."
+      "note": "Fixed by I3. The count is now windowed, so a pattern last seen over a year ago is labelled historical rather than reported as recent \u2014 and it is still there, because silently dropping it would be its own defect (I3-09)."
     },
     {
       "name": "a neutral feeling",
-      "concern": "Neutral has no positive signal, so the direction is 'change' — advice to alter something that was fine.",
+      "concern": "Neutral has no positive signal, so the direction is 'change' \u2014 advice to alter something that was fine.",
       "source": "badgeDirectionFor",
       "verdict": "holds",
       "entries": [
@@ -754,19 +970,19 @@
       "verdict": "defect",
       "entries": [
         {
-          "text": "Sétáltam egyet ebédszünetben, sokkal jobb lett a délután.",
+          "text": "S\u00e9t\u00e1ltam egyet eb\u00e9dsz\u00fcnetben, sokkal jobb lett a d\u00e9lut\u00e1n.",
           "feelings": [
             "energised"
           ]
         },
         {
-          "text": "Megint sétáltam munka után, feltöltődtem.",
+          "text": "Megint s\u00e9t\u00e1ltam munka ut\u00e1n, felt\u00f6lt\u0151dtem.",
           "feelings": [
             "energised"
           ]
         },
         {
-          "text": "Rövid séta a ház körül, jólesett.",
+          "text": "R\u00f6vid s\u00e9ta a h\u00e1z k\u00f6r\u00fcl, j\u00f3lesett.",
           "feelings": [
             "energised"
           ]
