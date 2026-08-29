@@ -164,6 +164,24 @@ describe('confounders (I2)', () => {
   it('stays quiet about topics that merely overlap', () => {
     expect(confounderSplit('work', 'coffee', 5, 5, 3, 10)).toBeNull();
   });
+
+  // #98: bothCount must clear MIN_CONFOUNDER_CO_OCCURRENCES on its own, independent of the rate —
+  // a 1-of-1 or 2-of-2 co-occurrence would otherwise pass COLLINEARITY_THRESHOLD at a rate of 1.0
+  // and come back `inseparable` off a single-digit sample.
+  it('rejects a 1-of-1 co-occurrence even at a perfect rate', () => {
+    expect(confounderSplit('work', 'coffee', 1, 0, 0, 5)).toBeNull();
+  });
+
+  it('rejects a 2-of-2 co-occurrence even at a perfect rate', () => {
+    expect(confounderSplit('work', 'coffee', 2, 0, 0, 5)).toBeNull();
+  });
+
+  it('accepts a 3-of-3 co-occurrence at the floor', () => {
+    const split = confounderSplit('work', 'coffee', 3, 0, 0, 5)!;
+    expect(split).not.toBeNull();
+    expect(split.inseparable).toBe(true);
+    expect(split.bothCount).toBe(3);
+  });
 });
 
 describe('valence and time buckets (I5)', () => {

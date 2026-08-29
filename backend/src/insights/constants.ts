@@ -47,6 +47,30 @@ export const MIN_COMPARISON_ENTRIES = 3;
 /** Two topics this entangled cannot be told apart in this diary (I2-02). */
 export const COLLINEARITY_THRESHOLD = 0.8;
 
+/**
+ * #98: the floor on `bothCount` a confounder split needs before it can be reported at all,
+ * independent of the rate `COLLINEARITY_THRESHOLD` checks.
+ *
+ * `confounderSplit`'s only production caller (`PatternsService.confoundersFor`) already restricts
+ * candidates to `MIN_OCCURRENCE_THRESHOLD` (3) co-occurrences before the rate check ever runs, so a
+ * rate ≥ 0.8 already implies `bothCount ≥ 3` there — but that is a property of the caller, not
+ * something the function itself guarantees. `confounderSplit` is exported and unit-tested as a
+ * standalone pure function; without an explicit floor here, `confounderSplit('work', 'coffee', 1,
+ * 0, 0, 5)` returns a confident "cannot separate" verdict off a single entry, which is exactly the
+ * tiny-sample flag the rest of this file refuses to make (see the module doc comment). Set equal to
+ * `MIN_OCCURRENCE_THRESHOLD` rather than inlining a second literal, since both express the same
+ * "three occurrences is the smallest count worth calling a pattern" rule from FR-008 — a future
+ * change to one is a reason to look at the other, not a coincidence to hide.
+ *
+ * Not part of `EngineConstants` / the `GET /insights` `constants` block below: that block exists so
+ * a client never has to hardcode a threshold it needs to interpret or reproduce a number it is
+ * shown. No client reads `bothCount` independently of the `ConfounderSplit` the server already
+ * decided on — the guard is enforced before a split is ever returned, so there is no client-side
+ * decision this number would inform. Add it there if a client ever needs to explain *why* a
+ * candidate produced no confounder note.
+ */
+export const MIN_CONFOUNDER_CO_OCCURRENCES = 3;
+
 /** A2-06: withdrawal history is a notice board, not an archive. */
 export const MAX_WITHDRAWAL_RECORDS = 50;
 
