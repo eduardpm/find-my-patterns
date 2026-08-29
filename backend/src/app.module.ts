@@ -12,6 +12,8 @@ import {
 } from './entries/entries.repository';
 import { EntriesService } from './entries/entries.service';
 import { GuidedDraftsController } from './entries/guided-drafts.controller';
+import { ExportController } from './entries/export.controller';
+import { ExportService } from './entries/export.service';
 import { InsightsController } from './insights/insights.controller';
 import { EchoService } from './insights/echo.service';
 import { PatternsService } from './insights/patterns.service';
@@ -60,6 +62,7 @@ export class AppModule {
         MonthlySummaryController,
         TranscriptionController,
         GuidedDraftsController,
+        ExportController,
       ],
       providers: [
         createDiaryProvider(databasePath),
@@ -91,6 +94,7 @@ export class AppModule {
         MonthlySummaryService,
         TranscriptionService,
         TranscriptionJobsService,
+        ExportService,
       ],
     };
   }

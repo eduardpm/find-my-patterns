@@ -134,3 +134,6 @@ export const experimentCreateSchema = z.object({
     .max(MAX_EXPERIMENT_LENGTH_DAYS)
     .optional(),
 });
+
+/** `GET /export?format=` (M-6). Anything else, including a missing value, is a 422. */
+export const exportFormatQuerySchema = z.enum(['markdown', 'json']);

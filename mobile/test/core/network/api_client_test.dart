@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -217,6 +218,52 @@ void main() {
         expect(request.headers[Headers.contentLengthHeader], 4);
       },
     );
+  });
+
+  group('getBytes', () {
+    test('downloads the raw body and the suggested filename', () async {
+      final adapter = FakeHttpAdapter([
+        const FakeReply.raw(
+          200,
+          '## 2026-08-28 — 11:11 PM\n\nQuiet day.\n',
+          headers: {
+            'content-type': ['text/markdown; charset=utf-8'],
+            'content-disposition': [
+              'attachment; filename="find-my-patterns-export-2026-08-28.md"',
+            ],
+          },
+        ),
+      ]);
+      final file = await clientFor(adapter).getBytes('/export?format=markdown');
+
+      expect(
+        utf8.decode(file.bytes),
+        '## 2026-08-28 — 11:11 PM\n\nQuiet day.\n',
+      );
+      expect(file.filename, 'find-my-patterns-export-2026-08-28.md');
+      expect(adapter.requests.single.method, 'GET');
+    });
+
+    test(
+      'has no filename when the server sends no Content-Disposition',
+      () async {
+        final adapter = FakeHttpAdapter([const FakeReply.raw(200, '{}')]);
+        final file = await clientFor(adapter).getBytes('/export?format=json');
+        expect(file.filename, isNull);
+      },
+    );
+
+    test('a non-2xx status still becomes HttpFailure', () async {
+      final adapter = FakeHttpAdapter([
+        const FakeReply.raw(500, 'internal error'),
+      ]);
+      await expectLater(
+        clientFor(adapter).getBytes('/export?format=json'),
+        throwsA(
+          isA<HttpFailure>().having((e) => e.statusCode, 'statusCode', 500),
+        ),
+      );
+    });
   });
 
   group('failures', () {

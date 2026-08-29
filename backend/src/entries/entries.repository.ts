@@ -15,6 +15,7 @@ import type {
   Valence,
 } from '../domain/types';
 import type { PlainDate } from '../db/codecs';
+import type { Topic } from '../topics/topics.service';
 import { GUIDED_DRAFT_SENTINEL } from './guided-draft';
 
 /** One entry's feelings as stored: the ordered keys, plus whichever of them carry a rating. */
@@ -189,6 +190,25 @@ export class EntriesRepository {
       feelingKey: r.feeling_key,
       source: r.source as PairingSource,
     }));
+  }
+
+  /**
+   * The canonical topics linked to an entry — an entry serves no topics of its own on any other
+   * read endpoint, so the export controller (M-6) reaches for this the same way
+   * `findTopicFeelingPairings` above does. Ordered by name for a stable, deterministic wire shape.
+   *
+   * `entry_topics` carries no per-entry surface form — only which canonical topic row a mention
+   * resolved to (`docs/export.md` "Topics" explains why the export repeats the canonical name for
+   * both fields rather than inventing one).
+   */
+  findTopics(entryId: string): Topic[] {
+    const rows = this.db
+      .prepare(
+        `SELECT t.id, t.name FROM entry_topics et JOIN topics t ON t.id = et.topic_id
+         WHERE et.entry_id = ? ORDER BY t.name`,
+      )
+      .all(entryId) as Array<{ id: string; name: string }>;
+    return rows.map((r) => ({ id: r.id, name: r.name }));
   }
 
   /** The topic ids currently linked to an entry — the set a pairing write is validated against. */
