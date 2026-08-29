@@ -2,8 +2,10 @@ import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/entry.dart';
 import 'package:find_my_patterns/core/diary/feeling.dart';
 import 'package:find_my_patterns/core/diary/monthly_summary.dart';
+import 'package:find_my_patterns/core/diary/pattern.dart';
 import 'package:find_my_patterns/core/widgets/feeling_chips.dart';
 import 'package:find_my_patterns/features/today/day_summary_card.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../support/harness.dart';
@@ -45,13 +47,55 @@ void main() {
     required List<Entry> entries,
     DaySummary? summary,
     bool isToday = true,
+    double textScale = 1,
   }) async {
+    final card = DaySummaryCard(
+      entries: entries,
+      summary: summary,
+      isToday: isToday,
+    );
     await tester.pumpWidget(
-      Harness().wrap(
-        DaySummaryCard(entries: entries, summary: summary, isToday: isToday),
-      ),
+      // A bare `Harness().wrap` has no way to override the ambient text
+      // scale, so a scale other than the default goes through `scope`
+      // directly with the `MediaQuery` the wrap would otherwise supply.
+      textScale == 1
+          ? Harness().wrap(card)
+          : Harness().scope(
+              MediaQuery(
+                data: MediaQueryData(
+                  textScaler: TextScaler.linear(textScale),
+                ),
+                child: MaterialApp(home: Scaffold(body: card)),
+              ),
+            ),
     );
     await tester.pumpAndSettle();
+  }
+
+  /// The key on the card's own intensity bar (see `_IntensityBar`,
+  /// rendered at day_summary_card.dart:150) -- the widget had no `Key` at
+  /// all before #115, which is exactly why the bar could paint zero
+  /// pixels for as long as it did without a test noticing.
+  const barKey = ValueKey('daySummaryIntensityBar');
+
+  /// The rendered [Size] of the intensity bar's track and its coloured
+  /// fill, read with `tester.getSize` -- what was actually laid out and
+  /// painted, not a widget's requested `widthFactor`. #108/#115: a
+  /// `Stack`'s loose constraints let the fill's `FractionallySizedBox`
+  /// request the right `widthFactor` and still collapse to a literal
+  /// `Size(_, 0.0)`, so a track or fill with zero height here is exactly
+  /// the regression this ticket closes. Follows
+  /// `calendar_day_cell_test.dart`'s `barSizes` helper for style.
+  ({Size track, Size fill}) barSizes(WidgetTester tester) {
+    final barFinder = find.byKey(barKey);
+    final fillFinder = find.descendant(
+      of: barFinder,
+      matching: find.byType(FractionallySizedBox),
+    );
+    return (
+      track: tester.getSize(barFinder),
+      fill: tester.getSize(fillFinder),
+    );
   }
 
   group('the strongest rating', () {
@@ -154,6 +198,110 @@ void main() {
 
         expect(find.text('STRONGEST'), findsNothing);
         expect(find.textContaining('/5'), findsNothing);
+      },
+    );
+  });
+
+  group('the intensity bar', () {
+    // Every case below drives a real rating through the card rather than
+    // building `_IntensityBar` directly -- it is a private class, and the
+    // only way it ever gets a value in production is `strongest != null`,
+    // which needs an entry whose own recorded rating equals the roll-up's
+    // `intensity`. Skipping that path is exactly how #115 shipped: the
+    // widget's own `widthFactor` was correct the whole time it painted
+    // zero pixels, so a test that does not measure rendered geometry
+    // proves nothing.
+    final maxIntensity = EngineConstants.placeholder.maxIntensity;
+
+    testWidgets(
+      'paints a non-zero track and a proportional fill at a mid rating',
+      (tester) async {
+        await pumpCard(
+          tester,
+          entries: [
+            entryAt(
+              'a',
+              DateTime.utc(2026, 8, 28, 9),
+              [grateful],
+              intensities: {'grateful': 3},
+            ),
+          ],
+          summary: const DaySummary(date, [grateful], intensity: 3),
+        );
+
+        final sizes = barSizes(tester);
+        expect(sizes.track, const Size(60, 4));
+        expect(sizes.fill.height, 4);
+        expect(sizes.fill.width, closeTo(60 * (3 / maxIntensity), 1e-6));
+      },
+    );
+
+    testWidgets('draws an empty fill at intensity 0, not a hidden bar', (
+      tester,
+    ) async {
+      await pumpCard(
+        tester,
+        entries: [
+          entryAt(
+            'a',
+            DateTime.utc(2026, 8, 28, 9),
+            [grateful],
+            intensities: {'grateful': 0},
+          ),
+        ],
+        summary: const DaySummary(date, [grateful], intensity: 0),
+      );
+
+      final sizes = barSizes(tester);
+      expect(sizes.track, const Size(60, 4));
+      expect(sizes.fill.width, 0);
+    });
+
+    testWidgets('fills the whole track at the backend-supplied maximum', (
+      tester,
+    ) async {
+      await pumpCard(
+        tester,
+        entries: [
+          entryAt(
+            'a',
+            DateTime.utc(2026, 8, 28, 9),
+            [grateful],
+            intensities: {'grateful': maxIntensity},
+          ),
+        ],
+        summary: DaySummary(date, const [grateful], intensity: maxIntensity),
+      );
+
+      final sizes = barSizes(tester);
+      expect(sizes.track, const Size(60, 4));
+      expect(sizes.fill.width, closeTo(60, 1e-6));
+    });
+
+    testWidgets(
+      'still paints at double text scale, with the whole row laid out',
+      (tester) async {
+        await pumpCard(
+          tester,
+          entries: [
+            entryAt(
+              'a',
+              DateTime.utc(2026, 8, 28, 9),
+              [grateful],
+              intensities: {'grateful': 4},
+            ),
+          ],
+          summary: const DaySummary(date, [grateful], intensity: 4),
+          textScale: 2,
+        );
+
+        expect(tester.takeException(), isNull);
+        final sizes = barSizes(tester);
+        // The bar's own SizedBox is fixed in logical pixels, so a larger
+        // text scale must not shrink or clip it -- only the label text
+        // beside it grows.
+        expect(sizes.track, const Size(60, 4));
+        expect(sizes.fill.width, closeTo(60 * (4 / maxIntensity), 1e-6));
       },
     );
   });
