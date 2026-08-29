@@ -181,6 +181,26 @@ describe('PatternCard — the other direction and the caveats (I1, I2)', () => {
   });
 });
 
+describe('PatternCard — no badge for a neutral-valence pattern (P0-2)', () => {
+  // A neutral-valence feeling has no positive signal to reinforce and no negative one to
+  // discourage, so the backend sends `direction: 'none'` and this card shows neither badge —
+  // never falling back to "Worth changing", which was the defect P0-2 fixes (a card reading
+  // "consider changing" a feeling that was fine). Mirrors
+  // `mobile/test/features/insights/pattern_card_test.dart`'s equivalent case.
+  it('renders no badge and no pattern-badge element at all', () => {
+    const { container } = renderCard(pattern({ direction: 'none' }));
+    expect(screen.queryByText('Worth keeping')).not.toBeInTheDocument();
+    expect(screen.queryByText('Worth changing')).not.toBeInTheDocument();
+    expect(container.querySelector('.pattern-badge')).toBeNull();
+  });
+
+  it('still shows every other figure on the card untouched', () => {
+    renderCard(pattern({ direction: 'none' }));
+    expect(screen.getByText('67%')).toBeInTheDocument();
+    expect(screen.getByText('6.2×')).toBeInTheDocument();
+  });
+});
+
 describe('WithdrawalNotice (A2)', () => {
   const withdrawal: Withdrawal = {
     id: 'w1',
