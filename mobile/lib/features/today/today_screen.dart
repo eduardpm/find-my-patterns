@@ -11,6 +11,7 @@ import '../../core/widgets/journal_page_wash.dart';
 import 'day_summary_card.dart';
 import 'entry_card.dart';
 import 'today_controller.dart';
+import 'writing_streak_line.dart';
 
 /// The app's home screen: one day's entries under a summary of that day.
 /// Opens on today.
@@ -238,6 +239,16 @@ class _TodayScreenState extends ConsumerState<TodayScreen>
                           onNextDay: controller.showNextDay,
                           onToday: controller.showToday,
                         ),
+                        // Only on today, and only once the streak is worth
+                        // naming (#40) -- [TodayState.streakDays] is already
+                        // zero on a past day, so this stays out of the way
+                        // there without a second check.
+                        if (isToday &&
+                            state.streakDays >=
+                                minVisibleWritingStreakDays) ...[
+                          const SizedBox(height: JournalSpacing.x2),
+                          WritingStreakLine(streakDays: state.streakDays),
+                        ],
                         const SizedBox(height: JournalSpacing.x5),
                         if (!state.hasLoaded)
                           const Padding(

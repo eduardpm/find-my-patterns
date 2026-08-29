@@ -88,3 +88,22 @@ Map<String, Object?> monthlySummaryJson({
   'totals_by_feeling': <String, Object?>{},
   'average_entries_per_day': 0.0,
 };
+
+/// A `GET /insights/series` body naming [days] as the days with at least
+/// one entry -- the presence signal `computeWritingStreak` (#40) reads.
+/// Every named day gets one entry; `score` and `confirmed_feeling_count`
+/// are filled with harmless values since nothing in this app's tests reads
+/// them yet.
+Map<String, Object?> seriesJson({List<CalendarDate> days = const []}) => {
+  'granularity': 'day',
+  'points': [
+    for (final date in days)
+      {
+        'date': date.toString(),
+        'score': null,
+        'entry_count': 1,
+        'confirmed_feeling_count': 0,
+      },
+  ],
+  'constants': {'recency_window_days': 14},
+};
