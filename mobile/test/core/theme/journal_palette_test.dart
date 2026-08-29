@@ -60,6 +60,48 @@ void main() {
     });
   });
 
+  group('ValenceRamp.colorForScore', () {
+    const colors = FeelingColors(
+      uplifted: Color(0xFF00FF00),
+      steady: Color(0xFF808080),
+      tense: Color(0xFF333333),
+      low: Color(0xFFFF0000),
+    );
+
+    test('a score of exactly 0 is steady, whichever half approaches it', () {
+      expect(colors.colorForScore(0), colors.steady);
+    });
+
+    test('a score of -1 is exactly low', () {
+      expect(colors.colorForScore(-1), colors.low);
+    });
+
+    test('a score of 1 is exactly uplifted', () {
+      expect(colors.colorForScore(1), colors.uplifted);
+    });
+
+    test('a score out of range clamps to the same end as the boundary', () {
+      expect(colors.colorForScore(-5), colors.colorForScore(-1));
+      expect(colors.colorForScore(5), colors.colorForScore(1));
+    });
+
+    test('a mid negative score sits between steady and low', () {
+      final color = colors.colorForScore(-0.5);
+      expect(color, Color.lerp(colors.steady, colors.low, 0.5));
+    });
+
+    test('a mid positive score sits between steady and uplifted', () {
+      final color = colors.colorForScore(0.5);
+      expect(color, Color.lerp(colors.steady, colors.uplifted, 0.5));
+    });
+
+    test('never reads tense — that hue has no place on the score ramp', () {
+      for (var score = -1.0; score <= 1.0; score += 0.1) {
+        expect(colors.colorForScore(score), isNot(colors.tense));
+      }
+    });
+  });
+
   group('JournalColors', () {
     test('copyWith replaces only what it is given', () {
       final light = JournalPalette.paper.light;

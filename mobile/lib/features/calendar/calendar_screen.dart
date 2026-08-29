@@ -16,6 +16,7 @@ import '../../core/widgets/feeling_accent.dart';
 import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_page_wash.dart';
 import 'calendar_controller.dart';
+import 'year_grid.dart';
 
 /// The month name and year, e.g. "August 2026".
 final DateFormat _monthLabelFormat = DateFormat.yMMMM();
@@ -40,12 +41,25 @@ final int _barMaxIntensity = EngineConstants.placeholder.maxIntensity;
 /// 1 distinct feeling → 20%, 5 or more → 100%.
 const int _volumeBarMaxCount = 5;
 
+/// Which of the calendar's two views is on screen: the month grid this
+/// screen has always shown, or the Year in Pixels grid (CH-2).
+///
+/// Plain widget state, not a provider: which view is showing is not data
+/// either grid's own controller needs to know about, and it resets to
+/// [month] every time this screen is rebuilt from scratch — the same as
+/// the month grid's own choice of month never surviving a full app
+/// restart.
+enum _CalendarViewMode { month, year }
+
 /// The month-at-a-glance calendar: a Monday-first grid of every day this
-/// month, and a totals panel below it.
+/// month, and a totals panel below it, with a toggle to the Year in Pixels
+/// grid (CH-2).
 ///
 /// Reloads on `AppLifecycleState.resumed`, for whichever month is on screen
 /// at that moment — not necessarily the one the screen opened on, since the
-/// user may have navigated with the month switcher in between.
+/// user may have navigated with the month switcher in between. The Year in
+/// Pixels grid keeps its own state in `YearGridController` and is not part
+/// of that reload — see its own doc for why.
 class CalendarScreen extends ConsumerStatefulWidget {
   /// Creates the calendar screen.
   ///
@@ -64,6 +78,8 @@ class CalendarScreen extends ConsumerStatefulWidget {
 
 class _CalendarScreenState extends ConsumerState<CalendarScreen>
     with WidgetsBindingObserver {
+  _CalendarViewMode _mode = _CalendarViewMode.month;
+
   @override
   void initState() {
     super.initState();
@@ -131,31 +147,53 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
                   title: Text('Calendar', style: theme.textTheme.headlineSmall),
                 ),
                 const SizedBox(height: JournalSpacing.x4),
-                _MonthSwitcher(
-                  month: state.month,
-                  onPrevious: notifier.previousMonth,
-                  onNext: notifier.nextMonth,
+                SegmentedButton<_CalendarViewMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: _CalendarViewMode.month,
+                      label: Text('Month'),
+                    ),
+                    ButtonSegment(
+                      value: _CalendarViewMode.year,
+                      label: Text('Year'),
+                    ),
+                  ],
+                  selected: {_mode},
+                  onSelectionChanged: (selection) =>
+                      setState(() => _mode = selection.first),
                 ),
                 const SizedBox(height: JournalSpacing.x3),
-                if (!state.hasLoaded)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: JournalSpacing.x7),
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else if (state.summary case final summary?) ...[
-                  JournalCard(
-                    contentPadding: const EdgeInsets.all(JournalSpacing.x4),
-                    child: _CalendarGrid(
-                      month: state.month,
-                      days: summary.days,
-                      today: CalendarDate.today(
-                        now: ref.watch(calendarNowProvider),
-                      ),
-                      onOpenDay: _openDay,
-                    ),
+                if (_mode == _CalendarViewMode.year)
+                  YearGrid(onOpenDay: _openDay)
+                else ...[
+                  _MonthSwitcher(
+                    month: state.month,
+                    onPrevious: notifier.previousMonth,
+                    onNext: notifier.nextMonth,
                   ),
-                  const SizedBox(height: JournalSpacing.x4),
-                  _TotalsPanel(summary),
+                  const SizedBox(height: JournalSpacing.x3),
+                  if (!state.hasLoaded)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(
+                        vertical: JournalSpacing.x7,
+                      ),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (state.summary case final summary?) ...[
+                    JournalCard(
+                      contentPadding: const EdgeInsets.all(JournalSpacing.x4),
+                      child: _CalendarGrid(
+                        month: state.month,
+                        days: summary.days,
+                        today: CalendarDate.today(
+                          now: ref.watch(calendarNowProvider),
+                        ),
+                        onOpenDay: _openDay,
+                      ),
+                    ),
+                    const SizedBox(height: JournalSpacing.x4),
+                    _TotalsPanel(summary),
+                  ],
                 ],
               ],
             ),

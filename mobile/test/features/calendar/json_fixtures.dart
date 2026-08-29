@@ -1,7 +1,7 @@
 // Wire-shaped JSON fixtures for the endpoints behind the calendar feature:
 // `GET /feelings`, `GET /monthly-summary`, `GET /entries`, `GET
-// /entries/{id}`, `PATCH /entries/{id}`. Field names are snake_case,
-// matching what `lib/core/diary` decodes.
+// /entries/{id}`, `GET /insights/series`, `PATCH /entries/{id}`. Field
+// names are snake_case, matching what `lib/core/diary` decodes.
 
 /// The feeling catalog every one of these endpoints resolves feeling keys
 /// through before it can decode anything else.
@@ -75,6 +75,25 @@ Map<String, Object?> monthlySummaryJson({
   'totals_by_feeling': totalsByFeeling,
   'average_entries_per_day': averageEntriesPerDay,
 };
+
+/// One point in `GET /insights/series`'s `points` array.
+Map<String, Object?> seriesPointJson({
+  required String date,
+  double? score,
+  int entryCount = 1,
+  int confirmedFeelingCount = 1,
+}) => {
+  'date': date,
+  'score': score,
+  'entry_count': entryCount,
+  'confirmed_feeling_count': confirmedFeelingCount,
+};
+
+/// `GET /insights/series`'s whole response.
+Map<String, Object?> seriesJson({
+  String granularity = 'day',
+  List<Map<String, Object?>> points = const [],
+}) => {'granularity': granularity, 'points': points};
 
 /// One entry, as `GET /entries`, `GET /entries/{id}` and `PATCH
 /// /entries/{id}` all shape it.
