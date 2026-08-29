@@ -178,7 +178,7 @@ class _PatternCardState extends State<PatternCard> {
           const SizedBox(height: JournalSpacing.x2),
           Text(pattern.narrativeText, style: JournalType.prose),
           const SizedBox(height: JournalSpacing.x2),
-          _StrengthPanel(pattern: pattern),
+          _StrengthBars(pattern: pattern),
           // Where a number could not be computed, the reason takes its
           // place.
           if (pattern.comparisonNote case final note?) ...[
@@ -248,111 +248,316 @@ String _footerText(Pattern pattern, EngineConstants constants) {
   return buffer.toString();
 }
 
-/// The four figures every pattern states, as a 2x2 grid rather than prose --
-/// the comparison is the entire point, and a sentence makes the reader hold
-/// three numbers in their head to make it.
-class _StrengthPanel extends StatelessWidget {
-  const _StrengthPanel({required this.pattern});
+/// Two horizontal bars on a shared 0-100% scale (CH-4), replacing the old
+/// four-cell text grid: how often the feeling shows up with [Pattern.topic]
+/// present, and how often it shows up without it. A reader parses two filled
+/// bars against the same scale faster than four cells they have to hold in
+/// their head and subtract to see the comparison the panel already knows.
+///
+/// The lift figure sits between the two bars, gated on [patternBadgeFor]
+/// rather than on [Pattern.lift] directly (P0-6): the badge already
+/// withholds itself for a null or below-threshold lift, or for a
+/// neutral-valence feeling with nothing to say either way, and re-checking
+/// the raw number here would be a second opinion about the same threshold
+/// the backend already applied. [Pattern.lift] is still read, defensively,
+/// once that gate is open -- so a payload that somehow paired a badge with
+/// no lift number still renders instead of throwing.
+class _StrengthBars extends StatelessWidget {
+  const _StrengthBars({required this.pattern});
 
   final Pattern pattern;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final journal = context.journalColors;
     final isInverse = pattern.kind == PatternKind.inverse;
     final topic = pattern.topic;
+    final withLabel = isInverse ? 'Without $topic' : 'With $topic';
+    final withoutLabel = isInverse ? 'With $topic' : 'Without $topic';
+    final feelingLabel = pattern.feeling?.label.toLowerCase() ?? 'the feeling';
+    // A neutral fallback for the rare pattern whose feeling did not resolve
+    // through the catalog -- there is no valence to colour by, so the bar
+    // reads as neither good nor bad news rather than guessing one.
+    final fillColor =
+        pattern.feeling?.accent(journal) ?? journal.feelings.steady;
+    final trackColor = theme.colorScheme.onSurfaceVariant;
+    final tickColor = theme.colorScheme.onSurface;
+    final tickFraction = patternBarFraction(pattern.baseRate);
+    final lift = patternBadgeFor(pattern) != null ? pattern.lift : null;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(JournalSpacing.x3),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        color: theme.colorScheme.surfaceContainerHighest,
         borderRadius: JournalShapes.medium,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: _Stat(
-                  label: isInverse ? 'Without $topic' : 'With $topic',
-                  value: _percentOrDash(pattern.presentRate),
-                  detail: '${pattern.presentCount}/${pattern.presentTotal}',
-                ),
-              ),
-              const SizedBox(width: JournalSpacing.x4),
-              Expanded(
-                child: _Stat(
-                  label: isInverse ? 'With $topic' : 'Without $topic',
-                  value: _percentOrDash(pattern.absentRate),
-                  detail: '${pattern.absentCount}/${pattern.absentTotal}',
-                ),
-              ),
-            ],
+          _StrengthBar(
+            label: withLabel,
+            rate: pattern.presentRate,
+            count: pattern.presentCount,
+            total: pattern.presentTotal,
+            tickFraction: tickFraction,
+            fillColor: fillColor,
+            trackColor: trackColor,
+            tickColor: tickColor,
+            semanticsSentence: _barSentence(
+              withLabel,
+              feelingLabel,
+              pattern.presentCount,
+              pattern.presentTotal,
+              pattern.presentRate,
+            ),
           ),
           const SizedBox(height: JournalSpacing.x2),
-          Row(
-            children: [
-              Expanded(
-                child: _Stat(
-                  label: 'Usual rate',
-                  value: _percentOrDash(pattern.baseRate),
+          // Undefined lift (P0-6): the explanation for *why* stays in
+          // `comparisonNote`, rendered below this panel by `PatternCard`
+          // itself -- this widget only ever omits the one figure it cannot
+          // state, never a sentence explaining the omission.
+          if (lift case final lift?) ...[
+            Center(
+              child: Text(
+                '${lift.toStringAsFixed(1)}× more likely',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: theme.colorScheme.primary,
                 ),
               ),
-              const SizedBox(width: JournalSpacing.x4),
-              Expanded(
-                child: _Stat(
-                  label: 'Lift',
-                  // An em dash, never "0.0×". A lift that could not be
-                  // computed is not a small one, and printing a number here
-                  // would invent the one figure the design forbids.
-                  value: switch (pattern.lift) {
-                    null => '—',
-                    final lift => '${lift.toStringAsFixed(1)}×',
-                  },
-                ),
-              ),
-            ],
+            ),
+            const SizedBox(height: JournalSpacing.x2),
+          ],
+          _StrengthBar(
+            label: withoutLabel,
+            rate: pattern.absentRate,
+            count: pattern.absentCount,
+            total: pattern.absentTotal,
+            tickFraction: tickFraction,
+            fillColor: fillColor,
+            trackColor: trackColor,
+            tickColor: tickColor,
+            semanticsSentence: _barSentence(
+              withoutLabel,
+              feelingLabel,
+              pattern.absentCount,
+              pattern.absentTotal,
+              pattern.absentRate,
+            ),
           ),
+          const SizedBox(height: JournalSpacing.x1),
+          _UsualRateLegend(tickColor: tickColor, baseRate: pattern.baseRate),
         ],
       ),
     );
   }
 }
 
-class _Stat extends StatelessWidget {
-  const _Stat({required this.label, required this.value, this.detail});
+/// One labeled bar: [Eyebrow] label, percent and exact count on their own
+/// line (point 2 -- the counts are never dropped just because a bar already
+/// draws the same ratio), then the bar itself.
+///
+/// The whole row collapses to one [semanticsSentence] (point 5) rather than
+/// letting a screen reader piece the label, the percent and the count back
+/// together as three separate stops.
+class _StrengthBar extends StatelessWidget {
+  const _StrengthBar({
+    required this.label,
+    required this.rate,
+    required this.count,
+    required this.total,
+    required this.tickFraction,
+    required this.fillColor,
+    required this.trackColor,
+    required this.tickColor,
+    required this.semanticsSentence,
+  });
 
   final String label;
-  final String value;
-  final String? detail;
+  final double? rate;
+  final int count;
+  final int total;
+  final double tickFraction;
+  final Color fillColor;
+  final Color trackColor;
+  final Color tickColor;
+  final String semanticsSentence;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Eyebrow(label),
-        const SizedBox(height: JournalSpacing.x1),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
+    return Semantics(
+      container: true,
+      label: semanticsSentence,
+      child: ExcludeSemantics(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              value,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+            Eyebrow(label),
+            const SizedBox(height: JournalSpacing.x1),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.end,
+              spacing: JournalSpacing.x2,
+              children: [
+                Text(
+                  _percentOrDash(rate),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text('$count/$total', style: theme.textTheme.labelSmall),
+              ],
             ),
-            if (detail case final detail?) ...[
-              const SizedBox(width: JournalSpacing.x2),
-              Text(detail, style: theme.textTheme.labelSmall),
-            ],
+            const SizedBox(height: JournalSpacing.x1),
+            _BarTrack(
+              fraction: patternBarFraction(rate),
+              tickFraction: tickFraction,
+              fillColor: fillColor,
+              trackColor: trackColor,
+              tickColor: tickColor,
+            ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The bar itself: a rounded [trackColor] rail, filled from the left to
+/// [fraction] in [fillColor], with a thin [tickColor] line marking
+/// [tickFraction] -- the usual rate, so a reader can see at a glance whether
+/// the fill lands above or below what this feeling does anyway, the same
+/// comparison [Pattern.baseRate] exists to state.
+///
+/// A null rate and an undefined lift are drawn the same way an unmeasured
+/// entry count is: as zero, never as a gap. [patternBarFraction] is what
+/// turns "no rate" into 0.0 -- see its own doc comment for why 0% is
+/// something this bar can draw rather than something it has to hide.
+class _BarTrack extends StatelessWidget {
+  const _BarTrack({
+    required this.fraction,
+    required this.tickFraction,
+    required this.fillColor,
+    required this.trackColor,
+    required this.tickColor,
+  });
+
+  final double fraction;
+  final double tickFraction;
+  final Color fillColor;
+  final Color trackColor;
+  final Color tickColor;
+
+  static const double _height = 10;
+  static const double _tickWidth = 2;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final maxLeft = (width - _tickWidth).clamp(0.0, double.infinity);
+        final tickLeft = (width * tickFraction - _tickWidth / 2).clamp(
+          0.0,
+          maxLeft,
+        );
+        return SizedBox(
+          height: _height,
+          width: double.infinity,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: trackColor,
+                  borderRadius: JournalShapes.full,
+                ),
+                child: const SizedBox(width: double.infinity, height: _height),
+              ),
+              FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: fraction,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: fillColor,
+                    borderRadius: JournalShapes.full,
+                  ),
+                  child: const SizedBox(height: _height),
+                ),
+              ),
+              Positioned(
+                left: tickLeft,
+                child: ColoredBox(
+                  color: tickColor,
+                  child: const SizedBox(width: _tickWidth, height: _height),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// The caption under both bars naming the tick's value in words -- the tick
+/// alone only says "here", a sighted reader still has to know "here" means
+/// [baseRate].
+class _UsualRateLegend extends StatelessWidget {
+  const _UsualRateLegend({required this.tickColor, required this.baseRate});
+
+  final Color tickColor;
+  final double baseRate;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ColoredBox(
+          color: tickColor,
+          child: const SizedBox(width: 2, height: 10),
+        ),
+        const SizedBox(width: JournalSpacing.x1),
+        Text(
+          'Usual rate: ${(baseRate * 100).round()}%',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
       ],
     );
   }
+}
+
+/// The fill fraction a bar draws for [rate], clamped to 0..1.
+///
+/// A null rate -- the comparison could not be computed -- draws exactly like
+/// a computed 0%: an empty bar, never a gap or a placeholder glyph. 0% is a
+/// value this bar can draw; "unknown" is not, so the bar draws the nearest
+/// honest thing and the text beside it (`_percentOrDash`) is what still
+/// tells the reader the number itself was never known.
+double patternBarFraction(double? rate) => (rate ?? 0.0).clamp(0.0, 1.0);
+
+/// One sentence per bar (point 5): "With walking: calm in 3 of 6 entries, 50
+/// percent" -- read whole by a screen reader instead of the label, the
+/// percent and the count arriving as three separate stops.
+String _barSentence(
+  String label,
+  String feelingLabel,
+  int count,
+  int total,
+  double? rate,
+) {
+  final buffer = StringBuffer(
+    '$label: $feelingLabel in $count of $total entries',
+  );
+  if (rate case final rate?) {
+    buffer.write(', ${(rate * 100).round()} percent');
+  }
+  return buffer.toString();
 }
 
 /// A dash for a rate that could not be computed, never `0%`.
