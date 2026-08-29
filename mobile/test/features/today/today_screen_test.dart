@@ -158,6 +158,51 @@ void main() {
 
       expect(find.text('Yesterday'), findsOneWidget);
     });
+
+    testWidgets(
+      'the forward step re-enables after stepping back a day, and tapping '
+      'it returns to today',
+      (tester) async {
+        final handle = tester.ensureSemantics();
+        await tester.pumpWidget(
+          buildTestable(
+            replies: [...loadReplies(), ...loadReplies(), ...loadReplies()],
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.bySemanticsLabel('Previous day'));
+        await tester.pumpAndSettle();
+        expect(find.text('Yesterday'), findsOneWidget);
+        expect(
+          tester.getSemantics(find.bySemanticsLabel('Next day')),
+          matchesSemantics(
+            label: 'Next day',
+            isButton: true,
+            hasEnabledState: true,
+            isEnabled: true,
+          ),
+        );
+
+        // The re-enabled button also actually navigates on a tap -- not
+        // just visually distinct, genuinely live again.
+        await tester.tap(find.bySemanticsLabel('Next day'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Today'), findsOneWidget);
+        expect(find.text('Yesterday'), findsNothing);
+        expect(
+          tester.getSemantics(find.bySemanticsLabel('Next day')),
+          matchesSemantics(
+            label: 'Next day',
+            isButton: true,
+            hasEnabledState: true,
+            isEnabled: false,
+          ),
+        );
+        handle.dispose();
+      },
+    );
   });
 
   group('empty state', () {

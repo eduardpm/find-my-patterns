@@ -170,6 +170,24 @@ void main() {
       expect(env.controller.canGoForward, isFalse);
     });
 
+    test('canGoForward becomes true after stepping back a day, and false '
+        'again once back on today', () async {
+      final env = buildEnv([
+        ...loadReplies(),
+        ...loadReplies(),
+        ...loadReplies(),
+      ]);
+      expect(env.controller.canGoForward, isFalse);
+
+      await env.controller.showPreviousDay();
+      expect(env.container.read(todayControllerProvider).date, yesterday);
+      expect(env.controller.canGoForward, isTrue);
+
+      await env.controller.showNextDay();
+      expect(env.container.read(todayControllerProvider).date, today);
+      expect(env.controller.canGoForward, isFalse);
+    });
+
     test('showToday returns from a past day to today', () async {
       final env = buildEnv([...loadReplies(), ...loadReplies()]);
       await env.controller.showPreviousDay();
