@@ -234,8 +234,26 @@ export function nowUtc(): NaiveDateTime {
  * the diary was filed under this rule, and day grouping, the monthly calendar and the daily average
  * all key off it — unifying the two clocks during a port would silently re-file existing entries
  * (research.md §3). It is a latent defect, reproduced on purpose, with its own follow-up.
+ *
+ * `simulatedUtcOffsetMinutes` exists only for #125's regression test (`tests/helpers/
+ * dates.test.ts`), which needs to reproduce the local/UTC disagreement deterministically under
+ * `TZ=UTC` — the timezone CI actually runs in, where the real disagreement cannot occur. Actually
+ * reassigning `process.env.TZ` at runtime was tried first and rejected: this suite's Vitest pool
+ * runs every file in one worker thread (`vitest.config.mts`), and a worker thread's `Date` reads
+ * the OS timezone once at thread start — a later `process.env.TZ` write in the same thread is
+ * silently ignored, which would make the regression test assert nothing while looking like it
+ * pins a timezone. No real caller passes this parameter; the local date the server actually files
+ * entries under always comes from the process's real timezone, exactly as before.
  */
-export function todayLocal(): PlainDate {
+export function todayLocal(simulatedUtcOffsetMinutes?: number): PlainDate {
+  if (simulatedUtcOffsetMinutes !== undefined) {
+    const shifted = new Date(Date.now() + simulatedUtcOffsetMinutes * 60_000);
+    return {
+      year: shifted.getUTCFullYear(),
+      month: shifted.getUTCMonth() + 1,
+      day: shifted.getUTCDate(),
+    };
+  }
   const now = new Date();
   return { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
 }
