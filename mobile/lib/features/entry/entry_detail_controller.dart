@@ -51,7 +51,21 @@ class const EntryDetailState({
 
   /// What the diary already says about this entry's topics, once it has
   /// been saved.
+  ///
+  /// Populated only by [EntryDetailController.save] and cleared by
+  /// [EntryDetailController.dismissEchoes] -- this is the one-time,
+  /// dismissible "you have written about this before" nudge (I4), never
+  /// touched by the initial load. [supportingPatterns] below is the
+  /// screen's other, persistent read of the same endpoint.
   final List<PatternEcho> echoes = const [],
+
+  /// The active patterns this entry's topics match, for the "This entry
+  /// supports" list -- loaded once when the screen opens and never
+  /// dismissed. Deliberately a separate field from [echoes]: sharing one
+  /// would make the dismissible just-saved nudge appear the instant an
+  /// already-stored entry is opened for editing, which is not what I4
+  /// promises.
+  final List<PatternEcho> supportingPatterns = const [],
   final bool hasLoaded = false,
   final bool isSaving = false,
   final String? errorMessage,
@@ -80,6 +94,7 @@ class const EntryDetailState({
     List<FeelingGroup>? feelingGroups,
     EngineConstants? constants,
     List<PatternEcho>? echoes,
+    List<PatternEcho>? supportingPatterns,
     bool? hasLoaded,
     bool? isSaving,
     Object? errorMessage = _unset,
@@ -95,6 +110,7 @@ class const EntryDetailState({
     feelingGroups: feelingGroups ?? this.feelingGroups,
     constants: constants ?? this.constants,
     echoes: echoes ?? this.echoes,
+    supportingPatterns: supportingPatterns ?? this.supportingPatterns,
     hasLoaded: hasLoaded ?? this.hasLoaded,
     isSaving: isSaving ?? this.isSaving,
     errorMessage: identical(errorMessage, _unset)
@@ -164,6 +180,11 @@ class EntryDetailController extends Notifier<EntryDetailState> {
     // that cache rather than costing a second request.
     await _loadFeelingGroups();
     await _loadConstants();
+    // Only once the entry itself is known to exist -- there is nothing to
+    // echo against an id the backend just said it does not have.
+    if (state.entry != null) {
+      await _loadSupportingPatterns();
+    }
   }
 
   Future<void> _loadFeelingGroups() async {
@@ -175,6 +196,24 @@ class EntryDetailController extends Notifier<EntryDetailState> {
       // The chip row is populated by the time an entry has been saved; a
       // failure here is silent because editing the text is what matters,
       // and the same failure would surface there.
+    }
+  }
+
+  /// Loads the persistent "This entry supports" list (UX-1) -- the same
+  /// `GET /entries/{id}/echo` endpoint [_loadEchoes] reads, kept in its own
+  /// field so this always-visible list and the dismissible just-saved
+  /// nudge never share state. A failure here is silent, matching every
+  /// other best-effort load in this controller: the entry itself already
+  /// loaded, which is what the screen is for.
+  Future<void> _loadSupportingPatterns() async {
+    final entry = state.entry;
+    if (entry == null) return;
+    try {
+      final matches = await ref.read(entriesApiProvider).echo(entry.id);
+      if (!ref.mounted) return;
+      state = state.copyWith(supportingPatterns: matches);
+    } on ApiError {
+      // Silent -- see above.
     }
   }
 

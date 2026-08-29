@@ -6,6 +6,7 @@ import 'package:find_my_patterns/features/entry/entry_detail_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/intl.dart';
 
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
@@ -30,6 +31,7 @@ void main() {
     Harness harness, {
     VoidCallback? onClose,
     VoidCallback? onDeleted,
+    VoidCallback? onOpenInsights,
   }) => ProviderScope(
     overrides: [
       requireAuthProvider.overrideWithValue(harness.requireAuth),
@@ -42,14 +44,20 @@ void main() {
         entryDate: entryDate,
         onClose: onClose,
         onDeleted: onDeleted,
+        onOpenInsights: onOpenInsights,
       ),
     ),
   );
 
-  List<FakeReply> bootReplies({FakeReply? entry, FakeReply? insights}) => [
+  List<FakeReply> bootReplies({
+    FakeReply? entry,
+    FakeReply? insights,
+    FakeReply? supportingPatterns,
+  }) => [
     FakeReply(200, body: feelingsCatalogJson()),
     entry ?? FakeReply(200, body: entryJson()),
     insights ?? FakeReply(200, body: insightsJson()),
+    supportingPatterns ?? FakeReply(200, body: {'echoes': <Object?>[]}),
   ];
 
   testWidgets(
@@ -133,6 +141,254 @@ void main() {
       expect(find.text('3 of 5'), findsOneWidget);
     },
   );
+
+  group('header', () {
+    testWidgets('shows the entry\'s date, time and a Freeform mode chip', (
+      tester,
+    ) async {
+      useTallScreen(tester);
+      const createdAt = '2026-08-28T23:11:00Z';
+      final harness = configuredHarness(
+        FakeHttpAdapter(
+          bootReplies(
+            entry: FakeReply(
+              200,
+              body: entryJson(mode: 'freeform', createdAt: createdAt),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      final local = DateTime.parse(createdAt).toLocal();
+      final expectedHeader =
+          '${DateFormat('EEEE, MMMM d').format(local)} · '
+          '${DateFormat.jm().format(local)}';
+      expect(find.text(expectedHeader), findsOneWidget);
+      expect(find.text('FREEFORM'), findsOneWidget);
+    });
+
+    testWidgets('shows a Guided mode chip for a guided entry', (
+      tester,
+    ) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter(
+          bootReplies(
+            entry: FakeReply(
+              200,
+              body: entryJson(
+                mode: 'guided',
+                rawText: '',
+                guidedAnswers: [
+                  {
+                    'question_key': 'general',
+                    'question_text': 'How was your day?',
+                    'answer_text': 'Fine.',
+                  },
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(find.text('GUIDED'), findsOneWidget);
+    });
+  });
+
+  group('feeling source', () {
+    testWidgets('a confirmed feeling carries a tooltip naming its source', (
+      tester,
+    ) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter(
+          bootReplies(
+            entry: FakeReply(
+              200,
+              body: entryJson(feelingKeys: const ['happy']),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Confirmed'), findsOneWidget);
+    });
+
+    testWidgets('a suggested feeling names itself as such', (tester) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter(
+          bootReplies(
+            entry: FakeReply(
+              200,
+              body: entryJson(
+                feelingKeys: const ['happy'],
+                feelingSource: 'suggested',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byTooltip('Suggested by the app, not yet confirmed'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('an overridden feeling names itself as such', (tester) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter(
+          bootReplies(
+            entry: FakeReply(
+              200,
+              body: entryJson(
+                feelingKeys: const ['happy'],
+                feelingSource: 'overridden',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byTooltip('Chosen in place of what was suggested'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+      'an entry with no recorded source shows a plain chip, no tooltip',
+      (tester) async {
+        useTallScreen(tester);
+        final harness = configuredHarness(
+          FakeHttpAdapter(
+            bootReplies(
+              entry: FakeReply(
+                200,
+                body: entryJson(
+                  feelingKeys: const ['happy'],
+                  feelingSource: 'not_a_real_source',
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpWidget(app(harness));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Happy'), findsOneWidget);
+        // No source-marker tooltip -- only the app bar's own (Back/Edit
+        // entry/Delete entry) tooltips remain.
+        expect(find.byTooltip('Confirmed'), findsNothing);
+        expect(
+          find.byTooltip('Suggested by the app, not yet confirmed'),
+          findsNothing,
+        );
+        expect(
+          find.byTooltip('Chosen in place of what was suggested'),
+          findsNothing,
+        );
+      },
+    );
+  });
+
+  group('supporting patterns', () {
+    testWidgets(
+      'lists a matching active pattern under "This entry supports" and '
+      'opens Insights on tap',
+      (tester) async {
+        useTallScreen(tester);
+        var opened = false;
+        final harness = configuredHarness(
+          FakeHttpAdapter(
+            bootReplies(
+              supportingPatterns: FakeReply(
+                200,
+                body: {
+                  'echoes': <Object?>[echoJson(topic: 'coffee')],
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pumpWidget(
+          app(harness, onOpenInsights: () => opened = true),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('THIS ENTRY SUPPORTS'), findsOneWidget);
+        expect(find.text('Coffee'), findsOneWidget);
+        expect(
+          find.text('Coffee shows up with feeling anxious often.'),
+          findsOneWidget,
+        );
+        expect(find.text('4 times'), findsOneWidget);
+
+        await tester.tap(find.text('Coffee'));
+        await tester.pumpAndSettle();
+
+        expect(opened, isTrue);
+      },
+    );
+
+    testWidgets('omits the section when no pattern matches', (tester) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(FakeHttpAdapter(bootReplies()));
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(find.text('THIS ENTRY SUPPORTS'), findsNothing);
+    });
+  });
+
+  testWidgets(
+    'gracefully omits every optional section for an entry with none of them',
+    (tester) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter(
+          bootReplies(
+            entry: FakeReply(
+              200,
+              body: entryJson(feelingKey: null, rawText: 'Just text.'),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Just text.'), findsOneWidget);
+      expect(find.text('FEELINGS'), findsNothing);
+      expect(find.text('THIS ENTRY SUPPORTS'), findsNothing);
+      expect(find.textContaining('null'), findsNothing);
+    },
+  );
+
+  testWidgets('exactly one Edit affordance: the bottom button is gone', (
+    tester,
+  ) async {
+    useTallScreen(tester);
+    final harness = configuredHarness(FakeHttpAdapter(bootReplies()));
+    await tester.pumpWidget(app(harness));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Edit entry'), findsOneWidget);
+    expect(find.text('Edit'), findsNothing);
+  });
 
   testWidgets('the entry is no longer available after a failed load', (
     tester,
