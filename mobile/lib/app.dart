@@ -204,6 +204,11 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
     }
     if (!mounted) return;
     await ref.read(openComposerSignalProvider.notifier).checkLaunchTap();
+    if (!mounted) return;
+    // A cold start from the first-pattern celebration notification (#38)
+    // is read the same way a reminder's cold start is -- see
+    // `OpenInsightsSignal.checkLaunchTap`'s doc comment.
+    await ref.read(openInsightsSignalProvider.notifier).checkLaunchTap();
   }
 
   @override
@@ -218,6 +223,18 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
     ref.listen(openComposerSignalProvider, (previous, next) {
       if (previous == next) return;
       ref.read(routerProvider).push('/compose');
+    });
+
+    // Tapping the first-pattern celebration -- inline card or notification
+    // alike (#38) -- switches to the Insights tab. `go`, not `push`:
+    // Insights is a `StatefulShellRoute` branch (see `routerProvider`), and
+    // navigating to its own route is what selects that branch, the same
+    // way tapping the Insights tab in `AppShell` does; `push` would stack
+    // a second Insights screen on top of the shell instead of switching to
+    // the branch already showing it.
+    ref.listen(openInsightsSignalProvider, (previous, next) {
+      if (previous == next) return;
+      ref.read(routerProvider).go(AppConfig.insightsPath);
     });
 
     return MaterialApp.router(

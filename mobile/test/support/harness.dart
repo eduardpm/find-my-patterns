@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/notifications/fake_device_time_zone.dart';
 import '../core/notifications/fake_notifications_plugin.dart';
 import 'fake_composer_draft_store.dart';
+import 'fake_first_pattern_store.dart';
 import 'fake_http.dart';
 import 'fake_settings_store.dart';
 
@@ -31,9 +32,13 @@ class Harness {
     FakeHttpAdapter? adapter,
     this.requireAuth = false,
     ComposerDraft? initialDraft,
+    bool firstPatternNotified = true,
   }) : store = FakeSettingsStore(settings),
        draftStore = FakeComposerDraftStore(initialDraft),
        remindersPlugin = FakeNotificationsPlugin(),
+       firstPatternStore = FakeFirstPatternNotifiedStore(
+         notified: firstPatternNotified,
+       ),
        adapter =
            adapter ?? FakeHttpAdapter.always(const FakeReply(200, body: {})) {
     client = ApiClient(dio: Dio()..httpClientAdapter = this.adapter)
@@ -51,6 +56,18 @@ class Harness {
   /// Exposed so a test can assert on what got scheduled, or script a
   /// permission result, without ever touching a real platform channel.
   final FakeNotificationsPlugin remindersPlugin;
+
+  /// The fake store behind [baseOverrides]' `firstPatternStoreProvider`
+  /// (L-3/#38).
+  ///
+  /// Starts already notified unless the constructor's
+  /// `firstPatternNotified: false` says otherwise -- see
+  /// `FakeFirstPatternNotifiedStore`'s own doc comment for why that is the
+  /// harness-wide default: most tests using this harness have nothing to
+  /// do with the first-pattern celebration, and an already-notified store
+  /// keeps `EntryComposerController._checkFirstPattern` from making an
+  /// extra `GET /insights` call those tests never scripted a reply for.
+  final FakeFirstPatternNotifiedStore firstPatternStore;
 
   /// The scripted HTTP adapter behind [client].
   final FakeHttpAdapter adapter;
@@ -91,6 +108,7 @@ class Harness {
     settingsStoreProvider.overrideWithValue(store),
     apiClientProvider.overrideWithValue(client),
     composerDraftStoreProvider.overrideWithValue(draftStore),
+    firstPatternStoreProvider.overrideWithValue(firstPatternStore),
     reminderServiceProvider.overrideWithValue(
       ReminderService(
         plugin: remindersPlugin,

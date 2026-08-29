@@ -5,16 +5,21 @@ import 'package:find_my_patterns/core/audio/diary_audio_recorder.dart';
 import 'package:find_my_patterns/core/config/config_providers.dart';
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
+import 'package:find_my_patterns/core/notifications/reminder_providers.dart';
+import 'package:find_my_patterns/core/notifications/reminder_service.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
 import 'package:find_my_patterns/features/compose/composer_draft.dart';
 import 'package:find_my_patterns/features/compose/entry_composer_controller.dart';
 import 'package:find_my_patterns/features/compose/entry_composer_screen.dart';
+import 'package:find_my_patterns/features/compose/first_pattern_card.dart';
+import 'package:find_my_patterns/features/compose/first_pattern_copy.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../core/audio/fake_audio_recorder_plugin.dart';
+import '../../core/notifications/fake_device_time_zone.dart';
 import '../../support/fake_composer_draft_store.dart';
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
@@ -98,18 +103,39 @@ void main() {
     VoidCallback? onCancel,
     ComposerDraft? initialDraft,
     CalendarDate? targetDate,
+    // A caller already holding a `Harness` (built with its own
+    // `firstPatternNotified`, to assert on `firstPatternStore` or
+    // `remindersPlugin` afterwards -- see the "first-pattern celebration"
+    // group) passes it in directly instead of the four settings below,
+    // which only exist to build one on a plain call site's behalf.
+    Harness? harness,
   }) {
-    final harness = Harness(
-      settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
-      adapter: FakeHttpAdapter(replies),
-      initialDraft: initialDraft,
-    );
+    final resolvedHarness =
+        harness ??
+        Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter(replies),
+          initialDraft: initialDraft,
+        );
     return ProviderScope(
       overrides: [
-        requireAuthProvider.overrideWithValue(harness.requireAuth),
-        settingsStoreProvider.overrideWithValue(harness.store),
-        apiClientProvider.overrideWithValue(harness.client),
-        composerDraftStoreProvider.overrideWithValue(harness.draftStore),
+        requireAuthProvider.overrideWithValue(resolvedHarness.requireAuth),
+        settingsStoreProvider.overrideWithValue(resolvedHarness.store),
+        apiClientProvider.overrideWithValue(resolvedHarness.client),
+        composerDraftStoreProvider.overrideWithValue(
+          resolvedHarness.draftStore,
+        ),
+        firstPatternStoreProvider.overrideWithValue(
+          resolvedHarness.firstPatternStore,
+        ),
+        reminderServiceProvider.overrideWithValue(
+          ReminderService(
+            plugin: resolvedHarness.remindersPlugin,
+            deviceTimeZone: FakeDeviceTimeZone(),
+          ),
+        ),
       ],
       child: MaterialApp(
         home: EntryComposerScreen(
@@ -364,6 +390,119 @@ void main() {
       await tester.tap(find.widgetWithText(ElevatedButton, 'Done'));
       expect(done, isTrue);
     });
+  });
+
+  group('first-pattern celebration (L-3/#38)', () {
+    /// Types and saves a freeform entry, then taps Confirm, leaving the
+    /// screen on whatever `EchoStage`/`ConfirmFeelingStage` state that
+    /// lands on -- shared by every test in this group.
+    Future<void> saveAndConfirm(WidgetTester tester) async {
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Write freely instead'));
+      await tester.pump();
+      await tester.enterText(find.byType(TextFormField), 'A long day.');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+      await tester.pumpAndSettle();
+      final confirmButton = find.widgetWithText(ElevatedButton, 'Confirm');
+      await tester.ensureVisible(confirmButton);
+      await tester.tap(confirmButton);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+      'shows the inline card when this save surfaces the diary\'s first '
+      'pattern while the app is in the foreground',
+      (tester) async {
+        final harness = Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter([
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: entryJson(version: 2)),
+            FakeReply(200, body: insightsJson(patterns: [patternJson()])),
+            FakeReply(200, body: echoJson(count: 0)),
+          ]),
+          firstPatternNotified: false,
+        );
+        await tester.pumpWidget(
+          buildTestable(replies: const [], harness: harness),
+        );
+
+        await saveAndConfirm(tester);
+
+        expect(find.text('Entry saved'), findsOneWidget);
+        expect(find.byType(FirstPatternCard), findsOneWidget);
+        expect(find.text(firstPatternCardText), findsOneWidget);
+        expect(harness.remindersPlugin.showCalls, isEmpty);
+      },
+    );
+
+    testWidgets(
+      'tapping the card signals Insights and closes the composer',
+      (tester) async {
+        final harness = Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter([
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: entryJson(version: 2)),
+            FakeReply(200, body: insightsJson(patterns: [patternJson()])),
+            FakeReply(200, body: echoJson(count: 0)),
+          ]),
+          firstPatternNotified: false,
+        );
+        var done = false;
+        await tester.pumpWidget(
+          buildTestable(
+            replies: const [],
+            harness: harness,
+            onDone: () => done = true,
+          ),
+        );
+
+        await saveAndConfirm(tester);
+        final container = containerOf(tester);
+        expect(container.read(openInsightsSignalProvider), 0);
+
+        await tester.tap(find.byType(FirstPatternCard));
+        await tester.pump();
+
+        expect(done, isTrue);
+        expect(container.read(openInsightsSignalProvider), 1);
+      },
+    );
+
+    testWidgets(
+      'does not render once the flag is already set, even with a pattern '
+      'in the payload',
+      (tester) async {
+        final harness = Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter([
+            ...bootReplies(),
+            FakeReply(200, body: entryJson()),
+            FakeReply(200, body: entryJson(version: 2)),
+            FakeReply(200, body: echoJson(count: 0)),
+          ]),
+        );
+        await tester.pumpWidget(
+          buildTestable(replies: const [], harness: harness),
+        );
+
+        await saveAndConfirm(tester);
+
+        // Nothing to echo and no celebration -- confirm closes the
+        // composer straight away, the same as before this feature existed.
+        expect(find.byType(FirstPatternCard), findsNothing);
+      },
+    );
   });
 
   group('suggestion polling in the confirm-feeling UI', () {

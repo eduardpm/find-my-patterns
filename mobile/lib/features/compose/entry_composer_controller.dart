@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/diary/calendar_date.dart';
@@ -10,7 +11,10 @@ import '../../core/diary/feeling.dart';
 import '../../core/diary/guiding_question.dart';
 import '../../core/diary/pattern.dart';
 import '../../core/network/api_error.dart';
+import '../../core/notifications/reminder_providers.dart';
 import 'composer_draft.dart';
+import 'first_pattern_copy.dart';
+import 'first_pattern_notified_store.dart';
 
 /// The store the composer reads and writes its in-progress draft through.
 ///
@@ -18,6 +22,15 @@ import 'composer_draft.dart';
 /// `settingsStoreProvider` works.
 final composerDraftStoreProvider = Provider<ComposerDraftStore>(
   (ref) => const SharedPreferencesComposerDraftStore(),
+);
+
+/// The store `_checkFirstPattern` reads and writes the first-pattern
+/// celebration's exactly-once flag through (L-3/#38).
+///
+/// Overridable so tests can substitute an in-memory fake, the same way
+/// [composerDraftStoreProvider] does.
+final firstPatternStoreProvider = Provider<FirstPatternNotifiedStore>(
+  (ref) => const SharedPreferencesFirstPatternNotifiedStore(),
 );
 
 /// The clock [EntryComposerController] treats as "now" when deciding
@@ -48,8 +61,18 @@ final class const ConfirmFeelingStage(final Entry entry) extends ComposerStage;
 /// is reachable only *after* the entry is fully saved and its feelings
 /// confirmed — an app that echoed a pattern back while someone was still
 /// describing it would be shaping the evidence it then counts.
-final class const EchoStage(final List<PatternEcho> echoes)
-    extends ComposerStage;
+///
+/// [celebratedPattern] rides along on the same stage rather than getting
+/// one of its own (L-3/#38): the first-pattern celebration is shown on
+/// exactly this "Saved" screen, alongside whatever [echoes] this entry's
+/// own topics produced, not before or after it -- so this stage is reached
+/// whenever there is [echoes] content, a celebration, or both, and never
+/// reached (see `EntryComposerController._loadEcho`) when there is
+/// neither.
+final class const EchoStage(
+  final List<PatternEcho> echoes, {
+  final Pattern? celebratedPattern,
+}) extends ComposerStage;
 
 /// Everything the entry composer needs to render, gathered across four
 /// backend calls and however far the user has got through writing.
@@ -259,6 +282,31 @@ class EntryComposerController extends Notifier<ComposerState> {
   /// debounce with a plain `tester.pump` instead of waiting out the real
   /// interval.
   Duration draftSaveDebounce = const Duration(milliseconds: 500);
+
+  /// Whether the app is currently in the foreground -- read by
+  /// [_checkFirstPattern] at the moment it decides between the inline
+  /// celebration card and a notification (L-3/#38), never captured
+  /// earlier: the confirm-and-fetch-insights round trip this follows is
+  /// long enough that the user can background the app in between.
+  ///
+  /// Mutable purely as a test seam, the same way [pollDelay] is: a plain
+  /// `test()` over a bare `ProviderContainer` (as opposed to `testWidgets`)
+  /// never initialises a `WidgetsBinding`, so reading
+  /// `WidgetsBinding.instance.lifecycleState` directly in such a test would
+  /// throw before the fake HTTP layer backing [confirmFeelings] ever got a
+  /// chance to run.
+  ///
+  /// The production default treats an unreported lifecycle state (`null`
+  /// -- the state before the platform's very first lifecycle callback) as
+  /// foregrounded rather than backgrounded: the only way to reach this
+  /// callback at all is a user tapping "Confirm" on a screen that must
+  /// already be on-screen, so the common case is foreground, and only a
+  /// definite `paused`/`inactive`/`hidden`/`detached` report overrides
+  /// that assumption.
+  bool Function() isAppForegrounded = () {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state == null || state == AppLifecycleState.resumed;
+  };
 
   @override
   ComposerState build() {
@@ -593,11 +641,13 @@ class EntryComposerController extends Notifier<ComposerState> {
   /// at [entryId]/[version].
   ///
   /// Returns `true` when the flow is finished and the caller should return
-  /// to Today: either there was nothing to echo back, or the echo fetch
-  /// itself failed (a failed echo is not worth interrupting a finished
-  /// entry for). Returns `false` when [ComposerState.stage] moved to
-  /// [EchoStage] instead, or when the confirmation itself failed and
-  /// [ComposerState.errorMessage] now explains why.
+  /// to Today: there was nothing to echo back and nothing to celebrate (see
+  /// [EchoStage.celebratedPattern], L-3/#38), or the echo fetch itself
+  /// failed with no celebration either (a failed echo is not worth
+  /// interrupting a finished entry for). Returns `false` when
+  /// [ComposerState.stage] moved to [EchoStage] instead, or when the
+  /// confirmation itself failed and [ComposerState.errorMessage] now
+  /// explains why.
   Future<bool> confirmFeelings({
     required String entryId,
     required int version,
@@ -621,7 +671,9 @@ class EntryComposerController extends Notifier<ComposerState> {
           // The entry is stored for good at this point, whether or not an
           // echo panel follows -- see diaryWriteSignalProvider.
           ref.read(diaryWriteSignalProvider.notifier).bump();
-          return await _loadEcho(entry.id);
+          final celebrate = await _checkFirstPattern();
+          if (!ref.mounted) return false;
+          return await _loadEcho(entry.id, celebrate: celebrate);
         case EntryRemoved():
           state = state.copyWith(
             isSaving: false,
@@ -639,18 +691,86 @@ class EntryComposerController extends Notifier<ComposerState> {
     }
   }
 
-  Future<bool> _loadEcho(String entryId) async {
+  /// Loads this entry's own pattern echoes and moves to [EchoStage] if
+  /// there is [celebrate], [echoes][EchoStage.echoes], or both to show.
+  ///
+  /// [celebrate] -- the pattern [_checkFirstPattern] says is the diary's
+  /// first, or `null` when there is none -- can keep this on [EchoStage]
+  /// even when this entry produced no echo of its own and even when the
+  /// echo fetch itself fails: the celebration is not this entry's echo and
+  /// must not be silently dropped just because the unrelated echo call had
+  /// nothing, or failed.
+  Future<bool> _loadEcho(String entryId, {required Pattern? celebrate}) async {
     try {
       final echoes = await ref.read(entriesApiProvider).echo(entryId);
       if (!ref.mounted) return false;
-      if (echoes.isEmpty) return true;
-      state = state.copyWith(stage: EchoStage(echoes));
+      if (echoes.isEmpty && celebrate == null) return true;
+      state = state.copyWith(
+        stage: EchoStage(echoes, celebratedPattern: celebrate),
+      );
       return false;
     } on ApiError {
       // Asked for only now, with the entry stored and the feeling settled.
-      // A failed echo is not worth interrupting a finished entry for.
-      return true;
+      // A failed echo is not worth interrupting a finished entry for --
+      // unless there is still a celebration to show, which owes nothing to
+      // whether this unrelated call succeeded.
+      if (celebrate == null) return true;
+      if (!ref.mounted) return false;
+      state = state.copyWith(
+        stage: EchoStage(const [], celebratedPattern: celebrate),
+      );
+      return false;
     }
+  }
+
+  /// Checks whether this confirm is the diary's first pattern ever
+  /// surfacing (L-3/#38), and fires the celebration -- inline or as a
+  /// notification -- exactly once if so.
+  ///
+  /// Runs on every successful confirm, but [firstPatternStoreProvider]'s
+  /// flag short-circuits every call after the real one: once notified,
+  /// this never fetches insights again for the rest of the diary's life.
+  ///
+  /// Deliberately a fresh `GET /insights` call, not
+  /// [ComposerState.constants] (a snapshot from *before* this entry was
+  /// saved, taken once in [_loadConstants]) and not this same confirm's own
+  /// echoes (which only ever cover topics [entriesApiProvider]'s
+  /// `GET /entries/{id}/echo` finds inside *this* entry's own text). A
+  /// context pattern -- e.g. `weekday:sunday` (#21) -- can cross its
+  /// threshold from this save without the entry mentioning any topic at
+  /// all, so only a fresh, whole-diary read catches every way this save
+  /// could be the first one to surface a pattern.
+  ///
+  /// Returns the pattern to celebrate inline when the app is in the
+  /// foreground (per [isAppForegrounded]); otherwise fires the equivalent
+  /// local notification through [reminderServiceProvider] and returns
+  /// `null`, since there is then nothing left for [_loadEcho] to show on
+  /// screen. Also returns `null`, leaving the flag untouched, when there is
+  /// nothing to celebrate yet or the insights fetch itself fails -- a
+  /// transient network error here must not cost the diary its one
+  /// celebration; the next confirm gets another chance.
+  Future<Pattern?> _checkFirstPattern() async {
+    final store = ref.read(firstPatternStoreProvider);
+    if (await store.hasNotified()) return null;
+    if (!ref.mounted) return null;
+    final InsightsResult insights;
+    try {
+      insights = await ref.read(insightsApiProvider).insights();
+    } on ApiError {
+      return null;
+    }
+    if (!ref.mounted || insights.patterns.isEmpty) return null;
+    await store.markNotified();
+    if (!ref.mounted) return null;
+    final pattern = insights.patterns.first;
+    if (isAppForegrounded()) return pattern;
+    await ref
+        .read(reminderServiceProvider)
+        .showFirstPatternNotification(
+          title: firstPatternNotificationTitle,
+          body: firstPatternNotificationBody(pattern),
+        );
+    return null;
   }
 
   /// Clears [ComposerState.errorMessage] once it has been shown.

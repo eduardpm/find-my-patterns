@@ -63,12 +63,16 @@ Map<String, Object?> guidingQuestionsJson() => {
   ],
 };
 
-/// A `GET /insights` body carrying just the engine constants.
+/// A `GET /insights` body carrying just the engine constants, or the
+/// [patterns] a test wants alongside them -- e.g. for the first-pattern
+/// celebration (L-3/#38), which reads this same endpoint's `patterns` list
+/// fresh on every confirm.
 Map<String, Object?> insightsJson({
   int minIntensity = 1,
   int maxIntensity = 5,
+  List<Map<String, Object?>> patterns = const [],
 }) => {
-  'patterns': <Object?>[],
+  'patterns': patterns,
   'withdrawals': <Object?>[],
   'new_withdrawal_count': 0,
   'insufficient_data': false,
@@ -140,6 +144,24 @@ Map<String, Object?> suggestedFeelingJson({
   String key = 'happy',
   double confidence = 0.9,
 }) => {'key': key, 'confidence': confidence};
+
+/// One pattern DTO, nested under a `GET /insights` body's `patterns` list --
+/// only the fields `patternFromJson` requires plus [occurrenceCount],
+/// which the first-pattern celebration's notification/card copy is derived
+/// from (L-3/#38).
+Map<String, Object?> patternJson({
+  String id = 'pattern-1',
+  String topic = 'work',
+  int occurrenceCount = 3,
+}) => {
+  'id': id,
+  'kind': 'forward',
+  'topic': topic,
+  'occurrence_count': occurrenceCount,
+  'narrative_text': 'You often feel happy about $topic.',
+  'suggestion_text': 'Keep it up.',
+  'last_updated_at': '2026-07-28T13:05:00Z',
+};
 
 /// A `GET /entries/{id}/echo` body carrying [count] narrative sentences.
 Map<String, Object?> echoJson({int count = 1}) => {

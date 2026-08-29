@@ -42,6 +42,22 @@ abstract interface class NotificationsPlugin {
   /// Cancels every notification scheduled through this plugin.
   Future<void> cancelAll();
 
+  /// Shows a notification immediately, rather than scheduling it for later.
+  ///
+  /// `ReminderService` uses this for the first-pattern celebration (#38):
+  /// unlike a reminder, there is no wall-clock time to wait for -- the
+  /// moment the client detects the diary's first pattern crossing
+  /// threshold is the moment to show it, which is exactly what
+  /// `zonedSchedule` cannot do (its earliest `scheduledDate` is still a
+  /// point in the future, never "now").
+  Future<void> show({
+    required int id,
+    required String title,
+    required String body,
+    required NotificationDetails notificationDetails,
+    required String payload,
+  });
+
   /// Whether a notification from this plugin launched the app, and if so,
   /// which one — a cold start, as opposed to a tap [initialize]'s `onTap`
   /// catches while already running.
@@ -120,6 +136,21 @@ class const DefaultNotificationsPlugin() implements NotificationsPlugin {
 
   @override
   Future<void> cancelAll() => _plugin.cancelAll();
+
+  @override
+  Future<void> show({
+    required int id,
+    required String title,
+    required String body,
+    required NotificationDetails notificationDetails,
+    required String payload,
+  }) => _plugin.show(
+    id: id,
+    title: title,
+    body: body,
+    notificationDetails: notificationDetails,
+    payload: payload,
+  );
 
   @override
   Future<NotificationAppLaunchDetails?> getNotificationAppLaunchDetails() =>

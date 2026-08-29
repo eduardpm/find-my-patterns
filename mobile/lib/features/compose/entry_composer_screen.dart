@@ -9,6 +9,7 @@ import '../../core/diary/calendar_date.dart';
 import '../../core/diary/entry.dart';
 import '../../core/diary/feeling.dart';
 import '../../core/diary/pattern.dart';
+import '../../core/notifications/reminder_providers.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/theme/journal_typography.dart';
 import '../../core/widgets/feeling_chips.dart';
@@ -17,6 +18,7 @@ import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_page_wash.dart';
 import '../../core/widgets/pattern_echo_panel.dart';
 import 'entry_composer_controller.dart';
+import 'first_pattern_card.dart';
 import 'guided_question_flow.dart';
 import 'voice_answer_recorder.dart';
 
@@ -211,10 +213,22 @@ class EntryComposerScreen extends ConsumerWidget {
                           if (finished) done();
                         },
                       ),
-                      EchoStage(:final echoes) => _EchoStep(
-                        echoes: echoes,
-                        onDone: done,
-                      ),
+                      EchoStage(:final echoes, :final celebratedPattern) =>
+                        _EchoStep(
+                          echoes: echoes,
+                          celebratedPattern: celebratedPattern,
+                          onDone: done,
+                          onCelebrationTap: () {
+                            // Same destination a tap on the first-pattern
+                            // notification reaches (#38) -- one signal, one
+                            // `app.dart` listener, whether the tap came
+                            // from this in-app card or from the OS.
+                            ref
+                                .read(openInsightsSignalProvider.notifier)
+                                .bump();
+                            done();
+                          },
+                        ),
                     },
                   ),
                 ],
@@ -713,10 +727,26 @@ String _joinToPhrase(List<String> words) => switch (words.length) {
 /// What the diary already had to say, shown once the entry and its feeling
 /// are both settled.
 class _EchoStep extends StatelessWidget {
-  const _EchoStep({required this.echoes, required this.onDone});
+  const _EchoStep({
+    required this.echoes,
+    required this.onDone,
+    this.celebratedPattern,
+    this.onCelebrationTap,
+  });
 
   final List<PatternEcho> echoes;
   final VoidCallback onDone;
+
+  /// The diary's first pattern, when this save is what surfaced it
+  /// (L-3/#38) and the app was in the foreground to show it inline instead
+  /// of as a notification. Null on every other save.
+  final Pattern? celebratedPattern;
+
+  /// Called when the first-pattern card is tapped. Only read when
+  /// [celebratedPattern] is set; falls back to [onDone] so this step never
+  /// renders a dead tap target if a caller ever supplies one without the
+  /// other.
+  final VoidCallback? onCelebrationTap;
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
@@ -731,6 +761,13 @@ class _EchoStep extends StatelessWidget {
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: JournalSpacing.x5),
+        if (celebratedPattern case final pattern?) ...[
+          FirstPatternCard(
+            pattern: pattern,
+            onTap: onCelebrationTap ?? onDone,
+          ),
+          const SizedBox(height: JournalSpacing.x5),
+        ],
         PatternEchoPanel(echoes: echoes, onDismiss: onDone),
         const SizedBox(height: JournalSpacing.x5),
         PillButton(onPressed: onDone, child: const Text('Done')),
