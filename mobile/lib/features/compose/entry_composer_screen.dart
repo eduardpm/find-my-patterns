@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/audio/diary_audio_recorder.dart';
 import '../../core/diary/entry.dart';
@@ -15,6 +18,9 @@ import '../../core/widgets/pattern_echo_panel.dart';
 import 'entry_composer_controller.dart';
 import 'guided_question_flow.dart';
 import 'voice_answer_recorder.dart';
+
+/// The time-of-day shown in the restored-draft notice, e.g. "11:32 PM".
+final DateFormat _draftTimeFormat = DateFormat.jm();
 
 /// The entry composer: a four-stage flow for writing a diary entry, from
 /// the first prompt to the confirmed feeling and any pattern the diary
@@ -57,7 +63,9 @@ class EntryComposerScreen extends ConsumerWidget {
     final state = ref.watch(entryComposerControllerProvider);
     final controller = ref.read(entryComposerControllerProvider.notifier);
     final done = onDone ?? () => Navigator.of(context).maybePop();
-    final cancel = onCancel ?? () => Navigator.of(context).maybePop();
+    // Not `maybePop` -- see [requestCancel]'s doc comment for why the
+    // default has to be the unconditional `pop`.
+    final cancel = onCancel ?? () => Navigator.of(context).pop();
 
     ref.listen(
       entryComposerControllerProvider.select((s) => s.errorMessage),
@@ -70,71 +78,249 @@ class EntryComposerScreen extends ConsumerWidget {
       },
     );
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('New entry'),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          tooltip: 'Cancel',
-          onPressed: cancel,
+    // X and system back both funnel through here rather than calling
+    // [cancel] directly: whichever one is pressed, the answer to "does
+    // this need the guard sheet" has to come from the same read of
+    // `ComposerState.hasUnsavedComposition`, taken fresh at the moment of
+    // the tap -- not captured once at the top of `build` -- so a
+    // keystroke in between two taps is never judged against a stale
+    // snapshot.
+    //
+    // [cancel]'s default calls `Navigator.pop` (unconditional), never
+    // `maybePop`. `maybePop` consults this same route's `canPop` -- which
+    // [PopScope] below sets to false for exactly the window this function
+    // is asking "should I intercept?" -- and that value only updates on
+    // this widget's *next* build. Discarding sets `ComposerState` back to
+    // empty and calls `cancel()` in the same breath, well before that
+    // rebuild lands, so a `maybePop`-based default would still see the
+    // stale `false`, get intercepted by the very `PopScope` it is trying
+    // to get past, and call straight back into this function -- forever.
+    // `pop` bypasses `canPop` entirely, the same way Flutter's own PopScope
+    // examples finish a confirmed pop, so this always actually leaves.
+    Future<void> requestCancel() async {
+      if (!ref.read(entryComposerControllerProvider).hasUnsavedComposition) {
+        cancel();
+        return;
+      }
+      final discard = await showModalBottomSheet<bool>(
+        context: context,
+        builder: (sheetContext) => const _DiscardEntrySheet(),
+      );
+      // A sheet dismissed by tapping outside it or by the system back
+      // gesture comes back null -- the same as "Keep writing": nothing
+      // more to do, the composer is exactly as it was.
+      if (discard ?? false) {
+        await controller.discardDraft();
+        if (!context.mounted) return;
+        cancel();
+      }
+    }
+
+    return PopScope<void>(
+      // Dynamic, not a blanket `false`: once there is nothing left to lose
+      // (an empty composer, or the entry already safely stored on
+      // [ConfirmFeelingStage]/[EchoStage] -- see
+      // `ComposerState.hasUnsavedComposition`), a system back gesture, and
+      // `done`'s own `maybePop`, must succeed on the first try rather than
+      // being intercepted just to immediately re-approve themselves.
+      canPop: !state.hasUnsavedComposition,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        unawaited(requestCancel());
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('New entry'),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: 'Cancel',
+            onPressed: () => unawaited(requestCancel()),
+          ),
+        ),
+        body: Stack(
+          children: [
+            const Positioned.fill(child: JournalPageWash()),
+            Padding(
+              padding: const EdgeInsets.all(JournalSpacing.x5),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (state.restoredDraftAt case final savedAt?) ...[
+                    _RestoredDraftNotice(
+                      savedAt: savedAt,
+                      onDismiss: controller.dismissDraftNotice,
+                      onStartFresh: () => unawaited(controller.discardDraft()),
+                    ),
+                    const SizedBox(height: JournalSpacing.x4),
+                  ],
+                  Expanded(
+                    child: switch (state.stage) {
+                      GuidedStage() => GuidedQuestionFlow(
+                        library: state.guidingQuestions,
+                        answers: state.guidedAnswers,
+                        stepIndex: state.guidedStepIndex,
+                        onAnswerChange: controller.updateGuidedAnswer,
+                        onStepChange: controller.updateGuidedStep,
+                        onBypassToFreeform: controller.switchToFreeform,
+                        onComplete: controller.saveGuided,
+                        recorder: recorder,
+                        transcriptionDelay: transcriptionDelay,
+                      ),
+                      FreeformStage() => _FreeformStep(
+                        text: state.freeformText,
+                        onTextChange: controller.updateFreeformText,
+                        onBackToGuided: controller.switchToGuided,
+                        onSave: controller.saveFreeform,
+                        isSaving: state.isSaving,
+                        recorder: recorder,
+                        transcriptionDelay: transcriptionDelay,
+                      ),
+                      ConfirmFeelingStage(:final entry) => _ConfirmFeelingStep(
+                        entry: entry,
+                        groups: state.feelingGroups,
+                        constants: state.constants,
+                        isSaving: state.isSaving,
+                        isPollingSuggestions: state.isPollingSuggestions,
+                        onConfirm: (feelings, intensities) async {
+                          final finished = await controller.confirmFeelings(
+                            entryId: entry.id,
+                            version: entry.version,
+                            feelings: feelings,
+                            intensities: intensities,
+                          );
+                          if (finished) done();
+                        },
+                      ),
+                      EchoStage(:final echoes) => _EchoStep(
+                        echoes: echoes,
+                        onDone: done,
+                      ),
+                    },
+                  ),
+                ],
+              ),
+            ),
+            if (state.isSaving && state.stage is! ConfirmFeelingStage)
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: LinearProgressIndicator(),
+              ),
+          ],
         ),
       ),
-      body: Stack(
-        children: [
-          const Positioned.fill(child: JournalPageWash()),
-          Padding(
-            padding: const EdgeInsets.all(JournalSpacing.x5),
-            child: switch (state.stage) {
-              GuidedStage() => GuidedQuestionFlow(
-                library: state.guidingQuestions,
-                answers: state.guidedAnswers,
-                stepIndex: state.guidedStepIndex,
-                onAnswerChange: controller.updateGuidedAnswer,
-                onStepChange: controller.updateGuidedStep,
-                onBypassToFreeform: controller.switchToFreeform,
-                onComplete: controller.saveGuided,
-                recorder: recorder,
-                transcriptionDelay: transcriptionDelay,
+    );
+  }
+}
+
+/// "Discard this entry?" -- shown when X or system back is pressed while
+/// [ComposerState.hasUnsavedComposition] is true.
+///
+/// `Keep writing` is the default: it is the filled, more prominent button,
+/// and it is also what tapping outside the sheet or pressing back again
+/// does, since both come back from `showModalBottomSheet` as null. `Discard`
+/// is styled destructive -- the error colour, not just a plain text
+/// button -- so the two are never confusable at a glance.
+class _DiscardEntrySheet extends StatelessWidget {
+  const _DiscardEntrySheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(JournalSpacing.x5),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Discard this entry?', style: theme.textTheme.titleLarge),
+            const SizedBox(height: JournalSpacing.x2),
+            Text(
+              "What you've written so far will be lost.",
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
-              FreeformStage() => _FreeformStep(
-                text: state.freeformText,
-                onTextChange: controller.updateFreeformText,
-                onBackToGuided: controller.switchToGuided,
-                onSave: controller.saveFreeform,
-                isSaving: state.isSaving,
-                recorder: recorder,
-                transcriptionDelay: transcriptionDelay,
-              ),
-              ConfirmFeelingStage(:final entry) => _ConfirmFeelingStep(
-                entry: entry,
-                groups: state.feelingGroups,
-                constants: state.constants,
-                isSaving: state.isSaving,
-                isPollingSuggestions: state.isPollingSuggestions,
-                onConfirm: (feelings, intensities) async {
-                  final finished = await controller.confirmFeelings(
-                    entryId: entry.id,
-                    version: entry.version,
-                    feelings: feelings,
-                    intensities: intensities,
-                  );
-                  if (finished) done();
-                },
-              ),
-              EchoStage(:final echoes) => _EchoStep(
-                echoes: echoes,
-                onDone: done,
-              ),
-            },
-          ),
-          if (state.isSaving && state.stage is! ConfirmFeelingStage)
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: LinearProgressIndicator(),
             ),
-        ],
+            const SizedBox(height: JournalSpacing.x5),
+            PillButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Keep writing'),
+            ),
+            const SizedBox(height: JournalSpacing.x3),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.error,
+              ),
+              child: const Text('Discard'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "Continuing your draft from 11:32 PM — Start fresh" -- shown once, at
+/// the top of the composer, when [EntryComposerController] restored a
+/// draft on this open. Dismissible on its own (the `x`) without touching
+/// the restored answers; `Start fresh` discards them instead.
+class _RestoredDraftNotice extends StatelessWidget {
+  const _RestoredDraftNotice({
+    required this.savedAt,
+    required this.onDismiss,
+    required this.onStartFresh,
+  });
+
+  final DateTime savedAt;
+  final VoidCallback onDismiss;
+  final VoidCallback onStartFresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      borderRadius: JournalShapes.medium,
+      child: Padding(
+        padding: const EdgeInsets.only(
+          left: JournalSpacing.x4,
+          right: JournalSpacing.x1,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              // `Wrap` rather than one `Text` -- the "Start fresh" action
+              // is a real button (a focusable, screen-reader-visible
+              // control with a sensible touch target), not text with a
+              // tap recognizer glued on, so it has to sit beside the
+              // sentence rather than inside it.
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    'Continuing your draft from '
+                    '${_draftTimeFormat.format(savedAt.toLocal())}',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: onStartFresh,
+                    child: const Text('Start fresh'),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              tooltip: 'Dismiss',
+              onPressed: onDismiss,
+            ),
+          ],
+        ),
       ),
     );
   }

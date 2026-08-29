@@ -6,6 +6,7 @@ import 'package:find_my_patterns/core/config/config_providers.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
+import 'package:find_my_patterns/features/compose/composer_draft.dart';
 import 'package:find_my_patterns/features/compose/entry_composer_controller.dart';
 import 'package:find_my_patterns/features/compose/entry_composer_screen.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../core/audio/fake_audio_recorder_plugin.dart';
+import '../../support/fake_composer_draft_store.dart';
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
 import 'json_fixtures.dart';
@@ -93,16 +95,19 @@ void main() {
     required List<FakeReply> replies,
     VoidCallback? onDone,
     VoidCallback? onCancel,
+    ComposerDraft? initialDraft,
   }) {
     final harness = Harness(
       settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
       adapter: FakeHttpAdapter(replies),
+      initialDraft: initialDraft,
     );
     return ProviderScope(
       overrides: [
         requireAuthProvider.overrideWithValue(harness.requireAuth),
         settingsStoreProvider.overrideWithValue(harness.store),
         apiClientProvider.overrideWithValue(harness.client),
+        composerDraftStoreProvider.overrideWithValue(harness.draftStore),
       ],
       child: MaterialApp(
         home: EntryComposerScreen(
@@ -524,5 +529,387 @@ void main() {
 
       expect(find.text('server exploded'), findsOneWidget);
     });
+  });
+
+  group('dismiss guard', () {
+    testWidgets('an empty composer dismisses with no guard on X', (
+      tester,
+    ) async {
+      var cancelled = false;
+      await tester.pumpWidget(
+        buildTestable(
+          replies: bootReplies(),
+          onCancel: () => cancelled = true,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+
+      expect(cancelled, isTrue);
+      expect(find.text('Discard this entry?'), findsNothing);
+    });
+
+    testWidgets(
+      'typed text shows the guard sheet instead of dismissing on X',
+      (tester) async {
+        var cancelled = false;
+        await tester.pumpWidget(
+          buildTestable(
+            replies: bootReplies(),
+            onCancel: () => cancelled = true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextFormField), 'Feeling okay.');
+        await tester.pump();
+
+        await tester.tap(find.byIcon(Icons.close));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Discard this entry?'), findsOneWidget);
+        expect(cancelled, isFalse);
+      },
+    );
+
+    testWidgets('Keep writing returns to the exact same state', (
+      tester,
+    ) async {
+      var cancelled = false;
+      await tester.pumpWidget(
+        buildTestable(
+          replies: bootReplies(),
+          onCancel: () => cancelled = true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField), 'Feeling okay.');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Keep writing'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Discard this entry?'), findsNothing);
+      expect(cancelled, isFalse);
+      expect(find.text('Feeling okay.'), findsOneWidget);
+    });
+
+    testWidgets('Discard closes the composer and clears the draft', (
+      tester,
+    ) async {
+      var cancelled = false;
+      await tester.pumpWidget(
+        buildTestable(
+          replies: bootReplies(),
+          onCancel: () => cancelled = true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField), 'Feeling okay.');
+      await tester.pump();
+      // Lets the (unstubbed, default-duration) debounced autosave land, so
+      // there is something on disk for Discard to actually clear.
+      await tester.pump(const Duration(milliseconds: 600));
+      final draftStore = containerOf(
+        tester,
+      ).read(composerDraftStoreProvider) as FakeComposerDraftStore;
+      expect(await draftStore.load(), isNotNull);
+
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Discard'));
+      await tester.pumpAndSettle();
+
+      expect(cancelled, isTrue);
+      expect(await draftStore.load(), isNull);
+    });
+
+    testWidgets('system back with typed text shows the guard sheet', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildTestable(replies: bootReplies()));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField), 'Feeling okay.');
+      await tester.pump();
+
+      // Simulates the Android system back gesture/button.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Discard this entry?'), findsOneWidget);
+    });
+
+    testWidgets('system back on an empty composer dismisses directly', (
+      tester,
+    ) async {
+      // A real two-route `Navigator`, not `onCancel`, is what this one
+      // needs to prove something with: on an empty composer `PopScope`'s
+      // `canPop` is true, so the system back gesture is handled by
+      // Flutter's own pop machinery directly -- `onPopInvokedWithResult`
+      // fires with `didPop: true` and never calls `requestCancel` (let
+      // alone `cancel`/`onCancel`) at all. A route that is actually gone
+      // is the only honest way to show "dismissed", not a callback that a
+      // guard-free exit is never obliged to call.
+      final harness = Harness(
+        settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
+        adapter: FakeHttpAdapter(bootReplies()),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            requireAuthProvider.overrideWithValue(harness.requireAuth),
+            settingsStoreProvider.overrideWithValue(harness.store),
+            apiClientProvider.overrideWithValue(harness.client),
+            composerDraftStoreProvider.overrideWithValue(harness.draftStore),
+          ],
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: Center(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const EntryComposerScreen(),
+                      ),
+                    ),
+                    child: const Text('Open composer'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open composer'));
+      await tester.pumpAndSettle();
+      expect(find.byType(EntryComposerScreen), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(EntryComposerScreen), findsNothing);
+      expect(find.text('Open composer'), findsOneWidget);
+    });
+
+    testWidgets(
+      'the confirm-feeling stage dismisses with no guard, even though the '
+      'text is already saved (#4 point 3)',
+      (tester) async {
+        var cancelled = false;
+        final replies = [...bootReplies(), FakeReply(201, body: entryJson())];
+        await tester.pumpWidget(
+          buildTestable(replies: replies, onCancel: () => cancelled = true),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Write freely instead'));
+        await tester.pump();
+        await tester.enterText(find.byType(TextFormField), 'A long day.');
+        await tester.pump();
+        await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+        await tester.pumpAndSettle();
+        expect(find.text('How did that feel?'), findsOneWidget);
+
+        await tester.tap(find.byIcon(Icons.close));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Discard this entry?'), findsNothing);
+        expect(cancelled, isTrue);
+      },
+    );
+  });
+
+  group('restored draft notice', () {
+    testWidgets('shows the saved time and restores the guided answer', (
+      tester,
+    ) async {
+      final savedAt = DateTime.utc(2026, 8, 29, 23, 32);
+      await tester.pumpWidget(
+        buildTestable(
+          replies: bootReplies(),
+          initialDraft: ComposerDraft(
+            mode: ComposerDraftMode.guided,
+            guidedAnswers: const {'general': 'Feeling okay.'},
+            savedAt: savedAt,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Continuing your draft from'),
+        findsOneWidget,
+      );
+      expect(find.text('Feeling okay.'), findsOneWidget);
+    });
+
+    testWidgets(
+      'dismissing the notice hides it without discarding the draft',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestable(
+            replies: bootReplies(),
+            initialDraft: ComposerDraft(
+              mode: ComposerDraftMode.guided,
+              guidedAnswers: const {'general': 'Feeling okay.'},
+              savedAt: DateTime.utc(2026),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byTooltip('Dismiss'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.textContaining('Continuing your draft from'),
+          findsNothing,
+        );
+        expect(find.text('Feeling okay.'), findsOneWidget);
+      },
+    );
+
+    testWidgets('Start fresh clears the draft and the restored answers', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestable(
+          replies: bootReplies(),
+          initialDraft: ComposerDraft(
+            mode: ComposerDraftMode.guided,
+            guidedAnswers: const {'general': 'Feeling okay.'},
+            savedAt: DateTime.utc(2026),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final draftStore = containerOf(
+        tester,
+      ).read(composerDraftStoreProvider) as FakeComposerDraftStore;
+
+      await tester.tap(find.text('Start fresh'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Continuing your draft from'),
+        findsNothing,
+      );
+      expect(find.text('Feeling okay.'), findsNothing);
+      expect(await draftStore.load(), isNull);
+    });
+  });
+
+  group('draft survives a kill and reopen', () {
+    testWidgets(
+      'typed answers and the step position come back on the next open',
+      (tester) async {
+        await tester.pumpWidget(buildTestable(replies: bootReplies()));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextFormField), 'Feeling okay.');
+        await tester.pump();
+        // Lets the (unstubbed, default-duration) debounced autosave land.
+        await tester.pump(const Duration(milliseconds: 600));
+        final draftStore = containerOf(
+          tester,
+        ).read(composerDraftStoreProvider) as FakeComposerDraftStore;
+        final savedDraft = await draftStore.load();
+        expect(savedDraft, isNotNull);
+
+        // Tears the first composer's element tree (and with it, its
+        // `ProviderScope` and `EntryComposerController` instance) down
+        // completely -- pumping a second `buildTestable` straight over the
+        // first would otherwise update the existing elements in place
+        // rather than rebuild fresh ones, since Riverpod reuses a
+        // `ProviderScope`'s container across a widget update unless
+        // something forces a real teardown. Without this, the assertions
+        // below would silently pass by observing the *first* composer's
+        // already-typed text, not a freshly restored draft.
+        await tester.pumpWidget(const SizedBox());
+
+        // "Reopen": a fresh composer instance reading back the draft the
+        // previous instance's autosave wrote -- standing in for the app
+        // having been force-stopped and relaunched, since nothing survives
+        // that except what made it to disk.
+        await tester.pumpWidget(
+          buildTestable(replies: bootReplies(), initialDraft: savedDraft),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Feeling okay.'), findsOneWidget);
+        expect(
+          find.textContaining('Continuing your draft from'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'a successful save clears the draft -- the next open starts blank',
+      (tester) async {
+        final replies = [...bootReplies(), FakeReply(201, body: entryJson())];
+        await tester.pumpWidget(buildTestable(replies: replies));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Write freely instead'));
+        await tester.pump();
+        await tester.enterText(find.byType(TextFormField), 'A long day.');
+        await tester.pump();
+        await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+        await tester.pumpAndSettle();
+        final draftStore = containerOf(
+          tester,
+        ).read(composerDraftStoreProvider) as FakeComposerDraftStore;
+        expect(await draftStore.load(), isNull);
+
+        // Tears the first composer down completely -- see the comment on
+        // the equivalent line in the test above for why this is needed.
+        await tester.pumpWidget(const SizedBox());
+
+        // "Reopen": a fresh composer instance, same (now-empty) store.
+        await tester.pumpWidget(buildTestable(replies: bootReplies()));
+        await tester.pumpAndSettle();
+
+        expect(find.text("What's on your mind?"), findsOneWidget);
+        expect(find.textContaining('Continuing your draft'), findsNothing);
+      },
+    );
+  });
+
+  group('no dangling timer', () {
+    testWidgets(
+      'closing the composer mid-debounce leaves nothing still pending',
+      (tester) async {
+        // A custom `onCancel`, the same as every other test in this file
+        // that reaches a real dismissal -- the default falls back to a raw
+        // `Navigator.pop`, which asserts when (as here) the composer is the
+        // route's only entry, and that assertion is no part of what this
+        // test exists to check.
+        var cancelled = false;
+        await tester.pumpWidget(
+          buildTestable(
+            replies: bootReplies(),
+            onCancel: () => cancelled = true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextFormField), 'unsaved');
+        await tester.pump();
+        // Popped immediately, before the default-duration debounce has a
+        // chance to fire on its own -- if the pending autosave `Timer`
+        // were not cancelled on disposal, flutter_test's own teardown
+        // would fail this test with "A Timer is still pending even after
+        // the widget tree was disposed", regardless of anything asserted
+        // below. Completing cleanly (and `cancelled` ending up true) is
+        // the proof.
+        await tester.tap(find.byIcon(Icons.close));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Discard'));
+        await tester.pumpAndSettle();
+
+        expect(cancelled, isTrue);
+      },
+    );
   });
 }
