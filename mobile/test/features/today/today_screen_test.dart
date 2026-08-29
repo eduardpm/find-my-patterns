@@ -5,6 +5,7 @@ import 'package:find_my_patterns/core/network/network_providers.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
 import 'package:find_my_patterns/core/widgets/journal.dart';
+import 'package:find_my_patterns/core/widgets/journal_fab_clearance.dart';
 import 'package:find_my_patterns/features/today/entry_card.dart';
 import 'package:find_my_patterns/features/today/today_controller.dart';
 import 'package:find_my_patterns/features/today/today_screen.dart';
@@ -666,6 +667,150 @@ void main() {
       expect(pressed, isTrue);
       expect(find.text('Today'), findsOneWidget);
     });
+  });
+
+  group('edge-to-edge insets (#10)', () {
+    /// Enough entries, each with enough text, that the list is taller than
+    /// even a generously-sized test viewport -- so "scroll to the end" in
+    /// the tests below is a real scroll past real content, not a no-op on
+    /// a list that already fit inside the frame.
+    List<Map<String, Object?>> manyEntries() => [
+      for (var i = 0; i < 12; i++)
+        entryJson(
+          id: 'entry-$i',
+          rawText:
+              'Entry number $i, written with enough words that its card '
+              'takes up a couple of lines rather than one, the way a real '
+              'diary entry does.',
+          createdAt: '2026-08-28T09:${i.toString().padLeft(2, '0')}:00',
+        ),
+    ];
+
+    /// Scrolls the screen's one [Scrollable] all the way to its true end.
+    ///
+    /// A single `jumpTo(maxScrollExtent)` is not enough here: this test's
+    /// entries deliberately vary in height (see [manyEntries]), so
+    /// [ScrollPosition.maxScrollExtent] is only an estimate until every
+    /// item between here and the bottom has actually been laid out --
+    /// jumping to today's estimate can land short, which then realizes a
+    /// few more items and revises the estimate upward. Re-reading and
+    /// re-jumping until the estimate stops moving is what actually reaches
+    /// the position the acceptance criterion ("scrolled to the very end")
+    /// names, rather than a fixed-distance drag or fling that would only
+    /// prove the list moved *some* amount. This also leaves `_expandFab`
+    /// false -- the collapsed "+" state -- the same way a real reader
+    /// scrolling away from the top would.
+    Future<void> jumpToEnd(WidgetTester tester) async {
+      final scrollable = tester.state<ScrollableState>(
+        find.byType(Scrollable),
+      );
+      var previous = double.negativeInfinity;
+      var target = scrollable.position.maxScrollExtent;
+      while (target != previous) {
+        scrollable.position.jumpTo(target);
+        await tester.pump();
+        previous = target;
+        target = scrollable.position.maxScrollExtent;
+      }
+    }
+
+    for (final (label, size, topInset, bottomInset) in [
+      ('portrait, gesture-nav insets', const Size(480, 900), 40.0, 24.0),
+      (
+        'landscape-ish, 3-button-nav insets',
+        const Size(800, 400),
+        24.0,
+        48.0,
+      ),
+    ]) {
+      testWidgets(
+        'scrolled to the end ($label), the last entry card is fully above '
+        'the FAB',
+        (tester) async {
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          // The FAB's own clearance is a fixed Material dimension, not a
+          // device inset (see `journal_fab_clearance.dart`'s doc comment
+          // for why) -- this varies the system insets across the two cases
+          // to prove that half of criterion 3, that a stingier or more
+          // generous status bar / gesture inset never changes whether the
+          // FAB itself stays cleared, rather than because the clearance
+          // number is expected to track it.
+          tester.view.padding = FakeViewPadding(
+            top: topInset,
+            bottom: bottomInset,
+          );
+          addTearDown(tester.view.reset);
+
+          await tester.pumpWidget(
+            buildTestable(replies: loadReplies(entries: manyEntries())),
+          );
+          await tester.pumpAndSettle();
+
+          await jumpToEnd(tester);
+          await tester.pumpAndSettle();
+
+          final fabTop = tester
+              .getTopLeft(find.byType(FloatingActionButton))
+              .dy;
+          final lastCardBottom = tester
+              .getBottomLeft(find.byType(EntryCard).last)
+              .dy;
+
+          expect(
+            lastCardBottom,
+            lessThanOrEqualTo(fabTop),
+            reason:
+                'the last entry card must be fully visible above the FAB, '
+                'not merely scrolled past it',
+          );
+        },
+      );
+    }
+
+    testWidgets(
+      'the bottom list padding is journalFabScrollClearance, not a '
+      're-guessed number',
+      (tester) async {
+        await tester.pumpWidget(buildTestable(replies: loadReplies()));
+        await tester.pumpAndSettle();
+
+        final padding =
+            tester.widget<ListView>(find.byType(ListView)).padding
+                as EdgeInsets;
+
+        expect(padding.bottom, journalFabScrollClearance);
+      },
+    );
+
+    testWidgets(
+      "the header's top offset moves in lock-step with MediaQuery's top "
+      'inset, proving it is read live rather than off a fixed guess',
+      (tester) async {
+        const smallInset = 24.0;
+        const largeInset = 120.0;
+
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        tester.view.padding = const FakeViewPadding(top: smallInset);
+        await tester.pumpWidget(buildTestable(replies: loadReplies()));
+        await tester.pumpAndSettle();
+        final smallTop = tester.getTopLeft(find.text('Today')).dy;
+
+        tester.view.padding = const FakeViewPadding(top: largeInset);
+        await tester.pumpWidget(buildTestable(replies: loadReplies()));
+        await tester.pumpAndSettle();
+        final largeTop = tester.getTopLeft(find.text('Today')).dy;
+
+        // The exact delta, not just "grew": the header's own internal
+        // layout (eyebrow height, spacing) is identical between the two
+        // pumps, so every logical pixel added to the simulated status bar
+        // must reappear in the header's own offset, one for one.
+        expect(largeTop - smallTop, largeInset - smallInset);
+      },
+    );
   });
 
   group('swipe', () {

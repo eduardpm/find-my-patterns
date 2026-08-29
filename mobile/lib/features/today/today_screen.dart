@@ -9,6 +9,7 @@ import '../../core/diary/calendar_date.dart';
 import '../../core/diary/entry.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/widgets/journal.dart';
+import '../../core/widgets/journal_fab_clearance.dart';
 import '../../core/widgets/journal_page_wash.dart';
 import '../experiments/active_experiment_banner.dart';
 import 'day_summary_card.dart';
@@ -240,9 +241,13 @@ class _TodayScreenState extends ConsumerState<TodayScreen>
                         JournalSpacing.x4,
                         MediaQuery.paddingOf(context).top + JournalSpacing.x5,
                         JournalSpacing.x4,
-                        // Deep enough that the last entry clears the floating
-                        // button rather than ending underneath it.
-                        96,
+                        // [journalFabScrollClearance], not a bare number: the
+                        // FAB's collapse-to-"+" on scroll (kept intact here --
+                        // see the class doc) never actually shrinks its
+                        // height, only its width, so one fixed constant
+                        // clears it at every scroll position rather than
+                        // needing to track which state the button is in.
+                        journalFabScrollClearance,
                       ),
                       children: [
                         _TodayHeader(

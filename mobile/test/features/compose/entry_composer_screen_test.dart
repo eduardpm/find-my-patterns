@@ -298,6 +298,55 @@ void main() {
     });
   });
 
+  group('edge-to-edge bottom inset (#10)', () {
+    /// Two system-inset shapes a real device can hand this screen: a
+    /// three-button nav bar (tall) and a gesture bar (short), on top of
+    /// two different aspect ratios. Whichever one is simulated, the
+    /// bottom-most control of whichever stage is on screen must stay
+    /// clear of it -- this is what the [SafeArea] wrapping the composer's
+    /// body (added for this ticket) is for; the [AppBar] above it already
+    /// owns the top inset on its own (see the doc comment on that
+    /// `SafeArea` in `entry_composer_screen.dart`), so only the bottom is
+    /// exercised here.
+    for (final (label, size, bottomInset) in [
+      ('portrait, three-button nav', Size(400, 800), 48.0),
+      ('landscape-ish, gesture nav', Size(800, 480), 40.0),
+    ]) {
+      testWidgets(
+        'the freeform "Save entry" button clears the system nav bar '
+        '($label)',
+        (tester) async {
+          tester.view.physicalSize = size;
+          tester.view.devicePixelRatio = 1;
+          tester.view.padding = FakeViewPadding(bottom: bottomInset);
+          addTearDown(tester.view.reset);
+
+          await tester.pumpWidget(buildTestable(replies: bootReplies()));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Write freely instead'));
+          await tester.pumpAndSettle();
+
+          final saveButtonBottom = tester
+              .getBottomLeft(find.widgetWithText(ElevatedButton, 'Save entry'))
+              .dy;
+          // The logical-pixel line the system nav bar starts at -- nothing
+          // on screen may be drawn below it.
+          final safeBottomEdge =
+              tester.view.physicalSize.height / tester.view.devicePixelRatio -
+              bottomInset;
+
+          expect(
+            saveButtonBottom,
+            lessThanOrEqualTo(safeBottomEdge),
+            reason:
+                'the Save button must sit fully above the simulated system '
+                'nav bar, not partly behind it',
+          );
+        },
+      );
+    }
+  });
+
   group('saving from freeform', () {
     testWidgets('moves to the confirm-feeling stage and shows the '
         'suggested-feeling phrase', (tester) async {
