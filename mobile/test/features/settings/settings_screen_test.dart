@@ -18,23 +18,64 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
-  testWidgets('shows the server, appearance, topics and about sections', (
-    tester,
-  ) async {
-    useTallScreen(tester);
-    await tester.pumpWidget(Harness().scope(_app()));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'shows appearance, topics, advanced and about sections, in that order',
+    (tester) async {
+      useTallScreen(tester);
+      await tester.pumpWidget(Harness().scope(_app()));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Server'), findsOneWidget);
-    expect(find.byType(ServerForm), findsOneWidget);
-    expect(find.text('Appearance'), findsOneWidget);
-    expect(find.text('Topics and aliases'), findsOneWidget);
-    expect(find.text('About'), findsOneWidget);
-    expect(
-      find.text('${AppConfig.appName} ${AppConfig.appVersion}'),
-      findsOneWidget,
-    );
-  });
+      expect(find.text('Appearance'), findsOneWidget);
+      expect(find.text('Topics and aliases'), findsOneWidget);
+      expect(find.text('Advanced'), findsOneWidget);
+      expect(find.text('About'), findsOneWidget);
+      expect(
+        find.text('${AppConfig.appName} ${AppConfig.appVersion}'),
+        findsOneWidget,
+      );
+
+      final appearanceTop = tester.getTopLeft(find.text('Appearance')).dy;
+      final topicsTop = tester.getTopLeft(find.text('Topics and aliases')).dy;
+      final advancedTop = tester.getTopLeft(find.text('Advanced')).dy;
+      final aboutTop = tester.getTopLeft(find.text('About')).dy;
+      expect(appearanceTop, lessThan(topicsTop));
+      expect(topicsTop, lessThan(advancedTop));
+      expect(advancedTop, lessThan(aboutTop));
+    },
+  );
+
+  testWidgets(
+    'Advanced is collapsed by default once a server is already configured, '
+    'and expands on tap to reveal the server form',
+    (tester) async {
+      final harness = Harness(
+        settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
+      );
+      useTallScreen(tester);
+      await tester.pumpWidget(harness.scope(_app()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Advanced'), findsOneWidget);
+      expect(find.byType(ServerForm), findsNothing);
+
+      await tester.tap(find.text('Advanced'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ServerForm), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Advanced starts expanded when no server has been configured yet, so '
+    'the form stays reachable on a first run',
+    (tester) async {
+      useTallScreen(tester);
+      await tester.pumpWidget(Harness().scope(_app()));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ServerForm), findsOneWidget);
+    },
+  );
 
   testWidgets('changing the appearance stores it', (tester) async {
     final harness = Harness();
