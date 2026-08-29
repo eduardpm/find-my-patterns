@@ -113,8 +113,9 @@ export type PairingSource = 'suggested' | 'confirmed' | 'overridden';
  * One topic↔feeling link on an entry (E-1a) — the sub-entry attribution that keeps a mixed-valence
  * entry ("missed my workout, disappointing — but a lovely call with my family") from feeding false
  * pairs into the pattern engine (workout×grateful, family×disappointed). `topic` is carried
- * alongside `topicId` because, unlike `entry_topics`, this is the only place a client can learn
- * which topics an entry's pairings are even about — entries do not otherwise serve their topics.
+ * alongside `topicId` so a pairing is self-describing without a client cross-referencing the
+ * entry's separate `topics` list (#81, `TopicsService.topicsForEntry()`) — and unlike that list,
+ * a topic the engine could not pair with any feeling simply has no row here at all.
  */
 export interface TopicFeelingPairing {
   topicId: string;

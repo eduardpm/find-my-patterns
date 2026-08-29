@@ -296,5 +296,45 @@ void main() {
       );
       expect(entry.mode, EntryMode.guided);
     });
+
+    test('topics defaults to empty when absent', () {
+      final entry = entryFromJson(baseJson(), catalog);
+      expect(entry.topics, isEmpty);
+    });
+
+    test('topics are decoded with their id and name', () {
+      final entry = entryFromJson(
+        baseJson(
+          overrides: {
+            'topics': [
+              {'id': 'topic-1', 'name': 'walking'},
+              {'id': 'topic-2', 'name': 'family'},
+            ],
+          },
+        ),
+        catalog,
+      );
+      expect(entry.topics.map((t) => t.id), ['topic-1', 'topic-2']);
+      expect(entry.topics.map((t) => t.name), ['walking', 'family']);
+    });
+
+    test(
+      'a topic with no matching topic_feelings row still decodes -- '
+      'entryFromJson never reads topic_feelings to build topics',
+      () {
+        final entry = entryFromJson(
+          baseJson(
+            overrides: {
+              'topics': [
+                {'id': 'topic-1', 'name': 'walking'},
+              ],
+              'topic_feelings': <Object?>[],
+            },
+          ),
+          catalog,
+        );
+        expect(entry.topics.map((t) => t.name), ['walking']);
+      },
+    );
   });
 }

@@ -1,6 +1,7 @@
 import '../network/api_client.dart';
 import 'calendar_date.dart';
 import 'feeling.dart';
+import 'topic.dart';
 
 /// Which flow produced the entry.
 enum EntryMode {
@@ -125,6 +126,11 @@ class const Entry(
   /// than reading a stale [suggestedFeeling] from the moment before its own
   /// edit.
   final bool analysisPending = false,
+
+  /// Every topic the engine extracted for this entry (#81), independent of
+  /// whether it was ever paired with a feeling. Empty when the entry has
+  /// none, which is every entry before extraction has run.
+  final List<Topic> topics = const [],
 });
 
 /// Matches a trailing `Z` or a numeric UTC offset such as `+02:00`.
@@ -168,6 +174,7 @@ Entry entryFromJson(JsonObject json, FeelingCatalog catalog) {
   final feelingIntensities =
       (json['feeling_intensities'] as JsonObject?)?.cast<String, int>() ??
       const {};
+  final topics = (json['topics'] as List<Object?>?)?.cast<JsonObject>();
 
   return Entry(
     json['id']! as String,
@@ -203,6 +210,12 @@ Entry entryFromJson(JsonObject json, FeelingCatalog catalog) {
     ],
     json['version']! as int,
     analysisPending: json['analysis_pending'] as bool? ?? false,
+    // Absent means an older backend, or an endpoint that never loaded them;
+    // both read as "nothing to show here", the same fallback `guidedAnswers`
+    // above uses.
+    topics: [
+      for (final dto in topics ?? const <JsonObject>[]) topicFromJson(dto),
+    ],
   );
 }
 

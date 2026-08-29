@@ -121,6 +121,7 @@ Map<String, Object?> entryJson({
   List<Map<String, Object?>> suggestedFeelings = const [],
   int version = 1,
   bool analysisPending = false,
+  List<Map<String, Object?>> topics = const [],
 }) => {
   'id': id,
   'created_at': createdAt,
@@ -135,4 +136,5 @@ Map<String, Object?> entryJson({
   'suggested_feelings': suggestedFeelings,
   'version': version,
   'analysis_pending': analysisPending,
+  'topics': topics,
 };

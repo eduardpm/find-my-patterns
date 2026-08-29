@@ -178,6 +178,7 @@ describe('GET /entries?date=', () => {
         'suggested_feeling',
         'suggested_feelings',
         'topic_feelings',
+        'topics',
         'version',
       ]);
     }

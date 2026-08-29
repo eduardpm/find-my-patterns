@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import '../../core/diary/entry.dart';
 import '../../core/diary/feeling.dart';
 import '../../core/diary/pattern.dart';
+import '../../core/diary/topic.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/theme/journal_typography.dart';
@@ -397,6 +398,12 @@ class _EntryReadView extends StatelessWidget {
                   source: entry.feelingSource,
                 ),
               ],
+              if (entry.topics.isNotEmpty) ...[
+                const SizedBox(height: JournalSpacing.x6),
+                const Eyebrow('Topics'),
+                const SizedBox(height: JournalSpacing.x3),
+                _ReadOnlyTopics(topics: entry.topics),
+              ],
               if (echoes.isNotEmpty) ...[
                 const SizedBox(height: JournalSpacing.x5),
                 PatternEchoPanel(echoes: echoes, onDismiss: onDismissEchoes),
@@ -472,6 +479,46 @@ class _ReadOnlyFeelings extends StatelessWidget {
 /// source for shows a plain chip rather than an empty tooltip.
 Widget _maybeTooltip(String? message, Widget child) =>
     message == null ? child : Tooltip(message: message, child: child);
+
+/// The entry's topics (#81), each as a chip -- straight off [Entry.topics],
+/// never [Entry.suggestedFeelings] or anything derived from
+/// `topic_feelings`: a topic the engine extracted but could not pair with
+/// any feeling belongs here just as much as a paired one, and this list is
+/// the only one of the two that carries it (see [Entry.topics]'s doc
+/// comment).
+///
+/// Renders through [FeelingChip] rather than a bespoke chip widget: a topic
+/// stated as fact ("this entry mentions this") is the same shape of claim
+/// [FeelingChipVariant.display] already draws for a feeling, and every
+/// accessibility and layout choice on that chip (dot, label, 48dp touch
+/// target when it becomes tappable, [Wrap] spacing) already fits it. What
+/// changes is the colour: a feeling's colour is its valence, and a topic has
+/// no valence to show, so every topic chip paints in the theme's neutral
+/// `onSurfaceVariant` rather than borrowing a feeling's hue for a concept
+/// that isn't one. A sibling widget would only re-derive that same pill for
+/// no visual difference.
+///
+/// Not tappable yet -- the deep link to the Topics screen (UX-7) is a
+/// separate, later ticket; for now these chips state a fact and nothing
+/// else, the same as [_ReadOnlyFeelings].
+class _ReadOnlyTopics extends StatelessWidget {
+  const _ReadOnlyTopics({required this.topics});
+
+  final List<Topic> topics;
+
+  @override
+  Widget build(BuildContext context) {
+    final neutral = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Wrap(
+      spacing: JournalSpacing.x2,
+      runSpacing: JournalSpacing.x2,
+      children: [
+        for (final topic in topics)
+          FeelingChip(label: topic.name, color: neutral),
+      ],
+    );
+  }
+}
 
 /// "This entry supports:" -- the active patterns [echoes] names, each
 /// linking to Insights. Renders nothing when [echoes] is empty: most

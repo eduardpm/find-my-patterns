@@ -30,6 +30,7 @@ import type {
   TopicFeelingPairing,
 } from '../domain/types';
 import { EchoService, type EchoOut } from '../insights/echo.service';
+import { TopicsService, type Topic } from '../topics/topics.service';
 import {
   EntriesService,
   EntryNotFoundError,
@@ -54,6 +55,7 @@ export function toEntryOut(
   suggestedAll: SuggestedFeeling[] = [],
   guidedAnswers: GuidedAnswer[] | null = null,
   topicFeelings: TopicFeelingPairing[] = [],
+  topics: Topic[] = [],
 ): Record<string, unknown> {
   return {
     id: entry.id,
@@ -103,6 +105,14 @@ export function toEntryOut(
       feeling_key: pairing.feelingKey,
       source: pairing.source,
     })),
+    // #81: the entry's topics on their own, independent of `topic_feelings` above. `topic_feelings`
+    // is flattened one row per (topic, feeling) pair, so a topic the engine extracted but could not
+    // pair with any feeling — "fine and common" per E-1a — produces no row there at all. This field
+    // is sourced from `TopicsService.topicsForEntry()`, the same lookup `echo.service.ts` and
+    // `patterns.service.ts` already use, so it always carries every topic linked to the entry,
+    // paired or not. Additive, like `topic_feelings`: a client that predates this field reads every
+    // other key unchanged and never looks at this one.
+    topics: topics.map((topic) => ({ id: topic.id, name: topic.name })),
   };
 }
 
@@ -112,6 +122,7 @@ export class EntriesController {
     private readonly entries: EntriesRepository,
     private readonly service: EntriesService,
     private readonly echoes: EchoService,
+    private readonly topics: TopicsService,
   ) {}
 
   /**
@@ -130,7 +141,10 @@ export class EntriesController {
     try {
       const { entry, suggestion } = this.service.createEntry(input);
       const pairings = this.entries.findTopicFeelingPairings(entry.id);
-      if (suggestion) return toEntryOut(entry, suggestion, false, [suggestion], null, pairings);
+      const topics = this.topics.topicsForEntry(entry.id);
+      if (suggestion) {
+        return toEntryOut(entry, suggestion, false, [suggestion], null, pairings, topics);
+      }
       const analysis = this.service.analysisFor(entry.id);
       return toEntryOut(
         entry,
@@ -139,6 +153,7 @@ export class EntriesController {
         analysis.suggestedAll,
         null,
         pairings,
+        topics,
       );
     } catch (err) {
       if (err instanceof InvalidEntryDateError) {
@@ -164,6 +179,7 @@ export class EntriesController {
             analysis.suggestedAll,
             this.entries.findGuidedAnswers(updated.id),
             this.entries.findTopicFeelingPairings(updated.id),
+            this.topics.topicsForEntry(updated.id),
           ),
         );
     } catch (err) {
@@ -221,6 +237,7 @@ export class EntriesController {
       analysis.suggestedAll,
       this.entries.findGuidedAnswers(entryId),
       this.entries.findTopicFeelingPairings(entryId),
+      this.topics.topicsForEntry(entryId),
     );
   }
 
@@ -276,6 +293,7 @@ export class EntriesController {
           analysis.suggestedAll,
           this.entries.findGuidedAnswers(e.id),
           this.entries.findTopicFeelingPairings(e.id),
+          this.topics.topicsForEntry(e.id),
         );
       }),
     };
@@ -307,6 +325,7 @@ export class EntriesController {
       analysis.suggestedAll,
       this.entries.findGuidedAnswers(entryId),
       this.entries.findTopicFeelingPairings(entryId),
+      this.topics.topicsForEntry(entryId),
     );
   }
 }
