@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import * as fs from 'node:fs';
+import { ensureDefaultUser } from '../auth/default-user';
 import { loadConfig } from '../config';
 import { FEELING_GROUP_SEED, FEELING_SEED, type FeelingSeed } from './feeling-vocabulary';
 import { encodeBool, encodeJson } from './codecs';
@@ -77,6 +78,13 @@ export function migrateDiary(targetPath: string): MigrationReport {
         }
         db.exec(statement.sql);
       }
+
+      // M-1a (#45): the `users` table above was just created (or already existed, if this is a
+      // re-run). Either way, the default user must exist by the time this function returns — the
+      // acceptance criteria require it immediately, not only after the server next boots and runs
+      // `seed()` (`./seed.ts`, which calls the same function for a fresh diary created via
+      // `init-db`).
+      ensureDefaultUser(db);
 
       const report: MigrationReport = {
         groupsInserted: 0,

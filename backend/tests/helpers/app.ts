@@ -30,12 +30,20 @@ export async function startOnLoopback(app: INestApplication): Promise<void> {
   await app.listen(0, '127.0.0.1');
 }
 
-/** Boots the app against a throwaway copy of the golden diary. */
-export async function bootOnCopy(): Promise<Harness> {
+/**
+ * Boots the app against a throwaway copy of the golden diary.
+ *
+ * `singleUserMode` defaults to unset, which `createApp` (`../../src/main.ts`) resolves to
+ * `AppConfig.singleUserMode`'s own default (`true`) — every existing test that calls this with no
+ * argument keeps running exactly as it did before M-1a (#45): no bearer token required, every
+ * request resolves to the fixed default user. Pass `{ singleUserMode: false }` to boot the real
+ * multi-tenant gate instead (`tests/contract/identity.test.ts`).
+ */
+export async function bootOnCopy(options: { singleUserMode?: boolean } = {}): Promise<Harness> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diary-test-'));
   const dbPath = path.join(dir, 'diary.db');
   fs.copyFileSync(GOLDEN, dbPath);
-  const app = await createApp(dbPath);
+  const app = await createApp({ databasePath: dbPath, singleUserMode: options.singleUserMode });
   await startOnLoopback(app);
   return { app, dbPath, dir };
 }
@@ -48,11 +56,11 @@ export async function bootOnCopy(): Promise<Harness> {
  * *exactly* these insights and nothing else". Starting empty is what lets those assertions be
  * closed rather than "contains at least".
  */
-export async function bootOnFresh(): Promise<Harness> {
+export async function bootOnFresh(options: { singleUserMode?: boolean } = {}): Promise<Harness> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diary-fresh-'));
   const dbPath = path.join(dir, 'diary.db');
   initDiary(dbPath);
-  const app = await createApp(dbPath);
+  const app = await createApp({ databasePath: dbPath, singleUserMode: options.singleUserMode });
   await startOnLoopback(app);
   return { app, dbPath, dir };
 }

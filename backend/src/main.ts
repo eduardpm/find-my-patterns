@@ -7,6 +7,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { AppModule } from './app.module';
 import { AuthManager } from './auth/auth';
+import { installIdentityGate } from './auth/identity.middleware';
+import { AuthService } from './auth/identity.service';
 import { ErrorEnvelopeFilter } from './common/http-exception.filter';
 import { type AuthConfig, loadConfig } from './config';
 
@@ -27,6 +29,10 @@ export interface CreateAppOptions {
   databasePath?: string;
   webDistPath?: string;
   auth?: AuthConfig;
+  /** Overrides `AppConfig.singleUserMode` (`config.ts`) — the same injection shape `auth` already
+   * uses, and for the same reason: tests need to flip this per-boot rather than through a process
+   * env var shared by every test file in this suite's single worker thread. */
+  singleUserMode?: boolean;
 }
 
 export async function createApp(
@@ -67,6 +73,17 @@ export async function createApp(
   });
 
   new AuthManager(options.auth ?? runtimeConfig.auth).install(app);
+
+  // M-1a (#45): the multi-tenant identity gate. Installed after `AuthManager` so the existing
+  // single-password tunnel protection keeps running exactly as before — this only adds a second,
+  // orthogonal check on top, never replaces the first one. `AuthService` is resolved from Nest's
+  // own container rather than constructed here so both this gate and the `/auth/*` controller
+  // share one `AuthService` instance, backed by the one `DIARY_DB` the rest of the app uses.
+  installIdentityGate(
+    app,
+    app.get(AuthService),
+    options.singleUserMode ?? runtimeConfig.singleUserMode,
+  );
 
   mountWebClient(app, options.webDistPath ?? runtimeConfig.webDistPath);
   return app;
@@ -109,11 +126,17 @@ async function bootstrap(): Promise<void> {
     databasePath: config.databasePath,
     webDistPath: config.webDistPath,
     auth: config.auth,
+    singleUserMode: config.singleUserMode,
   });
 
   await app.listen(config.port, config.host);
   logger.log(`Diary API listening on ${config.host}:${config.port}`);
   logger.log(`Reading the diary at ${config.databasePath} (never migrated, never altered)`);
+  logger.log(
+    config.singleUserMode
+      ? 'SINGLE_USER_MODE is on: every request resolves to the default user, no bearer token required.'
+      : 'SINGLE_USER_MODE is off: every route but /health and /auth/* requires a valid bearer token.',
+  );
   if (config.auth.enabled) {
     logger.log(
       `Authentication protects ${config.auth.publicHostname ?? 'all hostnames'}; session cookies are ${config.auth.secureCookie ? 'Secure' : 'not Secure'}.`,

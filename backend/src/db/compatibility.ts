@@ -155,6 +155,19 @@ const REQUIRED: Record<string, Record<string, string>> = {
     entry_count: 'INTEGER',
     report_json: 'JSON',
   },
+  // --- Multi-tenant identity (M-1a, #45) --------------------------------------------------------
+  users: {
+    id: 'VARCHAR(36)',
+    email: 'VARCHAR(256)',
+    password_hash: 'VARCHAR(256)',
+    created_at: 'DATETIME',
+  },
+  sessions: {
+    token_hash: 'VARCHAR(64)',
+    user_id: 'VARCHAR(36)',
+    created_at: 'DATETIME',
+    expires_at: 'DATETIME',
+  },
 };
 
 export class IncompatibleDiaryError extends Error {
@@ -397,6 +410,37 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
         throw new Error('invalid entry count');
       }
       JSON.parse(String(row.report_json));
+    },
+  );
+
+  // --- Multi-tenant identity (M-1a, #45) ----------------------------------------------------------
+  const userIds = new Set(
+    (db.prepare('SELECT id FROM users').all() as Array<{ id: string }>).map((row) => row.id),
+  );
+  // Every table this migration touches assumes at least the default user exists — #46's `user_id`
+  // foreign keys would otherwise have nothing to point at.
+  if (userIds.size === 0) problems.push('users contains no rows (the default user is missing)');
+
+  validateRows(
+    'users',
+    db.prepare('SELECT id, email, created_at FROM users').all() as Array<Record<string, unknown>>,
+    problems,
+    (row) => {
+      decodeDateTime(String(row.created_at));
+      if (!String(row.email).includes('@')) throw new Error('email is missing "@"');
+    },
+  );
+
+  validateRows(
+    'sessions',
+    db
+      .prepare('SELECT token_hash AS id, user_id, created_at, expires_at FROM sessions')
+      .all() as Array<Record<string, unknown>>,
+    problems,
+    (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
+      decodeDateTime(String(row.created_at));
+      decodeDateTime(String(row.expires_at));
     },
   );
 

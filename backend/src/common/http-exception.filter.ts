@@ -12,8 +12,11 @@ import type { Response } from 'express';
 
 const ERROR_CODES: Record<number, string> = {
   400: 'bad_request',
+  401: 'unauthorized',
   404: 'not_found',
+  409: 'conflict',
   422: 'validation_error',
+  429: 'rate_limited',
 };
 
 @Catch()
