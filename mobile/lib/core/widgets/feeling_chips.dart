@@ -223,19 +223,35 @@ class FeelingChip extends StatelessWidget {
   }
 }
 
-/// Feeling selection, two levels deep.
+/// Feeling selection, one sheet deep.
 ///
 /// The vocabulary is around thirty words in four groups — far more than fits
 /// on a phone without turning the fastest step of writing an entry into a
-/// scanning exercise. So **only the first level is ever on screen**: four
-/// group chips, each opening that group's own words in a modal bottom
-/// sheet. Picking "Tense" then "Overwhelmed" is two taps for a precision a
-/// flat row of eight could not express at all.
+/// scanning exercise, so the words themselves never sit on the main screen.
+/// This used to also mean picking across groups (Stressed *and* Grateful,
+/// the common mixed-feeling case) cost two full sheet round-trips — tap a
+/// group chip, tap a word, tap Done, then repeat for the other group. All
+/// 31 words fit, grouped under four headers, in one scrollable sheet, so
+/// there is no reason to reopen it for a second group: a group chip now
+/// opens **one shared sheet holding every group**, and cross-group
+/// selection is just more taps inside a sheet that is already open.
 ///
-/// A modal bottom sheet, not a dialog: the group's words belong within
-/// thumb reach on a phone, and the platform sheet already handles the
-/// scrim, drag-to-dismiss and the back gesture. Toggles inside, not a radio
-/// group: an entry can carry several feelings, so the control is genuinely
+/// The four group chips on the main screen stay, rather than being replaced
+/// by a single "choose feelings" button, because [_GroupChip] carries a
+/// chosen-count badge marked three ways (border, fill and the count itself)
+/// so it survives greyscale and colour blindness — a real accessibility
+/// property, not a cosmetic one, and collapsing to one affordance would
+/// have nowhere to put it. Each chip still opens the shared sheet; tapping
+/// one also scrolls the sheet to that group's own section, so the chip you
+/// tapped is where your thumb lands. A tab/segmented-control-per-group
+/// sheet was the issue's fallback design, but was not needed here — the
+/// vocabulary is short enough that one scrollable list, not a second
+/// navigation level, is the simpler answer.
+///
+/// A modal bottom sheet, not a dialog: the words belong within thumb reach
+/// on a phone, and the platform sheet already handles the scrim,
+/// drag-to-dismiss and the back gesture. Toggles inside, not a radio group:
+/// an entry can carry several feelings, so the control is genuinely
 /// multi-select. Colour by group, never by individual feeling: thirty
 /// accents a reader can tell apart at chip size do not exist, four do, and
 /// every feeling in a group shares that group's valence — see
@@ -252,7 +268,11 @@ class FeelingChip extends StatelessWidget {
 /// its `rememberUpdatedState` fix, where the sheet's tap handler closed
 /// over the selection as it stood when the sheet opened, so every tap
 /// computed `oldSelection + feeling` and the second word chosen from a
-/// group replaced the first instead of joining it. This port's answer is a
+/// group replaced the first instead of joining it. Folding every group into
+/// one sheet makes this worse, not better, if left unfixed — a
+/// cross-group pick is now two taps in the *same* open route instead of two
+/// taps split across two routes, so the stale-closure bug would now eat the
+/// very case this redesign exists for. This port's answer is a
 /// [ValueNotifier] this state owns and keeps in sync with [selected] (see
 /// `didUpdateWidget`); the sheet reads it through a [ValueListenableBuilder]
 /// rather than closing over a plain list, so every tap — inside the sheet
@@ -334,16 +354,20 @@ class _FeelingChipsState extends State<FeelingChips> {
     }
   }
 
-  void _openGroupSheet(FeelingGroup group) {
+  /// Opens the one shared sheet holding every group, scrolled to
+  /// [initialGroup]'s own section — see the [FeelingChips] doc comment for
+  /// why a single sheet replaced the old per-group one.
+  void _openFeelingSheet(FeelingGroup initialGroup) {
     unawaited(
       showModalBottomSheet<void>(
         context: context,
-        // Uncapped rather than the platform default's ~9/16-screen cap: a
-        // group with many words, or a large accessibility text size, must
-        // still fit without truncating the sheet's own content.
+        // Uncapped rather than the platform default's ~9/16-screen cap: all
+        // four groups, or a large accessibility text size, must still fit
+        // without truncating the sheet's own content.
         isScrollControlled: true,
-        builder: (sheetContext) => _GroupSheet(
-          group: group,
+        builder: (sheetContext) => _FeelingSheet(
+          groups: widget.groups,
+          initialGroup: initialGroup,
           selectedListenable: _selectedNotifier,
           suggestedKeys: widget.suggestedKeys,
           max: widget.max,
@@ -382,7 +406,7 @@ class _FeelingChipsState extends State<FeelingChips> {
           groups: widget.groups,
           selected: selected,
           journal: journal,
-          onOpen: _openGroupSheet,
+          onOpen: _openFeelingSheet,
         ),
         if (selected.length >= widget.max) ...[
           const SizedBox(height: JournalSpacing.x3),
@@ -572,22 +596,36 @@ class _GroupChip extends StatelessWidget {
   }
 }
 
-/// One group's words, in a modal sheet.
+/// Every group's words, in one shared modal sheet.
+///
+/// One title, one "Choose up to 4" line, then each group as its own section
+/// — a coloured dot and the group's name as a header, that group's words in
+/// a [Wrap] underneath. Sections replace the old per-group sheet's single
+/// title; see the [FeelingChips] doc comment for why one sheet now holds
+/// all four groups instead of one sheet per group.
 ///
 /// Reads [selectedListenable] through a [ValueListenableBuilder] rather
 /// than taking a plain `selected` list, so it repaints on every toggle even
 /// though [showModalBottomSheet] hosts it in a route the parent's
-/// `setState` does not reach. See the [FeelingChips] doc comment.
-class _GroupSheet extends StatelessWidget {
-  const _GroupSheet({
-    required this.group,
+/// `setState` does not reach — see the [FeelingChips] doc comment, which
+/// also explains why that trap matters more now that a single sheet carries
+/// every cross-group tap.
+class _FeelingSheet extends StatelessWidget {
+  const _FeelingSheet({
+    required this.groups,
+    required this.initialGroup,
     required this.selectedListenable,
     required this.suggestedKeys,
     required this.max,
     required this.onToggle,
   });
 
-  final FeelingGroup group;
+  final List<FeelingGroup> groups;
+
+  /// The group whose chip was tapped to open this sheet. Not a filter —
+  /// every group's words are here regardless — just where the sheet scrolls
+  /// to on open, so the chip the user tapped is where their thumb lands.
+  final FeelingGroup initialGroup;
   final ValueListenable<List<Feeling>> selectedListenable;
   final Set<String> suggestedKeys;
   final int max;
@@ -596,10 +634,29 @@ class _GroupSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final journal = context.journalColors;
+    final theme = Theme.of(context);
+    // Built fresh on every `build` call together with the sections they are
+    // attached to, so a key and the section it points at never drift apart
+    // even on the rare rebuild (a dependency change, e.g. theme) that this
+    // otherwise-static sheet gets.
+    final sectionKeys = {
+      for (final group in groups) group.key: GlobalKey(),
+    };
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final sectionContext = sectionKeys[initialGroup.key]?.currentContext;
+      if (sectionContext != null) {
+        unawaited(
+          Scrollable.ensureVisible(
+            sectionContext,
+            duration: const Duration(milliseconds: 200),
+          ),
+        );
+      }
+    });
     return SafeArea(
-      // A scroll view rather than trusting the sheet's own height: a group
-      // with many words, or a large accessibility text size, must still
-      // fit rather than overflow.
+      // A scroll view rather than trusting the sheet's own height: four
+      // groups' worth of words, or a large accessibility text size, must
+      // still fit rather than overflow.
       child: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(JournalSpacing.x5),
@@ -607,42 +664,53 @@ class _GroupSheet extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                group.label,
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
+              Text('Choose feelings', style: theme.textTheme.headlineSmall),
               const SizedBox(height: JournalSpacing.x2),
               Text(
-                'Choose as many as fit. Tap one again to remove it.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                'Choose up to $max. Tap one again to remove it.',
+                style: theme.textTheme.bodyMedium?.copyWith(
                   color: journal.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(height: JournalSpacing.x3),
-              ValueListenableBuilder<List<Feeling>>(
-                valueListenable: selectedListenable,
-                builder: (context, selected, _) => Wrap(
-                  spacing: JournalSpacing.x2,
-                  runSpacing: JournalSpacing.x2,
+              for (final group in groups) ...[
+                const SizedBox(height: JournalSpacing.x4),
+                Row(
+                  key: sectionKeys[group.key],
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    for (final feeling in group.feelings)
-                      FeelingChip(
-                        label: feeling.label,
-                        color: feeling.accent(journal),
-                        variant: FeelingChipVariant.selectable,
-                        selected: selected.any((f) => f.key == feeling.key),
-                        suggested: suggestedKeys.contains(feeling.key),
-                        // Only unchosen chips go dead at the limit: the way
-                        // back under it must stay open from inside the
-                        // sheet the user is standing in.
-                        enabled:
-                            selected.any((f) => f.key == feeling.key) ||
-                            selected.length < max,
-                        onTap: () => onToggle(feeling),
-                      ),
+                    FeelingDot(color: group.accent(journal)),
+                    const SizedBox(width: JournalSpacing.x2),
+                    Text(group.label, style: theme.textTheme.titleMedium),
                   ],
                 ),
-              ),
+                const SizedBox(height: JournalSpacing.x3),
+                ValueListenableBuilder<List<Feeling>>(
+                  valueListenable: selectedListenable,
+                  builder: (context, selected, _) => Wrap(
+                    spacing: JournalSpacing.x2,
+                    runSpacing: JournalSpacing.x2,
+                    children: [
+                      for (final feeling in group.feelings)
+                        FeelingChip(
+                          label: feeling.label,
+                          color: feeling.accent(journal),
+                          variant: FeelingChipVariant.selectable,
+                          selected: selected.any(
+                            (f) => f.key == feeling.key,
+                          ),
+                          suggested: suggestedKeys.contains(feeling.key),
+                          // Only unchosen chips go dead at the limit: the
+                          // way back under it must stay open from inside
+                          // the sheet the user is standing in.
+                          enabled:
+                              selected.any((f) => f.key == feeling.key) ||
+                              selected.length < max,
+                          onTap: () => onToggle(feeling),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: JournalSpacing.x4),
               SizedBox(
                 width: double.infinity,
