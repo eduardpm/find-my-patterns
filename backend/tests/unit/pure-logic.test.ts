@@ -110,9 +110,10 @@ describe('badgeDirectionFor — the pattern card badge (P0-2)', () => {
     expect(badgeDirectionFor('inverse', 'negative')).toBe('keep');
   });
 
-  // The bug this ticket fixes: a neutral-valence feeling (e.g. "calm", "content" — see
-  // `feeling-vocabulary.ts`'s "steady" group) has no positive signal to reinforce and no negative
-  // one to discourage, so it earns no badge at all, on either side of the kind split.
+  // The bug this ticket fixes: a neutral-valence feeling (e.g. "neutral", "indifferent" — the two
+  // `feeling-vocabulary.ts`'s "steady" group still scores 0 after #60 split the rest of the group
+  // to `positive`) has no positive signal to reinforce and no negative one to discourage, so it
+  // earns no badge at all, on either side of the kind split.
   it('forward + neutral: no positive or negative signal — no badge', () => {
     expect(badgeDirectionFor('forward', 'neutral')).toBe('none');
   });

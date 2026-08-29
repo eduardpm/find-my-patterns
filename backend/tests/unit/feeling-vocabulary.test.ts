@@ -39,11 +39,25 @@ describe('the feeling vocabulary', () => {
     for (const feeling of FEELING_SEED) expect(groups.has(feeling.groupKey)).toBe(true);
   });
 
-  it('gives each group its own valence, shared by every feeling inside it', () => {
+  it('gives each group its own valence, inherited by every feeling except a stated override', () => {
+    // #60: `calm`, `content`, `relaxed`, `focused` and `curious` are pleasant states that sit in
+    // "Steady" for presentation only — their valence is `positive`, not the group's `neutral`.
+    // Grouping and labels are unaffected; this is the one sanctioned place a feeling's valence is
+    // allowed to diverge from its group's, and the test pins the divergence to exactly these five
+    // so a future change cannot introduce another one silently.
+    const OVERRIDDEN: Record<string, string> = {
+      calm: 'positive',
+      content: 'positive',
+      relaxed: 'positive',
+      focused: 'positive',
+      curious: 'positive',
+    };
     for (const group of FEELING_GROUP_SEED) {
       const members = FEELING_SEED.filter((feeling) => feeling.groupKey === group.key);
       expect(members.length).toBeGreaterThanOrEqual(3);
-      for (const member of members) expect(member.valence).toBe(group.valence);
+      for (const member of members) {
+        expect(member.valence).toBe(OVERRIDDEN[member.key] ?? group.valence);
+      }
     }
   });
 

@@ -9,10 +9,12 @@
  *
  * Two invariants the rest of the code relies on:
  *
- *  - **Every feeling in a group shares that group's valence.** Valence is a rule — it decides an
- *    insight's keep/change direction — so it stays on the individual feeling row where it always
- *    was. Keeping a group internally consistent is what lets a client tint a whole group with one
- *    accent without ever claiming something the backend did not say.
+ *  - **Valence lives on the feeling, not the group.** Most feelings simply inherit the group's
+ *    valence — that is still what lets a client tint a whole group with one accent — but a feeling
+ *    may declare its own and override it (#60: `calm`, `content`, `relaxed`, `focused` and
+ *    `curious` are pleasant states that sit in the "Steady" group for presentation only). Grouping
+ *    and labels never encode a claim about valence on their own; `FeelingSeed.valence` is the only
+ *    thing insights, series and "when" ever read.
  *  - **The eight original keys still exist, unrenamed.** `happy`, `excited`, `neutral`, `sleepy`,
  *    `exhausted`, `stressed`, `sad` and `depressed` are foreign keys in every existing diary. They
  *    are re-homed into groups, never replaced.
@@ -45,11 +47,14 @@ const GROUPS = [
     valence: 'neutral',
     feelings: [
       { key: 'neutral', label: 'Neutral' },
-      { key: 'calm', label: 'Calm' },
-      { key: 'content', label: 'Content' },
-      { key: 'relaxed', label: 'Relaxed' },
-      { key: 'focused', label: 'Focused' },
-      { key: 'curious', label: 'Curious' },
+      // #60: these five are plainly pleasant states that happened to land in the "Steady" group
+      // for presentation — grouping and labels are unchanged, but valence is a per-feeling fact,
+      // not a group one, and scoring them 0 made them indistinguishable from `indifferent`.
+      { key: 'calm', label: 'Calm', valence: 'positive' },
+      { key: 'content', label: 'Content', valence: 'positive' },
+      { key: 'relaxed', label: 'Relaxed', valence: 'positive' },
+      { key: 'focused', label: 'Focused', valence: 'positive' },
+      { key: 'curious', label: 'Curious', valence: 'positive' },
       { key: 'indifferent', label: 'Indifferent' },
     ],
   },
@@ -115,7 +120,11 @@ export const FEELING_SEED: FeelingSeed[] = GROUPS.flatMap((group, groupIndex) =>
   group.feelings.map((feeling, feelingIndex) => ({
     key: feeling.key,
     label: feeling.label,
-    valence: group.valence,
+    // A feeling's own valence is authoritative when it states one (#60); the group's valence is
+    // only the default every feeling started with. Grouping and labels are a presentation concern
+    // and stay exactly as declared above — this is the one place valence is allowed to diverge
+    // from the group it visually sits in.
+    valence: 'valence' in feeling ? feeling.valence : group.valence,
     groupKey: group.key,
     // Leaves room to insert a feeling inside a group later without renumbering the ones after it.
     sortOrder: groupIndex * 100 + feelingIndex,
