@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/diary_providers.dart';
+import 'package:find_my_patterns/core/diary/entry.dart';
 import 'package:find_my_patterns/core/diary/insights_api.dart';
 import 'package:find_my_patterns/core/diary/mood_series.dart';
 import 'package:find_my_patterns/core/diary/pattern.dart';
@@ -138,6 +139,146 @@ void main() {
     api.whenCompleter.complete(whenInsightsFromFixture());
     await tester.pumpAndSettle();
     expect(find.text('Tea'), findsOneWidget);
+  });
+
+  group('"Worth trying" recommendations (R-1)', () {
+    testWidgets('renders above the pattern cards for a qualifying pattern', (
+      tester,
+    ) async {
+      final api = _ControllableInsightsApi();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [insightsApiProvider.overrideWithValue(api)],
+          child: const MaterialApp(home: InsightsScreen()),
+        ),
+      );
+      api.insightsCompleter.complete(
+        insightsResultFromFixture(
+          patterns: [
+            patternFixture(
+              id: 'p-exercise',
+              topic: 'exercise',
+              direction: PatternDirection.keep,
+              recommendation: recommendationFixture(
+                actionTopic: 'exercise',
+                headline: 'More exercise days',
+                sentence:
+                    'On days without exercise, anxious is 2.7× more '
+                    'likely (4 of 6 without vs 1 of 4 with). More '
+                    "exercise days may help — here's the evidence.",
+                patternRef: 'p-exercise',
+              ),
+            ),
+            // A second qualifying pattern -- proves the section renders more
+            // than one card (backend caps at three; this client just renders
+            // whatever it is given) and covers the between-cards spacing.
+            patternFixture(
+              id: 'p-reading',
+              topic: 'reading',
+              direction: PatternDirection.keep,
+              recommendation: recommendationFixture(
+                actionTopic: 'reading',
+                headline: 'Keep doing reading',
+                sentence:
+                    'On days with reading, calm is 4.5× more likely '
+                    '(3 of 4 with vs 1 of 6 without). Keep doing reading — '
+                    "here's the evidence.",
+                patternRef: 'p-reading',
+              ),
+            ),
+          ],
+        ),
+      );
+      api.whenCompleter.complete(whenInsightsFromFixture());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Worth trying'), findsOneWidget);
+      expect(find.text('More exercise days'), findsOneWidget);
+      expect(find.text('Keep doing reading'), findsOneWidget);
+      // R-0: the sentence renders with its counts intact, exactly as the
+      // backend composed it -- never rebuilt from `actionTopic` here.
+      expect(
+        find.textContaining('4 of 6 without vs 1 of 4 with'),
+        findsOneWidget,
+      );
+
+      // Above the pattern cards they point at -- the issue's own placement
+      // (below withdrawals, above the ranked pattern feed; there are no
+      // withdrawals in this fixture).
+      final worthTryingY = tester.getTopLeft(find.text('Worth trying')).dy;
+      final patternCardY = tester.getTopLeft(find.text('Exercise')).dy;
+      expect(worthTryingY, lessThan(patternCardY));
+    });
+
+    testWidgets(
+      'tapping a card scrolls to and expands its pattern\'s evidence trail',
+      (tester) async {
+        final api = _ControllableInsightsApi();
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [insightsApiProvider.overrideWithValue(api)],
+            child: const MaterialApp(home: InsightsScreen()),
+          ),
+        );
+        api.insightsCompleter.complete(
+          insightsResultFromFixture(
+            patterns: [
+              patternFixture(
+                id: 'p-exercise',
+                topic: 'exercise',
+                direction: PatternDirection.keep,
+                evidence: [
+                  PatternEvidence(
+                    'entry-1',
+                    const CalendarDate(2026, 8, 18),
+                    'Skipped the gym today.',
+                    const [],
+                    FeelingSource.confirmed,
+                  ),
+                ],
+                recommendation: recommendationFixture(
+                  actionTopic: 'exercise',
+                  headline: 'More exercise days',
+                  patternRef: 'p-exercise',
+                ),
+              ),
+            ],
+          ),
+        );
+        api.whenCompleter.complete(whenInsightsFromFixture());
+        await tester.pumpAndSettle();
+
+        // Collapsed on first paint -- the trail is not shown until asked
+        // for, from either the card's own footer or this section.
+        expect(find.text('Skipped the gym today.'), findsNothing);
+
+        await tester.tap(find.text('More exercise days'));
+        await tester.pumpAndSettle();
+
+        // Expanded in place on the pattern's own card -- never a new
+        // route (`PatternCardState.expandEvidence`'s doc comment).
+        expect(find.text('Skipped the gym today.'), findsOneWidget);
+        expect(find.text('Hide entries'), findsOneWidget);
+      },
+    );
+
+    testWidgets('is absent when no pattern qualifies', (tester) async {
+      final api = _ControllableInsightsApi();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [insightsApiProvider.overrideWithValue(api)],
+          child: const MaterialApp(home: InsightsScreen()),
+        ),
+      );
+      api.insightsCompleter.complete(
+        insightsResultFromFixture(patterns: [patternFixture(topic: 'coffee')]),
+      );
+      api.whenCompleter.complete(whenInsightsFromFixture());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Coffee'), findsOneWidget);
+      expect(find.text('Worth trying'), findsNothing);
+    });
   });
 
   testWidgets(
@@ -588,15 +729,21 @@ void main() {
 InsightsResult insightsResultFromFixture({List<Pattern> patterns = const []}) =>
     InsightsResult(patterns, const [], 0, false, EngineConstants.placeholder);
 
-Pattern patternFixture({String topic = 'coffee'}) => Pattern(
-  'pattern-1',
+Pattern patternFixture({
+  String id = 'pattern-1',
+  String topic = 'coffee',
+  PatternDirection direction = PatternDirection.change,
+  Recommendation? recommendation,
+  List<PatternEvidence> evidence = const [],
+}) => Pattern(
+  id,
   PatternKind.forward,
   topic,
   null,
   4,
   4,
   PatternStatus.active,
-  PatternDirection.change,
+  direction,
   'A narrative.',
   'A suggestion.',
   4,
@@ -614,9 +761,23 @@ Pattern patternFixture({String topic = 'coffee'}) => Pattern(
   null,
   null,
   const [],
-  const [],
+  evidence,
   DateTime.utc(2026, 8, 20),
+  recommendation,
 );
+
+/// R-1: a "Worth trying" recommendation, with defaults matching
+/// [patternFixture]'s own topic so a test can pair the two without
+/// restating the topic twice.
+Recommendation recommendationFixture({
+  String actionTopic = 'coffee',
+  String headline = 'Keep doing coffee',
+  String sentence =
+      'On days with coffee, calm is 2.4× more likely '
+      "(4 of 5 with vs 6 of 25 without). Keep doing coffee — here's the "
+      'evidence.',
+  String patternRef = 'pattern-1',
+}) => Recommendation(actionTopic, headline, sentence, patternRef);
 
 WhenInsights whenInsightsFromFixture() => const WhenInsights(
   30,

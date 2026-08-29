@@ -133,6 +133,25 @@ class const Confounder(
   final String note,
 );
 
+/// R-1: a "Worth trying" card, attached to the pattern it was derived from.
+///
+/// [headline] and [sentence] arrive fully composed from the backend and are
+/// rendered verbatim -- see `RecommendationOut` in
+/// `backend/src/insights/patterns.service.ts`. This client does not turn
+/// [actionTopic] back into prose; that is exactly the re-deriving
+/// `mobile/CLAUDE.md`'s "the backend owns the logic" forbids, the same rule
+/// every other field on [Pattern] already follows.
+class const Recommendation(
+  final String actionTopic,
+  final String headline,
+  final String sentence,
+
+  /// The owning [Pattern.id] -- not a second identifier to reconcile, just
+  /// the key of the card already in [InsightsResult.patterns] this one
+  /// points back at.
+  final String patternRef,
+);
+
 /// A detected, threshold-confirmed topic-feeling correlation from
 /// `GET /insights`.
 class const Pattern(
@@ -168,6 +187,13 @@ class const Pattern(
   final List<Confounder> confounders,
   final List<PatternEvidence> evidence,
   final DateTime lastUpdatedAt,
+
+  /// R-1: `null` for almost every pattern -- only the handful whose own
+  /// [direction] already reads [PatternDirection.keep] carry one. Absent
+  /// entirely on a backend that predates this field, which decodes the same
+  /// way as "this pattern did not qualify" (`recommendationFromJson`'s null
+  /// default, the same inert-default convention every field here follows).
+  final Recommendation? recommendation,
 );
 
 /// A pattern that went away, and the numbers that say why.
@@ -330,6 +356,20 @@ Confounder confounderFromJson(JsonObject json) => Confounder(
   json['note'] as String? ?? '',
 );
 
+/// Decodes one recommendation, or `null` when the field itself is absent or
+/// not an object -- both read as "this pattern did not qualify", never as an
+/// error, since an older backend and a pattern the engine did not promote
+/// are indistinguishable at the wire.
+Recommendation? recommendationFromJson(Object? json) {
+  if (json is! JsonObject) return null;
+  return Recommendation(
+    json['action_topic'] as String? ?? '',
+    json['headline'] as String? ?? '',
+    json['sentence'] as String? ?? '',
+    json['pattern_ref'] as String? ?? '',
+  );
+}
+
 /// Decodes one pattern.
 ///
 /// Every field the roadmap added carries a default, and the default is the
@@ -373,6 +413,7 @@ Pattern patternFromJson(JsonObject json, FeelingCatalog catalog) => Pattern(
       patternEvidenceFromJson(dto, catalog),
   ],
   _parseInstant(json['last_updated_at']! as String),
+  recommendationFromJson(json['recommendation']),
 );
 
 /// Decodes one withdrawal.

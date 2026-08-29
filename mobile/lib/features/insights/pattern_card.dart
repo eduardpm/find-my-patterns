@@ -64,7 +64,7 @@ class PatternCard extends StatefulWidget {
   final void Function(Pattern pattern)? onTestPattern;
 
   @override
-  State<PatternCard> createState() => _PatternCardState();
+  State<PatternCard> createState() => PatternCardState();
 }
 
 /// Which badge, if any, a pattern card shows for [pattern] (P0-2).
@@ -85,8 +85,25 @@ PatternDirection? patternBadgeFor(Pattern pattern) =>
       final badge => badge,
     };
 
-class _PatternCardState extends State<PatternCard> {
+/// [PatternCard]'s state, public only so a caller holding a
+/// `GlobalKey<PatternCardState>` can call [expandEvidence] on a specific
+/// card -- the tap-through mechanism the "Worth trying" section
+/// (`insights_screen.dart`'s `_WorthTryingSection`) uses to open a
+/// recommendation's own evidence trail without a route, per this card's own
+/// "expands in place ... never by navigating elsewhere" rule.
+class PatternCardState extends State<PatternCard> {
   bool _showEvidence = false;
+
+  /// Expands this card's evidence trail, as if "N entries" had been tapped.
+  ///
+  /// A no-op if it is already expanded. The caller is still responsible for
+  /// scrolling the card into view first (`Scrollable.ensureVisible` on this
+  /// state's own `context`) -- this method only ever changes what the card
+  /// shows, never where the viewport is looking.
+  void expandEvidence() {
+    if (_showEvidence) return;
+    setState(() => _showEvidence = true);
+  }
 
   @override
   void didUpdateWidget(covariant PatternCard oldWidget) {

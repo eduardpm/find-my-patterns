@@ -64,6 +64,10 @@ const pattern = (overrides: Partial<Pattern> = {}): Pattern => ({
     feeling_source: 'confirmed' as const,
   })),
   last_updated_at: '2026-08-26T09:00:00.000000',
+  // R-1: additive and null for almost every pattern — see `PatternRecommendation` in
+  // `src/domain/types.ts`. No surface here renders it yet (that is mobile's work), so the fixture
+  // just needs a value that type-checks.
+  recommendation: null,
   ...overrides,
 });
 

@@ -22,6 +22,8 @@ import {
   inverseNarrative,
   isStrong,
   percent,
+  recommendationHeadlineFor,
+  recommendationSentenceFor,
   seasonFor,
   suppressedByLift,
   timeOfDayBucket,
@@ -318,5 +320,40 @@ describe('passive context factors (#21)', () => {
     expect(contextNarrative('anxious', 'on Sundays', associationFrom(0, 0, 4, 20))).toBe(
       'You have no entries on Sundays in the last 30 days.',
     );
+  });
+});
+
+describe('"Worth trying" recommendation sentences (R-1)', () => {
+  it('states the protective case: an inverse pattern, negative feeling', () => {
+    // The badge that made this pattern qualify already reads 'keep' — see `badgeDirectionFor`
+    // (inverse + negative). This is exactly the issue's own worked example, minus the markdown
+    // bolding the issue's prose used only for emphasis in the ticket, never as literal copy.
+    const text = recommendationSentenceFor('inverse', 'anxious', 'exercise', 2.6667, 4, 6, 1, 4);
+    expect(text).toBe(
+      'On days without exercise, anxious is 2.7× more likely (4 of 6 without vs 1 of 4 with). ' +
+        "More exercise days may help — here's the evidence.",
+    );
+    // Task 3: association, never causation, and never imperative medical-ish advice.
+    expect(text).not.toMatch(/will fix|cure|prevent|guarantee|protects|causes|because/i);
+  });
+
+  it('states the symmetric case: a forward pattern, positive feeling — "keep doing"', () => {
+    const text = recommendationSentenceFor('forward', 'calm', 'reading', 4.5, 3, 4, 1, 6);
+    expect(text).toBe(
+      'On days with reading, calm is 4.5× more likely (3 of 4 with vs 1 of 6 without). ' +
+        "Keep doing reading — here's the evidence.",
+    );
+    expect(text).not.toMatch(/will fix|cure|prevent|guarantee|protects|causes|because/i);
+  });
+
+  it('rounds the lift to one decimal — the same precision the pattern card badge itself uses', () => {
+    expect(recommendationSentenceFor('inverse', 'sad', 'walking', 3, 5, 10, 1, 6)).toContain(
+      '3.0× more likely (5 of 10 without vs 1 of 6 with)',
+    );
+  });
+
+  it('gives each kind its own headline — not re-derivable from `action_topic` alone', () => {
+    expect(recommendationHeadlineFor('inverse', 'exercise')).toBe('More exercise days');
+    expect(recommendationHeadlineFor('forward', 'reading')).toBe('Keep doing reading');
   });
 });

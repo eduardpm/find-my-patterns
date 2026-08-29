@@ -77,6 +77,14 @@ export const MAX_WITHDRAWAL_RECORDS = 50;
 /** I1-06: inverse patterns rank by lift and are capped so they never flood the forward list. */
 export const MAX_INVERSE_PATTERNS = 5;
 
+/**
+ * R-1: how many patterns can carry a "Worth trying" recommendation at once, ranked by lift the same
+ * way `MAX_INVERSE_PATTERNS`/`MAX_CONTEXT_PATTERNS` cap their own lists. Not part of
+ * `EngineConstants` below, for the same reason those two aren't: it is a server-side flooding guard
+ * on how many cards get promoted, not a threshold a client evaluates a number against.
+ */
+export const MAX_RECOMMENDATIONS = 3;
+
 /** I5-02: a weekday or time bucket below this is reported as insufficient, never as an average. */
 export const MIN_BUCKET_ENTRIES = 3;
 

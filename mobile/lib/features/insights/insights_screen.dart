@@ -8,6 +8,7 @@ import '../../core/diary/calendar_date.dart';
 import '../../core/diary/experiment.dart';
 import '../../core/diary/pattern.dart';
 import '../../core/network/api_error.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_page_wash.dart';
@@ -50,6 +51,18 @@ class InsightsScreen extends ConsumerStatefulWidget {
 class _InsightsScreenState extends ConsumerState<InsightsScreen>
     with WidgetsBindingObserver {
   final ScrollController _scrollController = ScrollController();
+
+  /// One [GlobalKey] per pattern id, created lazily and kept for the life of
+  /// this state -- what a "Worth trying" tap needs to find and expand the
+  /// matching [PatternCard] (R-1). The list is rebuilt as a plain
+  /// `ListView(children: ...)`, not `.builder`, so every card already in
+  /// [InsightsPageState.patterns] is built up front and its key's
+  /// `currentContext` is available the moment this map is read -- there is
+  /// no "not scrolled into view yet" case to guard against here.
+  final Map<String, GlobalKey<PatternCardState>> _patternCardKeys = {};
+
+  GlobalKey<PatternCardState> _keyFor(String patternId) => _patternCardKeys
+      .putIfAbsent(patternId, () => GlobalKey<PatternCardState>());
 
   /// Whether the Insights tab was active the last time [didChangeDependencies]
   /// ran. Starts null so the very first call -- always fired once on mount,
@@ -124,6 +137,35 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
       if (!mounted) return;
       _showError(_messageFor(error));
     }
+  }
+
+  /// R-1's tap-through: scroll to the pattern named by [patternId] (a
+  /// recommendation's `patternRef`) and expand its evidence trail in place --
+  /// never a new route, per `PatternCard`'s own "expands in place ... never
+  /// by navigating elsewhere" rule.
+  ///
+  /// `currentContext` can be null if the pattern was withdrawn between the
+  /// response that produced this recommendation and the tap landing (task
+  /// 4's derived-per-request recommendations are exactly what makes that
+  /// possible) -- silently doing nothing is the right response, the same way
+  /// a stale withdrawal notice would simply not find its pattern either.
+  void _openRecommendedPattern(String patternId) {
+    final cardContext = _patternCardKeys[patternId]?.currentContext;
+    if (cardContext == null) return;
+    _patternCardKeys[patternId]?.currentState?.expandEvidence();
+    // Deferred a frame so the evidence trail's new height is already laid
+    // out before `ensureVisible` measures where the card sits.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          cardContext,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+          alignment: 0.1,
+        ),
+      );
+    });
   }
 
   void _showError(String message) => _showSnack(message);
@@ -232,6 +274,8 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
                           activeExperiment: data.activeExperiment,
                         ),
                       ),
+                      keyForPattern: _keyFor,
+                      onOpenRecommendation: _openRecommendedPattern,
                     ),
                 ],
               ),
@@ -278,17 +322,20 @@ class _FirstLoadState extends StatelessWidget {
   }
 }
 
-/// The page once data has arrived at least once: any withdrawals, the
-/// ranked pattern feed (or the insufficient-data empty state), and the
-/// "when" panel -- in that order, because the order is a requirement. See
-/// the section-by-section reasoning on [_WithdrawalsSection],
-/// `rankPatterns` (`pattern_ranking.dart`) and [WhenPanel].
+/// The page once data has arrived at least once: any withdrawals, the "Worth
+/// trying" recommendations, the ranked pattern feed (or the insufficient-data
+/// empty state), and the "when" panel -- in that order, because the order is
+/// a requirement. See the section-by-section reasoning on
+/// [_WithdrawalsSection], [_WorthTryingSection], `rankPatterns`
+/// (`pattern_ranking.dart`) and [WhenPanel].
 class _Content extends StatelessWidget {
   const _Content({
     required this.data,
     required this.onOpenEntry,
     required this.onAcknowledge,
     required this.onTestPattern,
+    required this.keyForPattern,
+    required this.onOpenRecommendation,
   });
 
   final InsightsPageState data;
@@ -296,10 +343,26 @@ class _Content extends StatelessWidget {
   final VoidCallback onAcknowledge;
   final void Function(Pattern pattern) onTestPattern;
 
+  /// Looks up (creating on first use) the [GlobalKey] a given pattern id's
+  /// [PatternCard] renders under -- what lets [onOpenRecommendation] find and
+  /// expand the right card without this widget itself holding any state.
+  final GlobalKey<PatternCardState> Function(String patternId) keyForPattern;
+
+  /// Called with a recommendation's `patternRef` when a "Worth trying" card
+  /// is tapped (R-1).
+  final void Function(String patternId) onOpenRecommendation;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final ranking = rankPatterns(data.patterns);
+    // R-1: already capped and ordered by the backend (task 1's "cap at top
+    // three by lift") -- this widget renders whichever patterns carry one,
+    // in the order given, rather than re-deriving the cap or the ranking.
+    final recommended = [
+      for (final pattern in data.patterns)
+        if (pattern.recommendation != null) pattern,
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -318,6 +381,16 @@ class _Content extends StatelessWidget {
           ),
           const SizedBox(height: JournalSpacing.x4),
         ],
+        // R-1: above the ranked pattern feed, below withdrawals -- the
+        // issue's own placement. Absent entirely when nothing qualifies,
+        // never an empty shell.
+        if (recommended.isNotEmpty) ...[
+          _WorthTryingSection(
+            patterns: recommended,
+            onTap: onOpenRecommendation,
+          ),
+          const SizedBox(height: JournalSpacing.x4),
+        ],
         if (data.insufficientData || data.patterns.isEmpty)
           _InsufficientDataState(constants: data.constants)
         else ...[
@@ -327,6 +400,7 @@ class _Content extends StatelessWidget {
           // full rather than being dropped once its evidence ages out.
           for (final pattern in ranking.confirmed) ...[
             PatternCard(
+              key: keyForPattern(pattern.id),
               pattern: pattern,
               constants: data.constants,
               onOpenEntry: onOpenEntry,
@@ -412,6 +486,136 @@ class _WithdrawalsSection extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// R-1: up to a handful of patterns whose own badge already reads "keep",
+/// surfaced as compact "Worth trying" cards above the ranked pattern feed.
+///
+/// Tinted with `journal.accent`/`accentContainer` rather than the neutral
+/// `JournalCard` surface every pattern card and [_WithdrawalsSection] use --
+/// the same accent pairing [PatternCard] already reaches for on its own
+/// "Without it" badge -- so this reads as a different *kind* of thing (an
+/// action worth considering) without introducing a colour the rest of the
+/// screen does not already use. [patterns] arrives already capped and
+/// ordered by the backend (task 1's top-three-by-lift rule); this widget
+/// never re-sorts or re-slices it.
+class _WorthTryingSection extends StatelessWidget {
+  const _WorthTryingSection({required this.patterns, required this.onTap});
+
+  /// Patterns carrying a non-null [Pattern.recommendation].
+  final List<Pattern> patterns;
+
+  /// Called with the tapped pattern's own id when a card is tapped, so the
+  /// caller can scroll to and expand the matching [PatternCard].
+  final void Function(String patternId) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final journal = context.journalColors;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(JournalSpacing.x4),
+      decoration: BoxDecoration(
+        color: journal.accentContainer,
+        borderRadius: JournalShapes.large,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome, size: 18, color: journal.accent),
+              const SizedBox(width: JournalSpacing.x2),
+              Text('Worth trying', style: theme.textTheme.titleLarge),
+            ],
+          ),
+          const SizedBox(height: JournalSpacing.x3),
+          for (var index = 0; index < patterns.length; index += 1) ...[
+            _RecommendationTile(
+              pattern: patterns[index],
+              onTap: () => onTap(patterns[index].id),
+            ),
+            if (index != patterns.length - 1)
+              const SizedBox(height: JournalSpacing.x2),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One compact "Worth trying" card: the action headline, the evidence
+/// sentence with its counts, and a tap target -- never a navigation, an
+/// expansion of the matching [PatternCard] handled entirely by the caller's
+/// [_WorthTryingSection.onTap].
+///
+/// [Pattern.recommendation]'s [Recommendation.headline] and
+/// [Recommendation.sentence] are rendered exactly as received (R-0, task 3):
+/// this widget composes no prose of its own, and in particular never turns
+/// [Recommendation.actionTopic] back into a sentence -- see
+/// [Recommendation]'s own doc comment.
+class _RecommendationTile extends StatelessWidget {
+  const _RecommendationTile({required this.pattern, required this.onTap});
+
+  final Pattern pattern;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // Guarded by the caller ([_WorthTryingSection] only ever receives
+    // patterns whose `recommendation` is non-null), so this is a plain
+    // unwrap, not a fallback.
+    final recommendation = pattern.recommendation!;
+    return Material(
+      color: Colors.transparent,
+      borderRadius: JournalShapes.medium,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: JournalShapes.medium,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(JournalSpacing.x3),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainer,
+            borderRadius: JournalShapes.medium,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      recommendation.headline,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: JournalSpacing.x1),
+                    // R-0: this sentence carries its own counts -- there is
+                    // no rendering of a recommendation without them.
+                    Text(
+                      recommendation.sentence,
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: JournalSpacing.x2),
+              Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

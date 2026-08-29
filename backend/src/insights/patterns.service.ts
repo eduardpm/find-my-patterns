@@ -30,6 +30,8 @@ import {
   inverseNarrative,
   isMixedValence,
   isStrong,
+  recommendationHeadlineFor,
+  recommendationSentenceFor,
   suppressedByLift,
   templateSuggestionFor,
   withinWindow,
@@ -41,6 +43,7 @@ import {
   CONTEXT_FACTORS,
   MAX_CONTEXT_PATTERNS,
   MAX_INVERSE_PATTERNS,
+  MAX_RECOMMENDATIONS,
   MAX_WITHDRAWAL_RECORDS,
   MIN_COMPARISON_ENTRIES,
   MIN_LIFT,
@@ -125,6 +128,27 @@ export interface ConfounderOut {
   note: string;
 }
 
+/**
+ * R-1: a "Worth trying" card, attached to the pattern it was derived from.
+ *
+ * `action_topic` is the bare topic name (e.g. `exercise`) — useful for a client that wants to key
+ * off it (analytics, de-duplication), but deliberately not the only thing a client has to build a
+ * headline from. `headline` and `sentence` are sent fully composed, in the exact wording
+ * `mobile/CLAUDE.md`'s "the backend owns the logic" requires: a client that turned `action_topic`
+ * back into "More exercise days" itself would be re-deriving copy this file already decided, the
+ * same mistake that rule exists to rule out for every count and rate elsewhere in this payload.
+ *
+ * `pattern_ref` is the owning `PatternOut.id` — not a new identifier — so "tap through to the
+ * pattern" is "find the card already in `patterns` whose `id` matches this", never a second lookup
+ * the client has to reconcile against the first.
+ */
+export interface RecommendationOut {
+  action_topic: string;
+  headline: string;
+  sentence: string;
+  pattern_ref: string;
+}
+
 export interface PatternOut {
   id: string;
   kind: PatternKind;
@@ -155,6 +179,14 @@ export interface PatternOut {
   confounders: ConfounderOut[];
   evidence: EvidenceOut[];
   last_updated_at: string;
+  /**
+   * R-1: `null` for almost every pattern — only the top `MAX_RECOMMENDATIONS` by lift among those
+   * whose `direction` is `'keep'` carry one (see `listPatterns`'s recommendation pass). Additive:
+   * an older client that has never heard of this field ignores it exactly as it already ignores any
+   * other key it does not decode (`mobile/lib/core/diary/pattern.dart`'s null-tolerant casts, and
+   * likewise on `web/`).
+   */
+  recommendation: RecommendationOut | null;
 }
 
 /**
@@ -1464,8 +1496,14 @@ export class PatternsService {
         })),
         evidence: evidence.get(String(r.id)) ?? [],
         last_updated_at: serializeDateTime(decodeDateTime(String(r.last_updated_at))),
+        // Filled in below, for the handful of patterns that qualify — never persisted (task 4):
+        // computed fresh from this same row on every read, so a pattern that withdraws takes its
+        // recommendation with it with no separate cleanup step.
+        recommendation: null,
       };
     });
+
+    this.attachRecommendations(patterns);
 
     // Active first, then strongest, then most evidence — and `id` last, always. Patterns written
     // in one recompute share a timestamp to the microsecond, and any sort without a total order
@@ -1478,6 +1516,58 @@ export class PatternsService {
         (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     return patterns;
+  }
+
+  /**
+   * R-1: mutate the top `MAX_RECOMMENDATIONS` qualifying patterns in place, attaching the "Worth
+   * trying" card each one earns.
+   *
+   * "Qualifying" is deliberately not a second rule re-derived here: a pattern qualifies exactly
+   * when its own `direction` — already decided by `badgeDirectionFor` a few lines above, the one
+   * place P0-2/P0-6 make that call — reads `'keep'`. That is precisely the issue's two cases at
+   * once: an inverse pattern whose feeling is negative (the topic's absence coincides with feeling
+   * bad, so the topic is protective) and a forward pattern whose feeling is positive (the topic
+   * coincides with feeling good, so it is worth continuing) — see `badgeDirectionFor`'s doc comment
+   * for why those are not mirrors of each other. `'keep'` also guarantees `lift` is a defined number
+   * at or above `MIN_LIFT` (P0-6's early return), which is what makes it safe to hand to
+   * `recommendationSentenceFor` — a function that takes `lift: number`, not `number | null`, because
+   * a caller that got here with an undefined lift already has a bug.
+   *
+   * Ranked and capped with the exact same tiebreak `buildCandidates` uses for the inverse-pattern
+   * cap (C-02): lift first, then window count, then topic name + feeling — never `id`, which carries
+   * a random UUID that would make two clients disagree about which three patterns are "the" top
+   * three on the same diary.
+   */
+  private attachRecommendations(patterns: PatternOut[]): void {
+    const qualifying = patterns.filter(
+      (pattern): pattern is PatternOut & { kind: 'forward' | 'inverse'; lift: number } =>
+        pattern.direction === 'keep' &&
+        (pattern.kind === 'forward' || pattern.kind === 'inverse') &&
+        pattern.lift !== null,
+    );
+    qualifying.sort(
+      (a, b) =>
+        b.lift - a.lift ||
+        b.occurrence_count - a.occurrence_count ||
+        `${a.topic} ${a.feeling}`.localeCompare(`${b.topic} ${b.feeling}`),
+    );
+    for (const pattern of qualifying.slice(0, MAX_RECOMMENDATIONS)) {
+      pattern.recommendation = {
+        action_topic: pattern.topic,
+        headline: recommendationHeadlineFor(pattern.kind, pattern.topic),
+        sentence: recommendationSentenceFor(
+          pattern.kind,
+          pattern.feeling,
+          pattern.topic,
+          pattern.lift,
+          pattern.present_count,
+          pattern.present_total,
+          pattern.absent_count,
+          pattern.absent_total,
+        ),
+        pattern_ref: pattern.id,
+      };
+    }
   }
 
   /**
