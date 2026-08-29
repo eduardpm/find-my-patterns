@@ -17,6 +17,7 @@ import request from 'supertest';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
+import { localDateString } from '../helpers/dates';
 
 let h: Harness;
 const server = () => h.app.getHttpServer();
@@ -53,16 +54,27 @@ async function write(text: string, feelings: string[], daysAgo = 0): Promise<Wri
   return confirmed;
 }
 
-/** The API always files a new entry under today; this is how a test puts one in the past. */
+/**
+ * The API always files a new entry under today; this is how a test puts one in the past.
+ *
+ * #125: `entry_date` is filed under `todayLocal()` (`db/codecs.ts`) and an experiment's
+ * `start_date`/`end_date` are computed from that same clock (`ExperimentsService.create`) — both
+ * local-calendar, not UTC. This used to compute `when` as
+ * `new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10)`, which reads the UTC
+ * calendar date off a UTC-instant subtraction. That agrees with `todayLocal()` every day except
+ * the window between local midnight and UTC midnight, where `daysAgo=0` silently backdated an
+ * entry to *yesterday's* UTC date while every other clock in this test (and in production) called
+ * that day "today" — the same divergence `entries-write.test.ts` had, one step removed.
+ * `localDateString` (`tests/helpers/dates.ts`) does the equivalent local-calendar arithmetic.
+ */
 function backdate(entryId: string, daysAgo: number): void {
   const db = new Database(h.dbPath);
-  const when = new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+  const when = localDateString(-daysAgo);
   db.prepare('UPDATE diary_entries SET entry_date = ? WHERE id = ?').run(when, entryId);
   db.close();
 }
 
-const dateDaysAgo = (daysAgo: number): string =>
-  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+const dateDaysAgo = (daysAgo: number): string => localDateString(-daysAgo);
 
 // -------------------------------------------------------------------------------------------
 // Wire shapes

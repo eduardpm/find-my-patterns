@@ -9,6 +9,7 @@
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootOnCopy, teardown, type Harness } from '../helpers/app';
+import { localDateString, utcDateString } from '../helpers/dates';
 
 let h: Harness;
 const server = () => h.app.getHttpServer();
@@ -47,21 +48,6 @@ describe('POST /entries', () => {
   });
 });
 
-/**
- * Local-calendar date math matching `todayLocal()` (`db/codecs.ts`): both this helper and the
- * server read the local `Date` getters, on the same machine/process, so the two never disagree
- * about which day "today" or "31 days ago" is — even across a month or year boundary, which
- * `setDate` rolls over correctly.
- */
-function localDateString(offsetDays: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 describe('POST /entries — entry_date (#36)', () => {
   it('omitted, files the entry under today, exactly as before', async () => {
     const body = await create('A quiet day.');
@@ -80,7 +66,10 @@ describe('POST /entries — entry_date (#36)', () => {
     expect(body.entry_date).toBe(target);
     // created_at is a full timestamp; only its date component is compared, against *today* (not
     // the backdated entry_date) — the two are independent (data-model.md's existing distinction).
-    expect(String(body.created_at).slice(0, 10)).toBe(localDateString(0));
+    // #125: created_at is written with nowUtc() (codecs.ts), so it must be checked against the
+    // UTC date, not localDateString(0) — the two disagree between local midnight and UTC midnight,
+    // which is exactly the window this assertion used to get wrong.
+    expect(String(body.created_at).slice(0, 10)).toBe(utcDateString(0));
   });
 
   it('accepts a date exactly 30 days back — the inclusive boundary', async () => {
