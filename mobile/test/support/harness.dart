@@ -11,9 +11,9 @@ import 'package:find_my_patterns/features/compose/entry_composer_controller.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'fake_composer_draft_store.dart';
 import '../core/notifications/fake_device_time_zone.dart';
 import '../core/notifications/fake_notifications_plugin.dart';
+import 'fake_composer_draft_store.dart';
 import 'fake_http.dart';
 import 'fake_settings_store.dart';
 
@@ -45,6 +45,7 @@ class Harness {
 
   /// The in-memory composer-draft store the app reads and writes.
   final FakeComposerDraftStore draftStore;
+
   /// The fake plugin behind [baseOverrides]' `reminderServiceProvider`.
   ///
   /// Exposed so a test can assert on what got scheduled, or script a
