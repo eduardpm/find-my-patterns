@@ -15,6 +15,7 @@ import '../../core/notifications/reminder_providers.dart';
 import 'composer_draft.dart';
 import 'first_pattern_copy.dart';
 import 'first_pattern_notified_store.dart';
+import 'pairing_step.dart';
 
 /// The store the composer reads and writes its in-progress draft through.
 ///
@@ -53,6 +54,16 @@ final class const FreeformStage() extends ComposerStage;
 
 /// The entry at [entry] is stored; the reader is choosing how it felt.
 final class const ConfirmFeelingStage(final Entry entry) extends ComposerStage;
+
+/// "Which goes with what?" (E-1c) -- [entry]'s feelings are confirmed and
+/// span both valences, and at least two of its topics carry a pairing
+/// suggestion, so there is something genuinely ambiguous to resolve before
+/// moving on. Reached from [ConfirmFeelingStage] only when
+/// [needsPairingStep] says so (see
+/// `EntryComposerController._afterFeelingsConfirmed`) -- every single-valence
+/// entry, and every mixed one with fewer than two suggested pairings, skips
+/// straight past this the way it always has.
+final class const PairingStage(final Entry entry) extends ComposerStage;
 
 /// What the diary already had to say about the topics in the entry just
 /// stored.
@@ -140,13 +151,15 @@ class const ComposerState({
   ///
   /// Deliberately false outside [GuidedStage] and [FreeformStage]: once the
   /// flow reaches [ConfirmFeelingStage] the entry is already stored, so
-  /// leaving it with no confirmed feelings is an intentional allowed state,
-  /// not something to warn about.
+  /// leaving it with no confirmed feelings -- or, further on, with an unpaired
+  /// mixed-valence entry (E-1c's [PairingStage], honest by design about
+  /// leaving a pairing unresolved) -- is an intentional allowed state, not
+  /// something to warn about.
   bool get hasUnsavedComposition {
     final mode = switch (stage) {
       GuidedStage() => ComposerDraftMode.guided,
       FreeformStage() => ComposerDraftMode.freeform,
-      ConfirmFeelingStage() || EchoStage() => null,
+      ConfirmFeelingStage() || PairingStage() || EchoStage() => null,
     };
     if (mode == null) return false;
     return composerDraftHasContent(
@@ -195,7 +208,9 @@ class const ComposerState({
   );
 }
 
-/// Drives the four-stage "new entry" flow.
+/// Drives the "new entry" flow -- see [ComposerStage] for its stages,
+/// including [PairingStage] (E-1c), which only some mixed-valence entries
+/// pass through.
 ///
 /// The three background loads in [build] run one after another rather than
 /// concurrently: partly so a test's scripted HTTP replies land in a
@@ -641,13 +656,10 @@ class EntryComposerController extends Notifier<ComposerState> {
   /// at [entryId]/[version].
   ///
   /// Returns `true` when the flow is finished and the caller should return
-  /// to Today: there was nothing to echo back and nothing to celebrate (see
-  /// [EchoStage.celebratedPattern], L-3/#38), or the echo fetch itself
-  /// failed with no celebration either (a failed echo is not worth
-  /// interrupting a finished entry for). Returns `false` when
-  /// [ComposerState.stage] moved to [EchoStage] instead, or when the
-  /// confirmation itself failed and [ComposerState.errorMessage] now
-  /// explains why.
+  /// to Today; returns `false` when [ComposerState.stage] moved on to
+  /// [PairingStage] or [EchoStage] instead, or when the confirmation itself
+  /// failed and [ComposerState.errorMessage] now explains why. See
+  /// [_afterFeelingsConfirmed] for what decides between those first two.
   Future<bool> confirmFeelings({
     required String entryId,
     required int version,
@@ -668,12 +680,11 @@ class EntryComposerController extends Notifier<ComposerState> {
       switch (mutation) {
         case EntryUpdated(:final entry):
           state = state.copyWith(isSaving: false);
-          // The entry is stored for good at this point, whether or not an
-          // echo panel follows -- see diaryWriteSignalProvider.
+          // The entry is stored for good at this point, whether or not a
+          // pairing step or echo panel follows -- see
+          // diaryWriteSignalProvider.
           ref.read(diaryWriteSignalProvider.notifier).bump();
-          final celebrate = await _checkFirstPattern();
-          if (!ref.mounted) return false;
-          return await _loadEcho(entry.id, celebrate: celebrate);
+          return await _afterFeelingsConfirmed(entry);
         case EntryRemoved():
           state = state.copyWith(
             isSaving: false,
@@ -689,6 +700,72 @@ class EntryComposerController extends Notifier<ComposerState> {
       state = state.copyWith(isSaving: false, errorMessage: error.message);
       return false;
     }
+  }
+
+  /// Decides whether [entry] needs E-1c's "Which goes with what?" pairing
+  /// step, and either enters it or runs straight through to the
+  /// celebration/echo tail every confirm ends with -- see [needsPairingStep]
+  /// for the gate and [_finishConfirm] for that shared tail.
+  ///
+  /// Split out of [confirmFeelings] so [confirmPairing] can reach the exact
+  /// same tail once the pairing step itself resolves, without repeating the
+  /// first-pattern/echo sequencing here a second time.
+  Future<bool> _afterFeelingsConfirmed(Entry entry) async {
+    if (needsPairingStep(entry)) {
+      state = state.copyWith(stage: PairingStage(entry));
+      return false;
+    }
+    return _finishConfirm(entry.id);
+  }
+
+  /// Stores the pairing set the user landed on for [entryId] (E-1c task 5),
+  /// via `PUT /entries/{id}/topic-feelings`, then continues to whatever
+  /// [_finishConfirm] would otherwise show.
+  ///
+  /// [pairings] carries every topic's *current* assignment, feeling-linked
+  /// or not -- the caller ([PairingStep.onConfirm]) always sends the whole
+  /// board, matching the endpoint's own full-replace contract
+  /// (`EntriesApi.setTopicFeelings`). This is a genuinely different action
+  /// from [skipPairing]: it always performs a write, even one that happens
+  /// to match the analyser's own suggestion exactly (which the backend then
+  /// records as `'confirmed'` rather than `'overridden'` -- a distinction
+  /// this client has no say in, per `EntriesService
+  /// .setTopicFeelingPairings`'s doc comment).
+  Future<bool> confirmPairing({
+    required String entryId,
+    required List<TopicFeelingAssignment> pairings,
+  }) async {
+    state = state.copyWith(isSaving: true, errorMessage: null);
+    try {
+      final entry = await ref
+          .read(entriesApiProvider)
+          .setTopicFeelings(id: entryId, pairings: pairings);
+      if (!ref.mounted) return false;
+      state = state.copyWith(isSaving: false);
+      return await _finishConfirm(entry.id);
+    } on ApiError catch (error) {
+      if (!ref.mounted) return false;
+      state = state.copyWith(isSaving: false, errorMessage: error.message);
+      return false;
+    }
+  }
+
+  /// Skips the pairing step for [entryId] (E-1c task 3): no request is made
+  /// at all -- see `EntriesApi.setTopicFeelings`'s doc comment for why an
+  /// empty write is not the same thing -- and the flow proceeds exactly as
+  /// it would for an entry [needsPairingStep] never flagged in the first
+  /// place.
+  Future<bool> skipPairing(String entryId) => _finishConfirm(entryId);
+
+  /// The tail every confirm reaches once its feelings, and -- for a mixed
+  /// entry -- its pairings, are settled: the first-pattern celebration check
+  /// (L-3/#38), then whatever this entry's own topics echo back. Shared by
+  /// [_afterFeelingsConfirmed] (the ordinary, non-mixed path) and
+  /// [confirmPairing]/[skipPairing] (the two ways [PairingStage] can end).
+  Future<bool> _finishConfirm(String entryId) async {
+    final celebrate = await _checkFirstPattern();
+    if (!ref.mounted) return false;
+    return await _loadEcho(entryId, celebrate: celebrate);
   }
 
   /// Loads this entry's own pattern echoes and moves to [EchoStage] if

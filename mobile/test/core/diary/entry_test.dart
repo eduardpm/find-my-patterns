@@ -50,6 +50,22 @@ void main() {
     });
   });
 
+  group('TopicFeelingPairing', () {
+    test('holds its fields', () {
+      const feeling = Feeling('warm', 'Warm', Valence.positive, 'uplifted');
+      const pairing = TopicFeelingPairing(
+        'topic-1',
+        'family',
+        feeling,
+        FeelingSource.confirmed,
+      );
+      expect(pairing.topicId, 'topic-1');
+      expect(pairing.topicName, 'family');
+      expect(pairing.feeling, feeling);
+      expect(pairing.source, FeelingSource.confirmed);
+    });
+  });
+
   group('entryFromJson', () {
     const happy = Feeling('happy', 'Happy', Valence.positive, 'uplifted');
     const sad = Feeling('sad', 'Sad', Valence.negative, 'low');
@@ -334,6 +350,69 @@ void main() {
           catalog,
         );
         expect(entry.topics.map((t) => t.name), ['walking']);
+      },
+    );
+
+    test('topicFeelings defaults to empty when absent (E-1a)', () {
+      final entry = entryFromJson(baseJson(), catalog);
+      expect(entry.topicFeelings, isEmpty);
+    });
+
+    test(
+      'topicFeelings are decoded with the topic, the resolved feeling and '
+      'the source',
+      () {
+        final entry = entryFromJson(
+          baseJson(
+            overrides: {
+              'topic_feelings': [
+                {
+                  'topic_id': 'topic-1',
+                  'topic': 'walking',
+                  'feeling_key': 'sad',
+                  'source': 'suggested',
+                },
+                {
+                  'topic_id': 'topic-2',
+                  'topic': 'family',
+                  'feeling_key': 'happy',
+                  'source': 'confirmed',
+                },
+              ],
+            },
+          ),
+          catalog,
+        );
+        expect(entry.topicFeelings, hasLength(2));
+        final first = entry.topicFeelings.first;
+        expect(first.topicId, 'topic-1');
+        expect(first.topicName, 'walking');
+        expect(first.feeling, sad);
+        expect(first.source, FeelingSource.suggested);
+        expect(entry.topicFeelings.last.source, FeelingSource.confirmed);
+      },
+    );
+
+    test(
+      'a topic_feelings row naming a feeling key this catalog has never '
+      'seen is dropped rather than kept half-built',
+      () {
+        final entry = entryFromJson(
+          baseJson(
+            overrides: {
+              'topic_feelings': [
+                {
+                  'topic_id': 'topic-1',
+                  'topic': 'walking',
+                  'feeling_key': 'unknown_future_feeling',
+                  'source': 'suggested',
+                },
+              ],
+            },
+          ),
+          catalog,
+        );
+        expect(entry.topicFeelings, isEmpty);
       },
     );
   });

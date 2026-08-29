@@ -65,6 +65,30 @@ class const GuidedAnswer(
 /// One feeling the analyser proposed, and how sure it was.
 class const SuggestedFeeling(final Feeling feeling, final double confidence);
 
+/// One topic linked to one feeling on this entry (E-1a), as served on
+/// `entries[].topic_feelings`.
+///
+/// Distinct from [Topic] (`entries[].topics`, in `topic.dart`): that field
+/// lists every topic the engine extracted for the entry, paired or not; this
+/// one is flattened to a single row per (topic, feeling) pair that actually
+/// exists, so a topic with no pairing simply has no row here at all --
+/// `topic.dart`'s own doc comment on [Topic] spells out that relationship.
+///
+/// [source] reuses [FeelingSource]'s three-state vocabulary because a
+/// pairing goes through the identical suggest/confirm/override lifecycle a
+/// feeling does: the analyser proposes it (`'suggested'`), and the user
+/// either leaves it (`'confirmed'`), moves it to a different feeling
+/// (`'overridden'`), or never reaches this at all -- the pairing step (E-1c)
+/// only ever shows for a mixed-valence entry with at least two such
+/// suggestions, so most entries' topics never acquire a row here beyond
+/// whatever the worker proposed.
+class const TopicFeelingPairing(
+  final String topicId,
+  final String topicName,
+  final Feeling feeling,
+  final FeelingSource source,
+);
+
 /// A single diary entry. Entries are never merged — each has its own id and
 /// timestamp even if several exist on the same [entryDate].
 class const Entry(
@@ -131,6 +155,13 @@ class const Entry(
   /// whether it was ever paired with a feeling. Empty when the entry has
   /// none, which is every entry before extraction has run.
   final List<Topic> topics = const [],
+
+  /// Every topic-to-feeling pairing stored for this entry (E-1a), one row
+  /// per pair -- see [TopicFeelingPairing]. Empty for every entry an older
+  /// backend served, for one this build could not resolve every pairing's
+  /// feeling key against [FeelingCatalog] for, and for the ordinary case of
+  /// an entry with no pairings to show at all.
+  final List<TopicFeelingPairing> topicFeelings = const [],
 });
 
 /// Matches a trailing `Z` or a numeric UTC offset such as `+02:00`.
@@ -175,6 +206,8 @@ Entry entryFromJson(JsonObject json, FeelingCatalog catalog) {
       (json['feeling_intensities'] as JsonObject?)?.cast<String, int>() ??
       const {};
   final topics = (json['topics'] as List<Object?>?)?.cast<JsonObject>();
+  final topicFeelings = (json['topic_feelings'] as List<Object?>?)
+      ?.cast<JsonObject>();
 
   return Entry(
     json['id']! as String,
@@ -216,6 +249,28 @@ Entry entryFromJson(JsonObject json, FeelingCatalog catalog) {
     topics: [
       for (final dto in topics ?? const <JsonObject>[]) topicFromJson(dto),
     ],
+    // Absent means an older backend that has never heard of pairings at all
+    // (E-1a); a present but unresolvable row (a `feeling_key` this build's
+    // catalog does not carry) is dropped rather than kept half-built, the
+    // same defensive rule `_suggestedFeelingFromJson` follows below.
+    topicFeelings: [
+      for (final dto in topicFeelings ?? const <JsonObject>[])
+        ?_topicFeelingPairingFromJson(dto, catalog),
+    ],
+  );
+}
+
+TopicFeelingPairing? _topicFeelingPairingFromJson(
+  JsonObject json,
+  FeelingCatalog catalog,
+) {
+  final feeling = catalog.fromKey(json['feeling_key'] as String?);
+  if (feeling == null) return null;
+  return TopicFeelingPairing(
+    json['topic_id']! as String,
+    json['topic']! as String,
+    feeling,
+    FeelingSource.fromWire(json['source'] as String?),
   );
 }
 

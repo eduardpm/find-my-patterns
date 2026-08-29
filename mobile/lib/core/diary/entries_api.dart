@@ -78,6 +78,17 @@ EntryOutOfDate? entryMutationFromConflict(
   return EntryOutOfDate(message, entryFromJson(current, catalog));
 }
 
+/// One topic assigned to one feeling, as sent to [EntriesApi.setTopicFeelings]
+/// -- the input side of `PUT /entries/{id}/topic-feelings` (E-1a/E-1c).
+///
+/// Deliberately carries no `source`: `topicFeelingPairingInputSchema`
+/// (`backend/src/common/validation.ts`) has no such field, and
+/// `EntriesService.setTopicFeelingPairings` derives `confirmed` vs
+/// `overridden` itself, per pair, by comparing each one against what the
+/// analyser last suggested. This client only ever reports the pairing the
+/// user landed on, never a verdict about how it got there.
+typedef TopicFeelingAssignment = ({String topicId, String feelingKey});
+
 /// Talks to `POST/PATCH/DELETE/GET /entries` and maps wire DTOs onto the
 /// domain [Entry] model.
 ///
@@ -215,6 +226,48 @@ class EntriesApi {
       intensities: intensities,
     ),
   );
+
+  /// Stores the confirmed/overridden topic↔feeling pairing set for entry
+  /// [id] (E-1a/E-1c), replacing whatever was stored before, via
+  /// `PUT /entries/{id}/topic-feelings`.
+  ///
+  /// **Skipping the pairing step must never call this with an empty
+  /// [pairings] list.** `topicFeelingsUpdateSchema`'s own doc comment
+  /// (`backend/src/common/validation.ts`) calls an empty array "a
+  /// legitimate answer: none of these topics pair with a feeling" -- an
+  /// affirmative, stored decision. Per `excludedUnpaired` in
+  /// `backend/src/insights/patterns.service.ts`, that decision permanently
+  /// excludes the entry from mixed-valence counting, and
+  /// `EntriesService.setTopicFeelingPairings` deletes the entry's whole
+  /// `entry_topic_feelings` row set -- including the analyser's own
+  /// `'suggested'` rows -- before writing whatever was sent. A genuine skip
+  /// (E-1c task 3, "skipped pairings are never guessed") must leave the
+  /// entry exactly as it was: still carrying zero *confirmed* rows (so
+  /// `excludedUnpaired` still counts it as unpaired, precisely the state a
+  /// skip is supposed to reach), but with the `'suggested'` rows intact for
+  /// later. There is deliberately no `EntriesApi` method for "skip" --
+  /// simply not calling this one is what skipping means.
+  ///
+  /// No `version` travels with this call, unlike [update]/[confirmFeelings]:
+  /// `topicFeelingsUpdateSchema` carries no such field, so this endpoint has
+  /// no optimistic-concurrency check of its own and there is no `409`/
+  /// [EntryMutation] case to translate here.
+  Future<Entry> setTopicFeelings({
+    required String id,
+    required List<TopicFeelingAssignment> pairings,
+  }) async {
+    final catalog = await _feelings.catalog();
+    return _client.putObject(
+      AppConfig.entryTopicFeelingsPath(id),
+      (json) => entryFromJson(json, catalog),
+      body: {
+        'pairings': [
+          for (final pairing in pairings)
+            {'topic_id': pairing.topicId, 'feeling_key': pairing.feelingKey},
+        ],
+      },
+    );
+  }
 
   Future<EntryMutation> _patch(String id, JsonObject body) async {
     final catalog = await _feelings.catalog();

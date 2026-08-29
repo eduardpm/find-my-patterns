@@ -14,6 +14,7 @@ import 'package:find_my_patterns/features/compose/entry_composer_controller.dart
 import 'package:find_my_patterns/features/compose/entry_composer_screen.dart';
 import 'package:find_my_patterns/features/compose/first_pattern_card.dart';
 import 'package:find_my_patterns/features/compose/first_pattern_copy.dart';
+import 'package:find_my_patterns/features/compose/pairing_step.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -390,6 +391,244 @@ void main() {
       await tester.tap(find.widgetWithText(ElevatedButton, 'Done'));
       expect(done, isTrue);
     });
+  });
+
+  group('the pairing step (E-1c)', () {
+    /// A mixed-valence entry (`happy` + `sad`) with two suggested pairings
+    /// -- the shape that gates the pairing step -- carrying both
+    /// `suggested_feelings` (so Confirm is enabled without hand-picking on
+    /// the confirm-feeling step) and matching `feeling_keys`.
+    Map<String, Object?> mixedEntryJson({int version = 1}) => entryJson(
+      version: version,
+      feelingKeys: const ['happy', 'sad'],
+      suggestedFeelings: [
+        suggestedFeelingJson(key: 'happy'),
+        suggestedFeelingJson(key: 'sad'),
+      ],
+      topics: [
+        topicJson(id: 'topic-1', name: 'exercise'),
+        topicJson(id: 'topic-2', name: 'family'),
+      ],
+      topicFeelings: [
+        topicFeelingJson(
+          topicId: 'topic-1',
+          topic: 'exercise',
+          feelingKey: 'sad',
+        ),
+        topicFeelingJson(
+          topicId: 'topic-2',
+          topic: 'family',
+          feelingKey: 'happy',
+        ),
+      ],
+    );
+
+    /// Saves a freeform entry and taps Confirm, landing on whichever stage
+    /// that reaches -- shared by every test below.
+    Future<void> saveAndConfirmFeelings(WidgetTester tester) async {
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Write freely instead'));
+      await tester.pump();
+      await tester.enterText(
+        find.byType(TextFormField),
+        'Missed my run and felt disappointed, but a long call with my '
+        'parents was lovely.',
+      );
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+      await tester.pumpAndSettle();
+      final confirmButton = find.widgetWithText(ElevatedButton, 'Confirm');
+      await tester.ensureVisible(confirmButton);
+      await tester.tap(confirmButton);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+      'a mixed-valence entry with two suggested pairings shows the pairing '
+      'step, pre-filled from the suggestion',
+      (tester) async {
+        final harness = Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter([
+            ...bootReplies(),
+            FakeReply(200, body: mixedEntryJson()), // POST /entries
+            FakeReply(
+              200,
+              body: mixedEntryJson(version: 2),
+            ), // PATCH confirm feelings
+          ]),
+        );
+        await tester.pumpWidget(
+          buildTestable(replies: const [], harness: harness),
+        );
+
+        await saveAndConfirmFeelings(tester);
+
+        expect(find.text('Which goes with what?'), findsOneWidget);
+        expect(find.byType(PairingStep), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'Confirm pairing PUTs the board and then finishes the flow',
+      (tester) async {
+        var done = false;
+        final harness = Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter([
+            ...bootReplies(),
+            FakeReply(200, body: mixedEntryJson()), // POST /entries
+            FakeReply(
+              200,
+              body: mixedEntryJson(version: 2),
+            ), // PATCH confirm feelings
+            FakeReply(
+              200,
+              body: mixedEntryJson(version: 3),
+            ), // PUT topic-feelings
+            FakeReply(200, body: echoJson(count: 0)), // GET echo
+          ]),
+        );
+        await tester.pumpWidget(
+          buildTestable(
+            replies: const [],
+            harness: harness,
+            onDone: () => done = true,
+          ),
+        );
+
+        await saveAndConfirmFeelings(tester);
+        expect(find.text('Which goes with what?'), findsOneWidget);
+
+        final confirmPairingButton = find.widgetWithText(
+          ElevatedButton,
+          'Confirm pairing',
+        );
+        await tester.ensureVisible(confirmPairingButton);
+        await tester.tap(confirmPairingButton);
+        await tester.pumpAndSettle();
+
+        final putRequest = harness.adapter.requests.firstWhere(
+          (request) => request.method == 'PUT',
+        );
+        expect(putRequest.path, '/entries/entry-1/topic-feelings');
+        expect(putRequest.data, {
+          'pairings': [
+            {'topic_id': 'topic-1', 'feeling_key': 'sad'},
+            {'topic_id': 'topic-2', 'feeling_key': 'happy'},
+          ],
+        });
+        // Nothing to echo -- straight through to Done.
+        expect(done, isTrue);
+      },
+    );
+
+    testWidgets(
+      'Skip writes nothing at all and still finishes the flow (task 3)',
+      (tester) async {
+        var done = false;
+        final harness = Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter([
+            ...bootReplies(),
+            FakeReply(200, body: mixedEntryJson()), // POST /entries
+            FakeReply(
+              200,
+              body: mixedEntryJson(version: 2),
+            ), // PATCH confirm feelings
+            FakeReply(200, body: echoJson(count: 0)), // GET echo
+          ]),
+        );
+        await tester.pumpWidget(
+          buildTestable(
+            replies: const [],
+            harness: harness,
+            onDone: () => done = true,
+          ),
+        );
+
+        await saveAndConfirmFeelings(tester);
+        expect(find.text('Which goes with what?'), findsOneWidget);
+
+        final skipButton = find.widgetWithText(OutlinedButton, 'Skip');
+        await tester.ensureVisible(skipButton);
+        await tester.tap(skipButton);
+        await tester.pumpAndSettle();
+
+        expect(
+          harness.adapter.requests.any((request) => request.method == 'PUT'),
+          isFalse,
+        );
+        expect(done, isTrue);
+      },
+    );
+
+    testWidgets(
+      'a single-valence entry never shows the pairing step, even with two '
+      'suggested pairings -- flow completely unchanged (acceptance '
+      'criterion 4)',
+      (tester) async {
+        // Two suggested pairings, but both pointing at the entry's one and
+        // only feeling -- so [needsPairingStep]'s valence half fails even
+        // though its "at least two suggested pairings" half would pass.
+        Map<String, Object?> singleValenceEntryJson({int version = 1}) =>
+            entryJson(
+              version: version,
+              feelingKeys: const ['happy'],
+              suggestedFeelings: [suggestedFeelingJson(key: 'happy')],
+              topics: [
+                topicJson(id: 'topic-1', name: 'exercise'),
+                topicJson(id: 'topic-2', name: 'family'),
+              ],
+              topicFeelings: [
+                topicFeelingJson(
+                  topicId: 'topic-1',
+                  topic: 'exercise',
+                  feelingKey: 'happy',
+                ),
+                topicFeelingJson(
+                  topicId: 'topic-2',
+                  topic: 'family',
+                  feelingKey: 'happy',
+                ),
+              ],
+            );
+        var done = false;
+        final harness = Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter([
+            ...bootReplies(),
+            FakeReply(200, body: singleValenceEntryJson()), // POST /entries
+            FakeReply(
+              200,
+              body: singleValenceEntryJson(version: 2),
+            ), // PATCH confirm feelings
+            FakeReply(200, body: echoJson(count: 0)), // GET echo
+          ]),
+        );
+        await tester.pumpWidget(
+          buildTestable(
+            replies: const [],
+            harness: harness,
+            onDone: () => done = true,
+          ),
+        );
+
+        await saveAndConfirmFeelings(tester);
+
+        expect(find.text('Which goes with what?'), findsNothing);
+        expect(find.byType(PairingStep), findsNothing);
+        expect(done, isTrue);
+      },
+    );
   });
 
   group('first-pattern celebration (L-3/#38)', () {

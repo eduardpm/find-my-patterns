@@ -179,6 +179,20 @@ class ApiClient {
     await _send(() => _dio.put<Object?>(path, data: body));
   }
 
+  /// Puts [body] to [path] and decodes the response with [decode].
+  ///
+  /// Unlike [patchObject], a `PUT` here means the caller is deliberately
+  /// replacing a whole sub-resource, not patching one field of a larger one
+  /// -- currently only `PUT /entries/{id}/topic-feelings` (E-1a/E-1c), which
+  /// overwrites an entry's entire pairing set in one call.
+  Future<T> putObject<T>(
+    String path,
+    JsonDecoder<T> decode, {
+    JsonObject? body,
+  }) async => decode(
+    _asObject(await _send(() => _dio.put<Object?>(path, data: body))),
+  );
+
   /// Patches [path] with [body] and decodes the response with [decode].
   ///
   /// `PATCH` rather than `PUT` because these are partial updates: an absent

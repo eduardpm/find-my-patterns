@@ -596,6 +596,251 @@ void main() {
     );
   });
 
+  group('PairingStage (E-1c)', () {
+    /// A mixed-valence entry (`happy` + `sad`, per `feelingsCatalogJson`)
+    /// with two topics the analyser proposed a pairing for -- the exact
+    /// shape [needsPairingStep] requires.
+    Map<String, Object?> mixedEntryJson({int version = 1}) => entryJson(
+      feelingKeys: const ['happy', 'sad'],
+      version: version,
+      topics: [
+        topicJson(id: 'topic-1', name: 'exercise'),
+        topicJson(id: 'topic-2', name: 'family'),
+      ],
+      topicFeelings: [
+        topicFeelingJson(
+          topicId: 'topic-1',
+          topic: 'exercise',
+          feelingKey: 'sad',
+        ),
+        topicFeelingJson(
+          topicId: 'topic-2',
+          topic: 'family',
+          feelingKey: 'happy',
+        ),
+      ],
+    );
+
+    test(
+      'a mixed-valence entry with two suggested pairings moves to '
+      'PairingStage instead of running the celebration/echo tail',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: mixedEntryJson()),
+        ]);
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isFalse);
+        final stage = env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .stage;
+        expect(stage, isA<PairingStage>());
+        expect((stage as PairingStage).entry.topicFeelings, hasLength(2));
+        // No echo/insights call was made -- the pairing step comes first.
+        expect(env.adapter.requests, hasLength(4));
+      },
+    );
+
+    test(
+      'a single-valence entry never reaches PairingStage, even with two '
+      'suggested pairings -- unchanged flow (acceptance criterion 4)',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(
+            200,
+            body: entryJson(
+              feelingKeys: const ['happy'],
+              topics: [
+                topicJson(id: 'topic-1', name: 'exercise'),
+                topicJson(id: 'topic-2', name: 'family'),
+              ],
+              topicFeelings: [
+                topicFeelingJson(
+                  topicId: 'topic-1',
+                  topic: 'exercise',
+                  feelingKey: 'happy',
+                ),
+                topicFeelingJson(
+                  topicId: 'topic-2',
+                  topic: 'family',
+                  feelingKey: 'happy',
+                ),
+              ],
+            ),
+          ),
+          FakeReply(200, body: echoJson(count: 0)),
+        ]);
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isTrue);
+        expect(
+          env.container
+              .read(entryComposerControllerProvider(_testTargetDate))
+              .stage,
+          isNot(isA<PairingStage>()),
+        );
+      },
+    );
+
+    test(
+      'a mixed-valence entry with only one suggested pairing skips '
+      'PairingStage -- nothing to choose between',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(
+            200,
+            body: entryJson(
+              feelingKeys: const ['happy', 'sad'],
+              topics: [topicJson(id: 'topic-1', name: 'exercise')],
+              topicFeelings: [
+                topicFeelingJson(
+                  topicId: 'topic-1',
+                  topic: 'exercise',
+                  feelingKey: 'sad',
+                ),
+              ],
+            ),
+          ),
+          FakeReply(200, body: echoJson(count: 0)),
+        ]);
+
+        final done = await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(done, isTrue);
+        expect(
+          env.container
+              .read(entryComposerControllerProvider(_testTargetDate))
+              .stage,
+          isNot(isA<PairingStage>()),
+        );
+      },
+    );
+
+    test(
+      'confirmPairing PUTs the board with no source or version, then runs '
+      'the celebration/echo tail (E-1c task 5)',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: mixedEntryJson()),
+          FakeReply(200, body: mixedEntryJson(version: 2)),
+          FakeReply(200, body: echoJson(count: 1)),
+        ]);
+        await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+        final requestsBeforePairing = env.adapter.requests.length;
+
+        final done = await env.controller.confirmPairing(
+          entryId: 'entry-1',
+          pairings: const [
+            (topicId: 'topic-1', feelingKey: 'sad'),
+            (topicId: 'topic-2', feelingKey: 'happy'),
+          ],
+        );
+
+        final putRequest = env.adapter.requests[requestsBeforePairing];
+        expect(putRequest.method, 'PUT');
+        expect(putRequest.path, '/entries/entry-1/topic-feelings');
+        expect(putRequest.data, {
+          'pairings': [
+            {'topic_id': 'topic-1', 'feeling_key': 'sad'},
+            {'topic_id': 'topic-2', 'feeling_key': 'happy'},
+          ],
+        });
+        expect(done, isFalse);
+        final stage = env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .stage;
+        expect(stage, isA<EchoStage>());
+        expect((stage as EchoStage).echoes, hasLength(1));
+      },
+    );
+
+    test(
+      'confirmPairing failure leaves the entry on PairingStage with an '
+      'error message',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: mixedEntryJson()),
+          FakeReply(422, body: {'error': 'Topic is not on this entry'}),
+        ]);
+        await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        final done = await env.controller.confirmPairing(
+          entryId: 'entry-1',
+          pairings: const [(topicId: 'topic-1', feelingKey: 'sad')],
+        );
+
+        expect(done, isFalse);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
+        expect(state.stage, isA<PairingStage>());
+        expect(state.errorMessage, 'Topic is not on this entry');
+      },
+    );
+
+    test(
+      'skipPairing (E-1c task 3) writes nothing -- no PUT request at all -- '
+      'and still runs the echo tail',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: mixedEntryJson()),
+          FakeReply(200, body: echoJson(count: 0)),
+        ]);
+        await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+        final requestsBeforeSkip = env.adapter.requests.length;
+
+        final done = await env.controller.skipPairing('entry-1');
+
+        // Exactly one more request than before the skip -- the echo GET --
+        // and it is a GET, never the PUT /topic-feelings a confirm would
+        // have made.
+        expect(env.adapter.requests, hasLength(requestsBeforeSkip + 1));
+        final lastRequest = env.adapter.requests.last;
+        expect(lastRequest.method, 'GET');
+        expect(lastRequest.path, '/entries/entry-1/echo');
+        expect(done, isTrue);
+      },
+    );
+  });
+
   group('first-pattern celebration (L-3/#38)', () {
     test(
       'flag unset, patterns present, app foregrounded -- celebrates '
