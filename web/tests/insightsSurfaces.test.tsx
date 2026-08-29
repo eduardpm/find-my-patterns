@@ -318,6 +318,71 @@ describe('WithdrawalNotice (A2)', () => {
     );
     expect(screen.getByText('Without exercise')).toBeInTheDocument();
   });
+
+  it(
+    'names a pairing exclusion separately from no confirmed feeling at all (#109, E-1d) — the ' +
+      'entries behind excluded_unpaired carry a confirmed feeling, which no_longer_confirmed denies',
+    () => {
+      render(
+        <ul>
+          <WithdrawalNotice
+            withdrawal={{
+              ...withdrawal,
+              topic: 'alcohol',
+              feeling: 'anxious',
+              reason: 'excluded_unpaired',
+              previous_count: 3,
+              new_count: 0,
+              detail_text:
+                'alcohol → anxious was withdrawn: its entries carry a feeling you confirmed, but ' +
+                'never a confirmed pairing between the two — 22 entries diary-wide are excluded ' +
+                'from counting until they are paired.',
+            }}
+          />
+        </ul>,
+      );
+      expect(screen.getByText('Needs pairing')).toBeInTheDocument();
+      expect(screen.queryByText('No confirmed feelings')).not.toBeInTheDocument();
+      expect(screen.getByText(/carry a feeling you confirmed/)).toBeInTheDocument();
+    },
+  );
+
+  it(
+    'shows a single count, not a delta, when previous and new are equal — "2 → 2" beside ' +
+      '"was withdrawn" is the self-contradiction #109 was filed over',
+    () => {
+      render(
+        <ul>
+          <WithdrawalNotice
+            withdrawal={{
+              ...withdrawal,
+              reason: 'excluded_unpaired',
+              previous_count: 2,
+              new_count: 2,
+            }}
+          />
+        </ul>,
+      );
+      expect(screen.getByText('2 occurrences')).toBeInTheDocument();
+      expect(screen.queryByText('2 → 2')).not.toBeInTheDocument();
+    },
+  );
+
+  it('falls back to the raw reason code rather than throwing or rendering blank', () => {
+    render(
+      <ul>
+        <WithdrawalNotice
+          withdrawal={{
+            ...withdrawal,
+            // Cast through `unknown`: a real client can receive a reason it was built before —
+            // this is exactly that case, simulated for a client that already shipped.
+            reason: 'something_this_build_has_never_heard_of' as Withdrawal['reason'],
+          }}
+        />
+      </ul>,
+    );
+    expect(screen.getByText('something_this_build_has_never_heard_of')).toBeInTheDocument();
+  });
 });
 
 describe('WhenPanel (I5)', () => {

@@ -78,11 +78,34 @@ void main() {
     expect(find.text('Only 1 of the last 5 held.'), findsOneWidget);
   });
 
+  testWidgets(
+    'shows a single count, not a delta, when previous and new are equal '
+    '(#109 -- "2 → 2" beside "was withdrawn" is a self-contradiction)',
+    (tester) async {
+      await tester.pumpWidget(
+        app(
+          WithdrawalNotice(
+            withdrawal: buildWithdrawal(
+              reason: WithdrawalReason.excludedUnpaired,
+              previousCount: 2,
+              newCount: 2,
+            ),
+          ),
+        ),
+      );
+
+      // `Eyebrow` upper-cases its text for display (`JournalType.eyebrowCase`).
+      expect(find.text('2 OCCURRENCES'), findsOneWidget);
+      expect(find.text('2 → 2'), findsNothing);
+    },
+  );
+
   for (final entry in {
     WithdrawalReason.belowThreshold: 'NOT ENOUGH LEFT',
     WithdrawalReason.belowLift: 'ASSOCIATION TOO WEAK',
     WithdrawalReason.noLongerConfirmed: 'NO CONFIRMED FEELINGS',
     WithdrawalReason.topicMerged: 'TOPIC MERGED',
+    WithdrawalReason.excludedUnpaired: 'NEEDS PAIRING',
   }.entries) {
     testWidgets('labels ${entry.key} as "${entry.value}"', (tester) async {
       await tester.pumpWidget(

@@ -81,9 +81,7 @@ class WithdrawalNotice extends StatelessWidget {
                     style: theme.textTheme.bodyMedium,
                   ),
                   const SizedBox(height: JournalSpacing.x1),
-                  Eyebrow(
-                    '${withdrawal.previousCount} → ${withdrawal.newCount}',
-                  ),
+                  Eyebrow(_countLine(withdrawal)),
                 ],
               ),
             ),
@@ -95,15 +93,33 @@ class WithdrawalNotice extends StatelessWidget {
 }
 
 /// Presentation only. The reason itself is the backend's, and there are
-/// four of them.
+/// five of them.
 ///
 /// Each label names the thing that actually changed, which is only
 /// possible because the codes distinguish them: "Not enough left" beside a
 /// count of 12 → 12 would be false, and that is exactly what a single
 /// "below threshold" covering both cases would force this badge to say.
+/// [WithdrawalReason.excludedUnpaired] gets its own label for the same
+/// reason -- "No confirmed feelings" is false of these entries, which is
+/// the whole bug #109 fixes.
 String _reasonLabel(WithdrawalReason reason) => switch (reason) {
   WithdrawalReason.belowThreshold => 'Not enough left',
   WithdrawalReason.belowLift => 'Association too weak',
   WithdrawalReason.noLongerConfirmed => 'No confirmed feelings',
   WithdrawalReason.topicMerged => 'Topic merged',
+  WithdrawalReason.excludedUnpaired => 'Needs pairing',
 };
+
+/// The evidence line under the reason badge.
+///
+/// `previousCount → newCount` is only evidence of a change when the two
+/// numbers actually differ -- "2 → 2" beside "was withdrawn" is the exact
+/// self-contradiction #109 was filed over (a mixed-valence pair's
+/// unexcluded mention count is the same before and after #26's rule, only
+/// the *count that counts* moved). A pattern's own [Withdrawal.reason] is
+/// what changed in that case, not either number, so the line falls back to
+/// stating the single count rather than a delta that reads as none.
+String _countLine(Withdrawal withdrawal) =>
+    withdrawal.previousCount == withdrawal.newCount
+    ? '${withdrawal.newCount} occurrences'
+    : '${withdrawal.previousCount} → ${withdrawal.newCount}';

@@ -48,6 +48,10 @@ void main() {
         WithdrawalReason.fromWire('below_threshold'),
         WithdrawalReason.belowThreshold,
       );
+      expect(
+        WithdrawalReason.fromWire('excluded_unpaired'),
+        WithdrawalReason.excludedUnpaired,
+      );
     });
 
     test('anything unrecognised falls back to belowThreshold', () {
@@ -421,6 +425,44 @@ void main() {
         expect(withdrawal.reason, WithdrawalReason.belowLift);
         expect(withdrawal.kind, PatternKind.inverse);
         expect(withdrawal.previousCount, withdrawal.newCount);
+      },
+    );
+
+    test(
+      '#109: excluded_unpaired decodes distinctly from no_longer_confirmed '
+      '-- both describe entries missing something, but never the same thing',
+      () {
+        final excluded = withdrawalFromJson({
+          'id': 'w4',
+          'topic': 'alcohol',
+          'feeling': 'anxious',
+          'previous_count': 3,
+          'new_count': 0,
+          'reason': 'excluded_unpaired',
+          'detail_text':
+              'alcohol → anxious was withdrawn: its entries carry a '
+              'feeling you confirmed, but never a confirmed pairing '
+              'between the two — 22 entries diary-wide are excluded '
+              'from counting until they are paired.',
+          'withdrawn_at': '2026-08-26T09:00:00.000000',
+        });
+        expect(excluded.reason, WithdrawalReason.excludedUnpaired);
+        expect(excluded.reason, isNot(WithdrawalReason.noLongerConfirmed));
+
+        final unconfirmed = withdrawalFromJson({
+          'id': 'w5',
+          'topic': 'alcohol',
+          'feeling': 'anxious',
+          'previous_count': 3,
+          'new_count': 0,
+          'reason': 'no_longer_confirmed',
+          'detail_text':
+              'alcohol → anxious was withdrawn: entries still mention '
+              'it, but none of them carries a feeling you confirmed.',
+          'withdrawn_at': '2026-08-26T09:00:00.000000',
+        });
+        expect(unconfirmed.reason, WithdrawalReason.noLongerConfirmed);
+        expect(unconfirmed.reason, isNot(WithdrawalReason.excludedUnpaired));
       },
     );
 

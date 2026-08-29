@@ -14,18 +14,36 @@ import { Icon } from './Icon';
  */
 
 /**
- * Presentation only. The reason itself is the backend's, and there are four of them.
+ * Presentation only. The reason itself is the backend's, and there are five of them.
  *
  * Each label names the thing that actually changed, which is only possible because the codes
  * distinguish them: "Not enough left" beside a count of 12 → 12 would be false, and that is exactly
- * what a single `below_threshold` covering both cases forced this badge to say.
+ * what a single `below_threshold` covering both cases forced this badge to say. `excluded_unpaired`
+ * (#109) gets its own label for the same reason — "No confirmed feelings" is false of these
+ * entries, which is the whole bug #109 fixes.
  */
 const REASON_LABEL: Record<WithdrawalReason, string> = {
   below_threshold: 'Not enough left',
   below_lift: 'Association too weak',
   no_longer_confirmed: 'No confirmed feelings',
   topic_merged: 'Topic merged',
+  excluded_unpaired: 'Needs pairing',
 };
+
+/**
+ * The evidence line under the reason badge.
+ *
+ * `previous_count → new_count` is only evidence of a change when the two numbers actually differ —
+ * "2 → 2" beside "was withdrawn" is the exact self-contradiction #109 was filed over (a
+ * mixed-valence pair's unexcluded mention count is the same before and after #26's rule; only the
+ * *count that counts* moved). `withdrawal.reason` is what changed in that case, not either number,
+ * so this falls back to the single count rather than a delta that reads as none.
+ */
+function countLine(withdrawal: Withdrawal): string {
+  return withdrawal.previous_count === withdrawal.new_count
+    ? `${withdrawal.new_count} occurrences`
+    : `${withdrawal.previous_count} → ${withdrawal.new_count}`;
+}
 
 export function WithdrawalNotice({ withdrawal }: { withdrawal: Withdrawal }) {
   return (
@@ -51,9 +69,7 @@ export function WithdrawalNotice({ withdrawal }: { withdrawal: Withdrawal }) {
           </span>
         </p>
         <p className="withdrawal__detail">{withdrawal.detail_text}</p>
-        <p className="withdrawal__counts muted tnum">
-          {withdrawal.previous_count} → {withdrawal.new_count}
-        </p>
+        <p className="withdrawal__counts muted tnum">{countLine(withdrawal)}</p>
       </div>
     </li>
   );

@@ -76,6 +76,13 @@ enum PatternStatus {
 /// *association* weakened. They call for different words, and this client
 /// can only tell them apart because the code does.
 ///
+/// [excludedUnpaired] (#109, E-1d) is a fifth, separate from
+/// [noLongerConfirmed] for the same reason: the entries behind it carry a
+/// feeling the user confirmed, just never paired with this exact topic.
+/// Folding it into [noLongerConfirmed] is the bug #109 fixes -- that reason
+/// claims no confirmed feeling exists at all, which is false of these
+/// entries.
+///
 /// An unrecognised value falls back to [belowThreshold] rather than
 /// crashing, so a reason the backend gains after this build shipped still
 /// renders as a withdrawal.
@@ -91,7 +98,12 @@ enum WithdrawalReason {
   noLongerConfirmed,
 
   /// The topic behind the pattern was merged into another.
-  topicMerged;
+  topicMerged,
+
+  /// The entries carry a confirmed feeling, but never a confirmed pairing
+  /// of it with this topic -- #26's mixed-valence pairing rule excluded
+  /// them from this pair's count (#109, E-1d).
+  excludedUnpaired;
 
   /// Resolves a wire withdrawal-reason string; anything unrecognised,
   /// including null, falls back to [belowThreshold]. Never throws.
@@ -99,6 +111,7 @@ enum WithdrawalReason {
     'below_lift' => WithdrawalReason.belowLift,
     'no_longer_confirmed' => WithdrawalReason.noLongerConfirmed,
     'topic_merged' => WithdrawalReason.topicMerged,
+    'excluded_unpaired' => WithdrawalReason.excludedUnpaired,
     _ => WithdrawalReason.belowThreshold,
   };
 }
