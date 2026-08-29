@@ -116,7 +116,52 @@ void main() {
     expect(find.text('4 ENTRIES'), findsOneWidget);
   });
 
-  testWidgets('shows the existing aliases as badges', (tester) async {
+  testWidgets('sorts topics by entry count descending', (tester) async {
+    final harness = Harness(
+      settings: configured,
+      adapter: FakeHttpAdapter([
+        topicsReply([
+          topic(id: 't1', name: 'sleep', entryCount: 2),
+          topic(id: 't2', name: 'exercise', entryCount: 9),
+          topic(id: 't3', name: 'work', entryCount: 5),
+        ]),
+      ]),
+    );
+    await tester.pumpWidget(harness.wrap(screen()));
+    await tester.pumpAndSettle();
+
+    // Order on screen should be exercise (9), work (5), sleep (2) — most
+    // entries first — regardless of the order the API returned them in.
+    final exerciseTop = tester.getTopLeft(find.text('Exercise')).dy;
+    final workTop = tester.getTopLeft(find.text('Work')).dy;
+    final sleepTop = tester.getTopLeft(find.text('Sleep')).dy;
+    expect(exerciseTop, lessThan(workTop));
+    expect(workTop, lessThan(sleepTop));
+  });
+
+  testWidgets('keeps the API order for topics tied on entry count', (
+    tester,
+  ) async {
+    final harness = Harness(
+      settings: configured,
+      adapter: FakeHttpAdapter([
+        topicsReply([
+          topic(id: 't1', name: 'sleep', entryCount: 3),
+          topic(id: 't2', name: 'exercise', entryCount: 3),
+        ]),
+      ]),
+    );
+    await tester.pumpWidget(harness.wrap(screen()));
+    await tester.pumpAndSettle();
+
+    final sleepTop = tester.getTopLeft(find.text('Sleep')).dy;
+    final exerciseTop = tester.getTopLeft(find.text('Exercise')).dy;
+    expect(sleepTop, lessThan(exerciseTop));
+  });
+
+  testWidgets('shows the existing aliases as badges on a collapsed row', (
+    tester,
+  ) async {
     final harness = Harness(
       settings: configured,
       adapter: FakeHttpAdapter([
@@ -132,6 +177,50 @@ void main() {
     expect(find.text('WORKOUT'), findsOneWidget);
   });
 
+  testWidgets('a collapsed row shows no alias input or Add button', (
+    tester,
+  ) async {
+    final harness = Harness(
+      settings: configured,
+      adapter: FakeHttpAdapter([
+        topicsReply([topic(name: 'exercise')]),
+      ]),
+    );
+    await tester.pumpWidget(harness.wrap(screen()));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('Add'), findsNothing);
+  });
+
+  testWidgets('tapping a row expands it and reveals the alias input', (
+    tester,
+  ) async {
+    final harness = Harness(
+      settings: configured,
+      adapter: FakeHttpAdapter([
+        topicsReply([topic(name: 'exercise')]),
+      ]),
+    );
+    await tester.pumpWidget(harness.wrap(screen()));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsNothing);
+
+    await tester.tap(find.text('Exercise'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('Another word for exercise'), findsOneWidget);
+    expect(find.text('Add'), findsOneWidget);
+
+    // Tapping the row again collapses it back.
+    await tester.tap(find.text('Exercise'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsNothing);
+  });
+
   testWidgets('disables Add while the draft is blank', (tester) async {
     final harness = Harness(
       settings: configured,
@@ -140,6 +229,9 @@ void main() {
       ]),
     );
     await tester.pumpWidget(harness.wrap(screen()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Exercise'));
     await tester.pumpAndSettle();
 
     final addButton = tester.widget<ElevatedButton>(
@@ -175,6 +267,9 @@ void main() {
     await tester.pumpWidget(harness.wrap(screen()));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('Exercise'));
+    await tester.pumpAndSettle();
+
     await tester.enterText(find.byType(TextField), 'gym');
     await tester.pump();
     await tester.tap(find.text('Add'));
@@ -193,7 +288,9 @@ void main() {
     );
   });
 
-  testWidgets('removing an alias refreshes the list', (tester) async {
+  testWidgets('removing an alias on an expanded row refreshes the list', (
+    tester,
+  ) async {
     final harness = Harness(
       settings: configured,
       adapter: FakeHttpAdapter([
@@ -211,6 +308,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('GYM'), findsOneWidget);
+    // Collapsed: the alias is a badge, with no remove control yet.
+    expect(find.byTooltip('Remove the alias gym from exercise'), findsNothing);
+
+    await tester.tap(find.text('Exercise'));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Remove the alias gym from exercise'));
     await tester.pumpAndSettle();
@@ -231,6 +333,9 @@ void main() {
         ]),
       );
       await tester.pumpWidget(harness.wrap(screen()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Exercise'));
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField), 'gym');
@@ -254,17 +359,21 @@ void main() {
     },
   );
 
-  testWidgets('two topic cards keep separate drafts', (tester) async {
+  testWidgets('two expanded rows keep separate drafts', (tester) async {
     final harness = Harness(
       settings: configured,
       adapter: FakeHttpAdapter([
         topicsReply([
-          topic(id: 't1', name: 'exercise'),
-          topic(id: 't2', name: 'sleep'),
+          topic(id: 't1', name: 'exercise', entryCount: 2),
+          topic(id: 't2', name: 'sleep', entryCount: 1),
         ]),
       ]),
     );
     await tester.pumpWidget(harness.wrap(screen()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Exercise'));
+    await tester.tap(find.text('Sleep'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const ValueKey('topic-draft-t1')), 'gym');

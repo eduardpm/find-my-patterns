@@ -141,6 +141,25 @@ void main() {
 
     expect(find.text('topics destination'), findsOneWidget);
   });
+
+  testWidgets('the topics card shows a chevron affordance', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(Harness().scope(_app()));
+    await tester.pumpAndSettle();
+
+    final topicsCard = find.ancestor(
+      of: find.text('Topics and aliases'),
+      matching: find.byType(InkWell),
+    );
+    expect(topicsCard, findsOneWidget);
+    expect(
+      find.descendant(
+        of: topicsCard,
+        matching: find.byIcon(Icons.chevron_right),
+      ),
+      findsOneWidget,
+    );
+  });
 }
 
 Widget _app() => const MaterialApp(home: SettingsScreen());
