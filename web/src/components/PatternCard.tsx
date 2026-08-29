@@ -1,6 +1,12 @@
 import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { EngineConstants, Pattern, PatternDirection, PatternEvidence } from '../domain/types';
+import {
+  recencyWindowPhrase,
+  type EngineConstants,
+  type Pattern,
+  type PatternDirection,
+  type PatternEvidence,
+} from '../domain/types';
 import { Icon, type IconName } from './Icon';
 
 /**
@@ -185,8 +191,8 @@ export function PatternCard({ pattern, constants }: Props) {
         <p className="muted pattern-card__counts">
           <span className="tnum">{pattern.occurrence_count}</span>
           <span>
-            {pattern.occurrence_count === 1 ? 'occurrence' : 'occurrences'} in the last{' '}
-            <span className="tnum">{constants.recency_window_days}</span> days
+            {pattern.occurrence_count === 1 ? 'occurrence' : 'occurrences'}{' '}
+            {recencyWindowPhrase(constants.recency_window_days)}
           </span>
           {pattern.lifetime_count !== pattern.occurrence_count && (
             <span className="muted">
@@ -216,7 +222,7 @@ export function PatternCard({ pattern, constants }: Props) {
         <ul className="evidence-trail" id={evidenceId}>
           {pattern.evidence.length === 0 && (
             <li className="evidence-trail__empty muted">
-              Nothing in the last {constants.recency_window_days} days. This pattern is built on
+              Nothing {recencyWindowPhrase(constants.recency_window_days)}. This pattern is built on
               older entries.
             </li>
           )}

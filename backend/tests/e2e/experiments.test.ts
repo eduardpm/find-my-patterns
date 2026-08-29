@@ -16,14 +16,24 @@
 import request from 'supertest';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import request from 'supertest';
+import { DEFAULT_USER_ID } from '../../src/auth/default-user';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
 import { localDateString } from '../helpers/dates';
 
 let h: Harness;
 const server = () => h.app.getHttpServer();
 
+// M-3 (#48) gates experiment *creation* behind premium. These tests are about the experiment
+// lifecycle, not the paywall, so they run as a premium account — the gate itself is asserted
+// in `tests/contract/free-paid-boundary.test.ts`, which owns both sides of that boundary
+// (a free account's 402, and the rule that reading back and abandoning are never gated).
 beforeEach(async () => {
-  h = await bootOnFresh();
+  h = await bootOnFresh({ manualEntitlements: true });
+  await request(server())
+    .post('/billing/admin/grant')
+    .send({ user_id: DEFAULT_USER_ID, tier: 'premium' })
+    .expect(200);
 });
 afterEach(async () => {
   await teardown(h);

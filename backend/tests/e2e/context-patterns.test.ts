@@ -264,6 +264,9 @@ describe('#21 — weekday, day type, time of day and season through the engine',
         // entries the mixed-valence pairing rule excluded from at least one pair, zero here since
         // this diary has no mixed-valence entries at all.
         'excluded_unpaired',
+        // M-3 (#48): additive, tier-independent — see `PatternsService.historySpanDays`'s doc
+        // comment.
+        'history_span_days',
         'insufficient_data',
         'new_withdrawal_count',
         'patterns',

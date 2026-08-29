@@ -1,5 +1,16 @@
-import { Controller, Get, HttpCode, HttpException, HttpStatus, Post, Query } from '@nestjs/common';
-import { engineConstants, type EngineConstants } from './constants';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpException,
+  HttpStatus,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
+import type { Request } from 'express';
+import { EntitlementsService } from '../billing/entitlements.service';
+import { engineConstants, RECENCY_WINDOW_DAYS, type EngineConstants } from './constants';
 import {
   PatternsService,
   type ContextPatternOut,
@@ -43,6 +54,13 @@ export interface InsightsOut {
    * mixed-valence, never-paired entries, which is the common case rule 1 leaves untouched.
    */
   excluded_unpaired: number;
+  /**
+   * M-3 (#48): tier-independent (see `PatternsService.historySpanDays`'s doc comment) — how many
+   * days ago the diary's first entry was written, `null` on an empty diary. Exists so a free
+   * account's locked mobile surfaces can state a real fact ("Patterns across your full N months —
+   * Premium") instead of inventing one, without revealing any pattern content itself.
+   */
+  history_span_days: number | null;
 }
 
 @Controller('insights')
@@ -51,7 +69,22 @@ export class InsightsController {
     private readonly patterns: PatternsService,
     private readonly when: WhenInsightsService,
     private readonly series: SeriesService,
+    private readonly entitlements: EntitlementsService,
   ) {}
+
+  /**
+   * M-3 (#48): the one place `GET /insights`/`GET /insights/series` decide the free/paid window —
+   * `null` for premium ("full ranges", the issue's phrase), `RECENCY_WINDOW_DAYS` for free (the
+   * engine's own existing 30-day recency framing, reused rather than a second literal — see
+   * `constants.ts`'s doc comment on `EngineConstants.recency_window_days`). `req.userId` is always
+   * set by the time a controller runs — `IdentityGate` either attaches it or answers 401 itself
+   * before any guard or handler (`../auth/identity.middleware.ts`) — the same guarantee
+   * `RequiresPremiumGuard` and `EntitlementsController` already depend on.
+   */
+  private windowDaysFor(req: Request): number | null {
+    const { tier } = this.entitlements.getEntitlement(req.userId as string);
+    return tier === 'premium' ? null : RECENCY_WINDOW_DAYS;
+  }
 
   /**
    * Recomputes before reading.
@@ -63,11 +96,18 @@ export class InsightsController {
    *
    * Recomputation is also the *only* place the engine runs (C-06). Saving an entry never pays for
    * it, and no client ever computes a number this response carries (C-01).
+   *
+   * `recomputePatterns` itself is tier-blind on purpose (see `PatternsService.listPatterns`'s doc
+   * comment) — it always rebuilds the one full-lifetime pattern set. Only the read after it,
+   * `listPatterns`/`contextPatterns`/`engineConstants`, take `windowDaysFor(req)`, so two users
+   * with different tiers reading the same diary at the same moment never race each other into
+   * writing two different pattern sets.
    */
   @Get()
-  async get(): Promise<InsightsOut> {
+  async get(@Req() req: Request): Promise<InsightsOut> {
     const { excludedUnpaired } = await this.patterns.recomputePatterns();
-    const patterns = this.patterns.listPatterns();
+    const windowDays = this.windowDaysFor(req);
+    const patterns = this.patterns.listPatterns(windowDays);
     const withdrawals = this.patterns.listWithdrawals();
     return {
       patterns,
@@ -78,12 +118,13 @@ export class InsightsController {
       new_withdrawal_count: withdrawals.filter((withdrawal) => withdrawal.is_new).length,
       // The client branches on this flag, not on array length.
       insufficient_data: patterns.length === 0,
-      constants: engineConstants(),
+      constants: engineConstants(windowDays),
       // #21: computed fresh on every read, same as `patterns` — but never persisted, so there is no
       // recompute step for it to depend on. Ordering after `recomputePatterns()` regardless, so a
       // request that also just wrote entries sees the same up-to-date `diary_entries` rows.
-      context_patterns: this.patterns.contextPatterns(),
+      context_patterns: this.patterns.contextPatterns(windowDays),
       excluded_unpaired: excludedUnpaired,
+      history_span_days: this.patterns.historySpanDays(),
     };
   }
 
@@ -106,6 +147,7 @@ export class InsightsController {
    */
   @Get('series')
   getSeries(
+    @Req() req: Request,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('granularity') granularity?: string,
@@ -113,8 +155,13 @@ export class InsightsController {
     if (!from) throw new HttpException('Field required: from', HttpStatus.UNPROCESSABLE_ENTITY);
     if (!to) throw new HttpException('Field required: to', HttpStatus.UNPROCESSABLE_ENTITY);
     const parsedGranularity = parseGranularity(granularity);
+    // M-3 (#48): a separate mechanism from `GET /insights`'s window, per the issue — that one
+    // excludes historical rows from an unbounded read; this one rejects a caller-chosen range that
+    // reaches too far back, the same shape `MAX_SERIES_RANGE_DAYS` below already uses for the
+    // day-granularity ceiling. Free reuses `RECENCY_WINDOW_DAYS` (the same 30 as the patterns
+    // window) rather than a second literal; premium passes `null`, "full ranges" per the issue.
     try {
-      return this.series.getSeries(from, to, parsedGranularity);
+      return this.series.getSeries(from, to, parsedGranularity, this.windowDaysFor(req));
     } catch (err) {
       if (err instanceof InvalidSeriesRangeError) {
         throw new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY);

@@ -56,13 +56,34 @@ export class SeriesService {
     private readonly feelings: FeelingsRepository,
   ) {}
 
-  getSeries(fromRaw: string, toRaw: string, granularity: SeriesGranularity = 'day'): SeriesOut {
+  /**
+   * `maxRangeDays` (M-3, #48): the free/paid boundary for this endpoint, entitlement-derived at the
+   * controller (`InsightsController#windowDaysFor`) and passed in here rather than looked up —
+   * this service has no notion of "who is asking", the same separation `PatternsService` keeps
+   * between deciding a window and deciding a tier. `null` (premium) applies no additional ceiling
+   * beyond the existing day-granularity `MAX_SERIES_RANGE_DAYS` check below; a number (free) rejects
+   * *any* granularity's request once the requested span exceeds it — deliberately not only
+   * `granularity === 'day'` the way the day-only check is, because a free-tier `granularity=month`
+   * request spanning years would otherwise aggregate a full-history series into a handful of
+   * points and hand it over anyway, defeating the cap in spirit while honouring it in letter.
+   */
+  getSeries(
+    fromRaw: string,
+    toRaw: string,
+    granularity: SeriesGranularity = 'day',
+    maxRangeDays: number | null = null,
+  ): SeriesOut {
     const from = parseSeriesDate(fromRaw, 'from');
     const to = parseSeriesDate(toRaw, 'to');
     const spanDays = daysBetween(from, to) + 1;
 
     if (spanDays <= 0) {
       throw new InvalidSeriesRangeError(`'from' (${fromRaw}) must not be after 'to' (${toRaw})`);
+    }
+    if (maxRangeDays !== null && spanDays > maxRangeDays) {
+      throw new InvalidSeriesRangeError(
+        `Free tier is limited to a ${maxRangeDays}-day range: ${spanDays} days requested`,
+      );
     }
     // Only day granularity is capped (CH-0): a week/month request over the same span already
     // returns far fewer points, so the response it produces never grows the way a daily one would.
@@ -74,7 +95,10 @@ export class SeriesService {
 
     const days = this.dayPoints(from, to);
     const points = granularity === 'day' ? days : aggregate(days, granularity);
-    return { granularity, points, constants: engineConstants() };
+    // Same reasoning as `InsightsController#get`'s `constants` block: report the window this
+    // response was actually bound by, not always the engine's default — a premium reader who hit
+    // no cap at all must not be told "30 days" just because that is what free would have used.
+    return { granularity, points, constants: engineConstants(maxRangeDays) };
   }
 
   /** Every day with at least one entry in `[from, to]`, in one pass over one query's rows. */

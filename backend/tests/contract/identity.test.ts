@@ -37,13 +37,26 @@ describe('SINGLE_USER_MODE=true (the default)', () => {
     await request(server()).get('/entries?date=2026-07-01').expect(200);
   });
 
-  it('has no default-user endpoints reachable through the new namespace either — same posture, plumbing only', async () => {
-    // Register/login work regardless of SINGLE_USER_MODE — they are how a future client opts into
-    // multi-tenant mode — but nothing about them changes what SINGLE_USER_MODE itself gates.
+  it('register/login work regardless of SINGLE_USER_MODE — how a future client opts into multi-tenant mode', async () => {
+    // Nothing about register/login changes what SINGLE_USER_MODE itself gates elsewhere.
     await request(server())
       .post('/auth/register')
       .send({ email: EMAIL, password: PASSWORD })
       .expect(201);
+  });
+
+  // M-3 (#48): `GET /auth/me` used to be the one route that still 401'd here regardless of
+  // `SINGLE_USER_MODE` — correct as M-1a's own "same posture, plumbing only" description of the
+  // time, but a dead end for M-3's requirement that a client read its tier from this endpoint,
+  // since the app's shipped default is `SINGLE_USER_MODE=true` with no bearer token ever sent. See
+  // `SINGLE_USER_MODE`'s doc comment in `src/auth/identity.controller.ts`.
+  it('GET /auth/me answers for the default user with no bearer token at all', async () => {
+    const res = await request(server()).get('/auth/me').expect(200);
+    expect(res.body).toMatchObject({
+      email: 'owner@default-user.invalid',
+      tier: 'free',
+      expires_at: null,
+    });
   });
 });
 

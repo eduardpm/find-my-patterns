@@ -6,14 +6,32 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  Inject,
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
 import { z } from 'zod';
 import { EntitlementsService } from '../billing/entitlements.service';
 import { parseOrThrow } from '../common/validation';
+import { DEFAULT_USER_ID } from './default-user';
 import { AuthService, type TokenOut, type UserOut } from './identity.service';
 import { extractBearerToken } from './tokens';
+
+/**
+ * Whether `GET /auth/me` may answer for the default user with no bearer token at all — mirrors
+ * `MANUAL_ENTITLEMENTS` (`../billing/entitlements.controller.ts`)'s per-boot-injection shape.
+ *
+ * M-3 (#48): before this ticket, `/auth/me` required a real bearer token unconditionally, even
+ * under `SINGLE_USER_MODE=true` where every *other* route resolves to `DEFAULT_USER_ID` with none
+ * (`../auth/identity.middleware.ts`) — M-1a's own contract test called this "same posture,
+ * plumbing only", correctly describing that nothing consumed the new `/auth/*` namespace yet. M-3
+ * is the first thing that does: the mobile client's only way to learn its tier is `GET /auth/me`
+ * (issue task 2), and the app's documented, shipped default is `SINGLE_USER_MODE=true` with no
+ * client sending a bearer token (`main.ts`'s own boot log says exactly this). Leaving `/auth/me`
+ * as the one route that still 401s in that mode would make tier permanently unreadable in the
+ * product's default configuration — not a deliberate boundary, a gap this ticket is what surfaces.
+ */
+export const SINGLE_USER_MODE = Symbol('SINGLE_USER_MODE');
 
 /**
  * Multi-tenant identity endpoints (M-1a, #45).
@@ -62,6 +80,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly entitlements: EntitlementsService,
+    @Inject(SINGLE_USER_MODE) private readonly singleUserMode: boolean,
   ) {}
 
   @Post('register')
@@ -90,8 +109,22 @@ export class AuthController {
   @Get('me')
   async me(@Headers('authorization') authorization?: string): Promise<MeOut> {
     const token = extractBearerToken(authorization);
-    if (!token) throw new UnauthorizedException('A bearer token is required.');
-    const user = await this.auth.me(token);
+    let user: UserOut;
+    if (token) {
+      user = await this.auth.me(token);
+    } else if (this.singleUserMode) {
+      // See `SINGLE_USER_MODE`'s doc comment above: no client in the app's default configuration
+      // ever sends a bearer token, so falling through to 401 here would make tier permanently
+      // unreadable rather than merely "not yet wired up". `ensureDefaultUser` (`./default-user.ts`)
+      // guarantees this row exists on any diary this backend can boot against, so `byId` returning
+      // `null` here would mean a corrupted install, not a normal miss — surfacing that as the
+      // ordinary "no token" 401 would misreport what actually went wrong, so it is left to throw.
+      const defaultUser = this.auth.byId(DEFAULT_USER_ID);
+      if (!defaultUser) throw new UnauthorizedException('A bearer token is required.');
+      user = defaultUser;
+    } else {
+      throw new UnauthorizedException('A bearer token is required.');
+    }
     const entitlement = this.entitlements.getEntitlement(user.id);
     return { ...user, ...entitlement };
   }

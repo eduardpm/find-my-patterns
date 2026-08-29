@@ -300,7 +300,17 @@ export const NARRATION_MIN_INTERVAL_MS = 5_000;
 /** Everything above, in the shape `GET /insights` serves to clients (C-01). */
 export interface EngineConstants {
   min_occurrence_threshold: number;
-  recency_window_days: number;
+  /**
+   * M-3 (#48): the window actually applied to **this** response, not always this file's own
+   * `RECENCY_WINDOW_DAYS`. Free tier gets `RECENCY_WINDOW_DAYS` here because that literally is the
+   * window `PatternsService.listPatterns`/`contextPatterns` were called with; premium gets `null`
+   * ("full range", no window applied) rather than a number, because premium's actual behaviour —
+   * lifetime history, unfiltered — has no day count that would describe it truthfully. A client
+   * that hardcoded 30 here for every tier would render "last 30 days" under a premium user's
+   * full-history list, which is exactly the mismatch Principle VII's `constants` block exists to
+   * prevent (see this file's module doc comment).
+   */
+  recency_window_days: number | null;
   min_lift: number;
   strong_lift: number;
   strong_min_occurrences: number;
@@ -311,10 +321,17 @@ export interface EngineConstants {
   max_intensity: number;
 }
 
-export function engineConstants(): EngineConstants {
+/**
+ * `windowDays` defaults to `RECENCY_WINDOW_DAYS` — every caller that does not gate by tier
+ * (`SeriesService`, anything predating M-3) gets today's unchanged behaviour. `InsightsController`
+ * is the one caller that passes something else: the same entitlement-derived value it also hands
+ * `PatternsService.listPatterns`/`contextPatterns`, so this block can never disagree with the list
+ * it is describing (M-3, #48).
+ */
+export function engineConstants(windowDays: number | null = RECENCY_WINDOW_DAYS): EngineConstants {
   return {
     min_occurrence_threshold: MIN_OCCURRENCE_THRESHOLD,
-    recency_window_days: RECENCY_WINDOW_DAYS,
+    recency_window_days: windowDays,
     min_lift: MIN_LIFT,
     strong_lift: STRONG_LIFT,
     strong_min_occurrences: STRONG_MIN_OCCURRENCES,

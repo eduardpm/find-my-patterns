@@ -14,6 +14,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_USER_ID } from '../../src/auth/default-user';
 import { encodeDateTime, nowUtc } from '../../src/db/codecs';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
 
@@ -25,7 +26,9 @@ let h: Harness;
 const server = () => h.app.getHttpServer();
 
 beforeEach(async () => {
-  h = await bootOnFresh();
+  // `manualEntitlements: true` costs nothing for the tests that don't use it — it only reaches
+  // `POST /billing/admin/grant`, which the M-3 (#48) lifetime-evidence test below needs.
+  h = await bootOnFresh({ manualEntitlements: true });
 });
 afterEach(async () => {
   await teardown(h);
@@ -260,6 +263,14 @@ describe('POST /import/daylio/commit', () => {
     // recency window by the time this test can possibly run (2026-08-15 is the last date within
     // 30 days of the earliest committable run of this suite), so this checks lifetime evidence
     // rather than the windowed "active" count, which only grows more true as real time passes.
+    //
+    // M-3 (#48): that also makes this pattern `status: 'historical'`, which free tier's
+    // `GET /insights` no longer returns at all (`PatternsService.listPatterns`) — grant premium so
+    // this keeps testing lifetime evidence, not the free/paid boundary a different suite covers.
+    await request(server())
+      .post('/billing/admin/grant')
+      .send({ user_id: DEFAULT_USER_ID, tier: 'premium' })
+      .expect(200);
     const res = await request(server()).get('/insights').expect(200);
     const patterns = res.body.patterns as Array<{
       topic: string;

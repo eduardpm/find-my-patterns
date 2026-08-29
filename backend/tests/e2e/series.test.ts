@@ -11,6 +11,7 @@
 import Database from 'better-sqlite3';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_USER_ID } from '../../src/auth/default-user';
 import { addDays } from '../../src/insights/analysis';
 import { decodeDate, encodeDate } from '../../src/db/codecs';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
@@ -24,6 +25,25 @@ beforeEach(async () => {
 afterEach(async () => {
   await teardown(h);
 });
+
+/**
+ * M-3 (#48): free tier now range-caps this endpoint at `RECENCY_WINDOW_DAYS` (30) — see
+ * `InsightsController#windowDaysFor`. This file's "full range" scenarios (the pre-existing
+ * `MAX_SERIES_RANGE_DAYS`=400 ceiling and the day-granularity performance budget) are about the
+ * *engine's own* ceiling, which is what a premium reader actually gets, so they grant premium
+ * first rather than assume the free-tier default `bootOnFresh()` boots every other test in this
+ * file with. `beforeEach` already booted the app on a fresh diary; `manualEntitlements` is a
+ * per-boot option (`tests/helpers/app.ts`), so this re-boots rather than mutating `h` in place —
+ * cheap on a fresh, empty diary, and it keeps every other scenario in this file exercising the
+ * real free-tier default, undisturbed.
+ */
+async function grantPremium(): Promise<void> {
+  h = await bootOnFresh({ manualEntitlements: true });
+  await request(server())
+    .post('/billing/admin/grant')
+    .send({ user_id: DEFAULT_USER_ID, tier: 'premium' })
+    .expect(200);
+}
 
 interface SeriesPointOut {
   date: string;
@@ -267,6 +287,7 @@ describe('GET /insights/series — range validation', () => {
   });
 
   it('accepts exactly 400 days at day granularity', async () => {
+    await grantPremium(); // the 400-day ceiling is the full-range (premium) behaviour, not free's 30
     const from = decodeDate('2024-01-01');
     const to = encodeDate(addDays(from, 399)); // 400 days inclusive
     await series('2024-01-01', to).expect(200);
@@ -280,15 +301,29 @@ describe('GET /insights/series — range validation', () => {
   });
 
   it('does not cap week/month granularity at 400 days', async () => {
+    await grantPremium(); // free tier caps every granularity at 30 days — see the new test below
     const from = decodeDate('2020-01-01');
     const to = encodeDate(addDays(from, 900)); // > 400 days
     await series('2020-01-01', to, 'week').expect(200);
     await series('2020-01-01', to, 'month').expect(200);
   });
+
+  it('free tier caps every granularity at RECENCY_WINDOW_DAYS, unlike the day-only 400-day ceiling above', async () => {
+    const from = decodeDate('2020-01-01');
+    const to = encodeDate(addDays(from, 900));
+    for (const granularity of ['day', 'week', 'month'] as const) {
+      const res = await series('2020-01-01', to, granularity).expect(422);
+      expect(res.body.error.code).toBe('validation_error');
+    }
+    // A range inside the free-tier cap still works, at any granularity.
+    const shortTo = encodeDate(addDays(decodeDate('2020-01-01'), 29)); // 30 days inclusive
+    await series('2020-01-01', shortTo, 'day').expect(200);
+  });
 });
 
 describe('GET /insights/series — performance (CH-0 acceptance criterion)', () => {
   it('answers a 365-day day-granularity query in under 200ms', async () => {
+    await grantPremium(); // 365 days exceeds free tier's 30-day cap; this budget is premium's
     // Seeded directly rather than through 365 HTTP round trips: the budget is for the query this
     // endpoint runs, not for the setup that gets a year of data into the fixture.
     const db = new Database(h.dbPath);

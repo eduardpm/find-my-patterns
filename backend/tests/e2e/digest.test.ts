@@ -9,11 +9,18 @@
  * check (`DigestService#get` takes the target week as a parameter, same as `series.service.ts`
  * takes `from`/`to`), every scenario passes an explicit `week` query value rather than relying on
  * `todayLocal()` — the one thing that *would* make a test flaky across days.
+ *
+ * M-3 (#48): `GET /insights/digest` is now `@RequiresPremium()` (weekly digest is the issue's own
+ * example of a premium-only feature, daylio-competitive-analysis.md §11.2) — every scenario below
+ * is about the digest's *content*, not the gate, so `beforeEach` grants the default user premium
+ * once via the dev admin endpoint (M-2, #47) and every existing assertion keeps testing exactly
+ * what it did before this ticket. The gate itself gets its own dedicated test at the bottom.
  */
 
 import Database from 'better-sqlite3';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_USER_ID } from '../../src/auth/default-user';
 import { addDays, weekStart } from '../../src/insights/analysis';
 import { serializeDate, todayLocal } from '../../src/db/codecs';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
@@ -22,7 +29,11 @@ let h: Harness;
 const server = () => h.app.getHttpServer();
 
 beforeEach(async () => {
-  h = await bootOnFresh();
+  h = await bootOnFresh({ manualEntitlements: true });
+  await request(server())
+    .post('/billing/admin/grant')
+    .send({ user_id: DEFAULT_USER_ID, tier: 'premium' })
+    .expect(200);
 });
 afterEach(async () => {
   await teardown(h);
@@ -301,5 +312,23 @@ describe('R-2 — weekly digest', () => {
     expect(body.movement).toBeUndefined();
     // The three now-neutral entries are still this week's entries — writing them did not un-happen.
     expect(body.entry_count).toBe(4 + 6);
+  });
+});
+
+describe('R-2 — weekly digest, gated (M-3, #48)', () => {
+  it('answers 402 premium_required for a free account, before ever computing a digest', async () => {
+    // A fresh app with no admin grant at all: `EntitlementsService`'s "absence means free" applies
+    // to the default user exactly as it would to any other (see that service's own doc comment) —
+    // no special case for `SINGLE_USER_MODE`'s fixed user is the point of that rule.
+    const free = await bootOnFresh();
+    try {
+      const res = await request(free.app.getHttpServer())
+        .get('/insights/digest')
+        .query({ week: dateThisWeek(0) })
+        .expect(402);
+      expect(res.body).toEqual({ error: 'premium_required' });
+    } finally {
+      await teardown(free);
+    }
   });
 });

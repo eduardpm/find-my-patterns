@@ -1001,13 +1001,29 @@ export class PatternsService {
    *    `pattern_withdrawals` — recomputed whole on every call, so there is no persisted state a
    *    pattern could be "withdrawn" from. A context pattern that no longer qualifies simply does not
    *    appear in the next response; that *is* this feature's withdrawal semantics (task 2).
+   *
+   * M-3 (#48): unlike `listPatterns`, this method computes its windowed evidence live on every
+   * call rather than reading a value `recomputePatterns` fixed at write time — so, unlike there,
+   * `windowDays` here is a genuine parameter, not a two-valued switch over a precomputed status.
+   * `null` (premium, "full range") means every entry counts as "in window", which is the correct
+   * generalisation: a context pattern's `lifetimeCount` already comes from the unfiltered `entries`
+   * below regardless of `windowDays` (the same lifetime-decides-existence split `buildCandidates`
+   * makes for topics, I3-03), so widening `inWindow` to the whole diary for premium changes only
+   * which of those already-existing candidates clear `association`'s lift/comparison bar, never
+   * which pairs are eligible to be considered at all.
+   *
+   * Defaults to `null` — the pre-M-3 behaviour (`RECENCY_WINDOW_DAYS` was always applied, since it
+   * was a hardcoded local, not a parameter) is "no *additional* cap beyond the engine's own", i.e.
+   * this method's one production caller, `InsightsController#get`, is also the only one that ever
+   * needs to say otherwise.
    */
-  contextPatterns(): ContextPatternOut[] {
+  contextPatterns(windowDays: number | null = null): ContextPatternOut[] {
     const entries = this.loadContextEntries();
     const today = todayLocal();
-    const inWindow = entries.filter((entry) =>
-      withinWindow(entry.entryDate, today, RECENCY_WINDOW_DAYS),
-    );
+    const inWindow =
+      windowDays === null
+        ? entries
+        : entries.filter((entry) => withinWindow(entry.entryDate, today, windowDays));
     const windowTotal = inWindow.length;
 
     // Entry-level sets, exactly as `buildCandidates` keeps them for topics — an entry with three
@@ -1555,7 +1571,62 @@ export class PatternsService {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM patterns').get() as { n: number }).n;
   }
 
-  listPatterns(): PatternOut[] {
+  /**
+   * M-3 (#48): how many days ago the diary's very first entry was written, `null` on an empty
+   * diary. Added for the mobile locked state (issue task 2): a free reader's `GET /insights` never
+   * returns a `'historical'` pattern (`listPatterns` above), which is deliberate — but it leaves the
+   * client with no honest number to put in a locked card ("Patterns across your full 14 months —
+   * Premium"). The issue is explicit that this must be a *real* number, not an invented one, and
+   * this is the smallest true fact available: not a pattern count (that would leak how many
+   * patterns exist behind the paywall, which is exactly the content this ticket hides) and not a
+   * pattern's own `lifetime_count` (that describes one pair, not the diary). A plain date range
+   * over every entry the user wrote is neither — the diary's date span is the same fact
+   * `GET /entries` already lets a free reader discover for themselves one day at a time, so
+   * surfacing it as one number here reveals nothing a free account could not already see.
+   *
+   * Deliberately every entry (`diary_entries`, unfiltered by `feeling_source`), not only confirmed
+   * evidence (`CONFIRMED_FEELING_SOURCES`) — this answers "how long have you been journaling", a
+   * fact about the diary, not "how much evidence exists", a fact about the engine that the rest of
+   * this file is careful to keep separate (see `loadEvidenceEntries`'s own doc comment).
+   *
+   * Tier-independent on purpose (`InsightsController#get` calls this unconditionally): the fact
+   * itself is never gated, only the pattern content the locked state's copy refers to.
+   */
+  historySpanDays(): number | null {
+    const row = this.db.prepare('SELECT MIN(entry_date) AS earliest FROM diary_entries').get() as {
+      earliest: string | null;
+    };
+    if (!row.earliest) return null;
+    return daysBetween(decodeDate(row.earliest), todayLocal());
+  }
+
+  /**
+   * M-3 (#48): `windowDays` is the free/paid boundary, applied here rather than in
+   * `recomputePatterns`/`storeCandidates`. Those two still compute and store exactly one pattern
+   * set, using the engine's own fixed `RECENCY_WINDOW_DAYS` (I3-03's split of `lifetimeCounts`
+   * deciding existence from a windowed count deciding activity) — that split is the engine's
+   * ground truth about the diary and does not change with who is asking. What changes by tier is
+   * only which rows of that one stored set a response is allowed to carry: free serves the
+   * already-computed `status === 'active'` rows only (the recency machinery's own 30-day
+   * definition of "active" — see `constants.ts`), premium (`windowDays === null`) serves
+   * everything, including `'historical'` rows, which is "full-history patterns" (the issue's
+   * phrase) in practice: today's behaviour, unchanged, for every caller before this ticket.
+   *
+   * `windowDays` is deliberately not threaded into a fresh recompute of "is this pattern active at
+   * some *other* window" — a value other than `RECENCY_WINDOW_DAYS` or `null` would silently lie,
+   * since `status` was fixed at write time against the one constant. The only two values any
+   * caller passes today are those two (`InsightsController#get`), which is exactly the free/paid
+   * boundary this ticket draws.
+   *
+   * Defaults to `null` (no restriction), not `RECENCY_WINDOW_DAYS` — every caller that predates
+   * this ticket (`ExperimentsService`, `DigestService`, `EchoService`) reads the full lifetime list
+   * for its own, unrelated purpose (matching a named pattern, picking a digest candidate, matching
+   * an echo) and must keep doing so unchanged; only `InsightsController`, the one place tier is
+   * actually known, ever passes an explicit value. A default of `RECENCY_WINDOW_DAYS` here would
+   * have silently narrowed all three the moment this parameter was added, with no call site
+   * telling a reader that was happening.
+   */
+  listPatterns(windowDays: number | null = null): PatternOut[] {
     const rows = this.db
       .prepare(
         `SELECT p.id, t.name AS topic, p.feeling_key, p.occurrence_count,
@@ -1656,7 +1727,12 @@ export class PatternsService {
         b.occurrence_count - a.occurrence_count ||
         (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
-    return patterns;
+
+    // M-3: `attachRecommendations` runs over the full set first (so a recommendation is never
+    // decided by which rows a free reader happens to be allowed), then the free-tier cut removes
+    // historical rows from what is actually returned.
+    if (windowDays === null) return patterns;
+    return patterns.filter((pattern) => pattern.status === 'active');
   }
 
   /**

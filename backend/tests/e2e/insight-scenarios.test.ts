@@ -19,6 +19,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_USER_ID } from '../../src/auth/default-user';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
 
 interface WrittenEntry {
@@ -93,8 +94,17 @@ function entriesOf(scenario: Scenario): WrittenEntry[] {
 async function insightsFor(
   scenario: Scenario,
 ): Promise<{ insights: Insight[]; reread: Insight[]; h: Harness }> {
-  const h = await bootOnFresh();
+  // M-3 (#48): `manualEntitlements: true` plus a standing premium grant for the default user —
+  // this corpus is about the engine's own correctness (recency labelling, lift, confounders…),
+  // which is exactly the "full ranges" premium behaviour (unchanged since before this ticket). The
+  // free/paid boundary itself — that a free reader never sees a `historicalTopics` entry at all —
+  // has its own dedicated coverage in `tests/contract/free-paid-boundary.test.ts`, not here.
+  const h = await bootOnFresh({ manualEntitlements: true });
   const server = h.app.getHttpServer();
+  await request(server)
+    .post('/billing/admin/grant')
+    .send({ user_id: DEFAULT_USER_ID, tier: 'premium' })
+    .expect(200);
 
   for (const entry of entriesOf(scenario)) {
     const created = (

@@ -1,5 +1,5 @@
 import { Module, type DynamicModule } from '@nestjs/common';
-import { AuthController } from './auth/identity.controller';
+import { AuthController, SINGLE_USER_MODE } from './auth/identity.controller';
 import { AuthService } from './auth/identity.service';
 import {
   EntitlementsController,
@@ -12,6 +12,7 @@ import {
   ManualPlayVerifier,
   type PlayPurchaseVerifier,
 } from './billing/play-verifier';
+import { RequiresPremiumGuard } from './billing/requires-premium.guard';
 import { loadConfig } from './config';
 import { createDiaryProvider } from './db/database.provider';
 import {
@@ -79,7 +80,11 @@ export class AppModule {
    */
   static forRoot(
     databasePath?: string,
-    options: { playVerifier?: PlayPurchaseVerifier; manualEntitlements?: boolean } = {},
+    options: {
+      playVerifier?: PlayPurchaseVerifier;
+      manualEntitlements?: boolean;
+      singleUserMode?: boolean;
+    } = {},
   ): DynamicModule {
     return {
       module: AppModule,
@@ -105,6 +110,16 @@ export class AppModule {
         createDiaryProvider(databasePath),
         AuthService,
         EntitlementsService,
+        RequiresPremiumGuard,
+        {
+          // M-3 (#48): `AuthController#me` needs to know whether `SINGLE_USER_MODE` is on to decide
+          // whether a missing bearer token means "answer as the default user" or "401" — the same
+          // per-boot-injection shape `MANUAL_ENTITLEMENTS` above already uses, and for the same
+          // reason: `main.ts` resolves this once from `AppConfig`/`CreateAppOptions`, and the tests
+          // in this suite need to flip it per boot rather than through a shared process env var.
+          provide: SINGLE_USER_MODE,
+          useFactory: (): boolean => options.singleUserMode ?? loadConfig().singleUserMode,
+        },
         {
           // M-2, #47: `MANUAL_ENTITLEMENTS` (`config.ts`) decides both which verifier backs
           // `POST /billing/play/verify` and whether `POST /billing/admin/grant` answers at all
