@@ -364,45 +364,18 @@ class _ReadOnlyFeelings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final journal = context.journalColors;
-    final theme = Theme.of(context);
     return Wrap(
       spacing: JournalSpacing.x2,
       runSpacing: JournalSpacing.x2,
       children: [
         for (final feeling in feelings)
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: JournalSpacing.x4,
-              vertical: JournalSpacing.x2,
-            ),
-            decoration: BoxDecoration(
-              color: feeling.accent(journal).withValues(alpha: 0.10),
-              borderRadius: JournalShapes.full,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: feeling.accent(journal),
-                  ),
-                ),
-                const SizedBox(width: JournalSpacing.x2),
-                Text(feeling.label, style: theme.textTheme.labelLarge),
-                if (intensities[feeling.key] case final rating?) ...[
-                  const SizedBox(width: JournalSpacing.x2),
-                  Text(
-                    '$rating of $maxIntensity',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ],
-            ),
+          FeelingChip(
+            label: feeling.label,
+            color: feeling.accent(journal),
+            intensityLabel: switch (intensities[feeling.key]) {
+              null => null,
+              final rating => '$rating of $maxIntensity',
+            },
           ),
       ],
     );

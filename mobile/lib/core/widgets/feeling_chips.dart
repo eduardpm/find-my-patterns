@@ -10,6 +10,219 @@ import '../theme/journal_palette.dart';
 import 'feeling_accent.dart';
 import 'journal.dart';
 
+/// Which of the two ways a [FeelingChip] is used.
+enum FeelingChipVariant {
+  /// A feeling stated as fact: a dot, its label, and — where the caller
+  /// supplies one — an intensity suffix, all in the feeling's own valence
+  /// colour on an otherwise transparent pill. Nothing here responds to a
+  /// tap. This is every screen that *shows* a feeling rather than lets one
+  /// be picked: Today's day summary and entry cards, entry detail, and a
+  /// pattern's evidence trail.
+  display,
+
+  /// A feeling offered as a choice: adds a selected/unselected state and,
+  /// where [FeelingChip.removable] is set, a remove affordance instead of
+  /// a toggle. This is what the composer and entry-detail editor pickers
+  /// below are built from.
+  selectable,
+}
+
+/// The one feeling chip every screen in the app draws.
+///
+/// Before this, the same fact — "this entry carries this feeling" — was
+/// drawn three different ways depending on which screen it appeared on: an
+/// outlined pill on Today, a flat tinted pill in entry detail, and a pill
+/// with an **emoji** standing in for the dot in Insights' evidence trail —
+/// the app's only emoji-as-icon. [FeelingChipVariant.display] is Today's own
+/// pill, the one the design review called "the good variant": a transparent
+/// fill, a [FeelingDot] and the label both in [color], and a matching 1px
+/// border. Every display site now draws that pill and nothing else — no
+/// emoji, no flat grey, no second visual language (see
+/// `specs/research/unified-backlog.md` UX-5).
+///
+/// [color] is always resolved by the caller through
+/// [FeelingAccent.accent]/[FeelingGroupAccent.accent], never picked here —
+/// this widget draws whatever colour it is handed, so a screen with the
+/// wrong palette lookup shows up as wrong colour, not as a different shape.
+/// Both palette halves keep every feeling hue at a 4.5:1 text contrast (see
+/// `journal_palette.dart`), so [color] is safe to paint as this chip's own
+/// label text as well as its dot and border.
+///
+/// [FeelingChipVariant.selectable] adds the states a picker needs on top
+/// of the same pill:
+/// [selected] swaps the transparent fill for a lightly tinted one and
+/// thickens the border, [suggested] appends a "suggested" note for a
+/// feeling the analyser proposed rather than the user picked, and
+/// [removable] swaps the toggle affordance for a trailing "×" and the
+/// tap's accessibility hint from "select" to "remove" — see
+/// [FeelingChips]'s own chosen-feelings row and group sheet, the two
+/// places that set it.
+class FeelingChip extends StatelessWidget {
+  /// Builds a chip showing [label] in [color].
+  const FeelingChip({
+    super.key,
+    required this.label,
+    required this.color,
+    this.variant = FeelingChipVariant.display,
+    this.selected = false,
+    this.suggested = false,
+    this.enabled = true,
+    this.removable = false,
+    this.intensityLabel,
+    this.onTap,
+  }) : assert(
+         variant == FeelingChipVariant.display || onTap != null,
+         'A selectable FeelingChip needs an onTap.',
+       );
+
+  /// The feeling's own word, in its natural case — never upper-cased and
+  /// never paired with an emoji.
+  final String label;
+
+  /// This chip's valence colour, resolved by the caller — see the class
+  /// doc.
+  final Color color;
+
+  /// [FeelingChipVariant.display] (the default) or
+  /// [FeelingChipVariant.selectable].
+  final FeelingChipVariant variant;
+
+  /// Whether this chip is the chosen one, for [FeelingChipVariant.selectable]
+  /// only. Ignored by [FeelingChipVariant.display], which always paints as
+  /// "on" — it has nothing to be unselected relative to.
+  final bool selected;
+
+  /// Whether to append a "suggested" note — the analyser proposed this
+  /// feeling rather than the user picking it themselves.
+  final bool suggested;
+
+  /// Whether this chip can still be tapped, for
+  /// [FeelingChipVariant.selectable] only — an unchosen chip goes
+  /// non-interactive once a picker's limit is reached.
+  final bool enabled;
+
+  /// Shows a trailing "×" and announces the tap as "remove" instead of a
+  /// toggle. Set on an already-chosen chip in a row of chosen feelings;
+  /// left `false` for a chip that is still being chosen from, where the
+  /// [selected] state itself is the only thing that changes on a tap.
+  final bool removable;
+
+  /// An optional suffix shown after [label] — "3 of 5" beside "Stressed" —
+  /// for a screen carrying a per-feeling intensity. `null` shows no
+  /// suffix at all, which is every current call site except entry detail.
+  final String? intensityLabel;
+
+  /// Called on a tap, for [FeelingChipVariant.selectable] only.
+  final VoidCallback? onTap;
+
+  bool get _selectable => variant == FeelingChipVariant.selectable;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // "On" is what paints the chip in its own colour: a display chip
+    // always is, because it is stating a fact rather than offering a
+    // choice; a selectable chip only once it is the chosen one.
+    final on = !_selectable || selected;
+    final background = on
+        ? color.withValues(alpha: 0.12)
+        : theme.colorScheme.surfaceContainerHigh;
+    // Transparent rather than tinted for a plain display chip -- Today's
+    // own pill, the variant this whole widget is modelled on, was never
+    // filled, only outlined.
+    final resolvedBackground = _selectable ? background : Colors.transparent;
+    final borderColor = on ? color : theme.colorScheme.outline;
+    final borderWidth = _selectable && selected ? 2.0 : 1.0;
+    final textColor = on ? color : theme.colorScheme.onSurface;
+    final fontWeight = on ? FontWeight.bold : FontWeight.w500;
+
+    final chip = Container(
+      constraints: _selectable
+          ? const BoxConstraints(
+              minHeight: JournalSpacing.x7,
+              minWidth: JournalSpacing.x7,
+            )
+          : null,
+      padding: const EdgeInsets.symmetric(
+        horizontal: JournalSpacing.x4,
+        vertical: JournalSpacing.x2,
+      ),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: resolvedBackground,
+        borderRadius: JournalShapes.full,
+        border: Border.all(color: borderColor, width: borderWidth),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FeelingDot(color: color),
+          const SizedBox(width: JournalSpacing.x2),
+          Text(
+            label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: textColor,
+              fontWeight: fontWeight,
+            ),
+          ),
+          if (intensityLabel case final intensityLabel?) ...[
+            const SizedBox(width: JournalSpacing.x2),
+            Text(
+              intensityLabel,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          if (suggested) ...[
+            const SizedBox(width: JournalSpacing.x2),
+            Text('suggested', style: theme.textTheme.labelSmall),
+          ],
+          if (removable) ...[
+            const SizedBox(width: JournalSpacing.x2),
+            Text(
+              '×',
+              style: theme.textTheme.labelLarge?.copyWith(color: textColor),
+            ),
+          ],
+        ],
+      ),
+    );
+
+    if (!_selectable) return chip;
+
+    return Semantics(
+      // A removable (already-chosen) chip's job is removal, so that is the
+      // tap action's hint rather than a rewritten name -- "Grateful,
+      // button, double tap to remove" -- without losing the word the chip
+      // is about. A still-being-chosen-from chip is genuinely multi-select,
+      // so it announces as a checkbox instead of one exclusive choice.
+      container: true,
+      button: removable ? true : null,
+      checked: removable ? null : selected,
+      enabled: removable ? null : enabled,
+      label: label,
+      onTapHint: removable ? 'remove' : null,
+      onTap: enabled ? onTap : null,
+      child: ExcludeSemantics(
+        child: Opacity(
+          opacity: enabled ? 1 : 0.45,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: enabled ? onTap : null,
+              customBorder: const RoundedRectangleBorder(
+                borderRadius: JournalShapes.full,
+              ),
+              child: chip,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Feeling selection, two levels deep.
 ///
 /// The vocabulary is around thirty words in four groups — far more than fits
@@ -212,98 +425,17 @@ class _ChosenFeelings extends StatelessWidget {
     runSpacing: JournalSpacing.x2,
     children: [
       for (final feeling in selected)
-        _ChosenFeelingChip(
-          feeling: feeling,
+        FeelingChip(
+          label: feeling.label,
+          color: feeling.accent(journal),
+          variant: FeelingChipVariant.selectable,
+          selected: true,
           suggested: suggestedKeys.contains(feeling.key),
-          onRemove: () => onRemove(feeling),
-          journal: journal,
+          removable: true,
+          onTap: () => onRemove(feeling),
         ),
     ],
   );
-}
-
-/// One removable chip in the chosen-feelings row.
-class _ChosenFeelingChip extends StatelessWidget {
-  const _ChosenFeelingChip({
-    required this.feeling,
-    required this.suggested,
-    required this.onRemove,
-    required this.journal,
-  });
-
-  final Feeling feeling;
-  final bool suggested;
-  final VoidCallback onRemove;
-  final JournalColors journal;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final accent = feeling.accent(journal);
-    return Semantics(
-      // Its own boundary, or this chip's label would merge with its
-      // neighbours' into one node.
-      container: true,
-      button: true,
-      // The visible content reads as the word itself; the control's job is
-      // removal, so that is the hint rather than the name — "Grateful,
-      // button, double tap to remove" — without losing the word the chip
-      // is actually about.
-      label: feeling.label,
-      onTapHint: 'remove',
-      onTap: onRemove,
-      child: ExcludeSemantics(
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onRemove,
-            customBorder: const RoundedRectangleBorder(
-              borderRadius: JournalShapes.full,
-            ),
-            child: Container(
-              constraints: const BoxConstraints(
-                minHeight: JournalSpacing.x7,
-                minWidth: JournalSpacing.x7,
-              ),
-              padding: const EdgeInsets.symmetric(
-                horizontal: JournalSpacing.x4,
-                vertical: JournalSpacing.x2,
-              ),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.12),
-                borderRadius: JournalShapes.full,
-                border: Border.all(color: accent, width: 2),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  FeelingDot(color: accent),
-                  const SizedBox(width: JournalSpacing.x2),
-                  Text(
-                    feeling.label,
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  if (suggested) ...[
-                    const SizedBox(width: JournalSpacing.x2),
-                    Text('suggested', style: theme.textTheme.labelSmall),
-                  ],
-                  const SizedBox(width: JournalSpacing.x2),
-                  // Decoration beside a control whose action is already
-                  // spoken by the wrapping [Semantics]; the whole visual
-                  // subtree is already excluded above, so this needs no
-                  // exclusion of its own.
-                  Text('×', style: theme.textTheme.labelLarge),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// The group chips, wrapped.
@@ -494,8 +626,10 @@ class _GroupSheet extends StatelessWidget {
                   runSpacing: JournalSpacing.x2,
                   children: [
                     for (final feeling in group.feelings)
-                      _FeelingSheetChip(
-                        feeling: feeling,
+                      FeelingChip(
+                        label: feeling.label,
+                        color: feeling.accent(journal),
+                        variant: FeelingChipVariant.selectable,
                         selected: selected.any((f) => f.key == feeling.key),
                         suggested: suggestedKeys.contains(feeling.key),
                         // Only unchosen chips go dead at the limit: the way
@@ -504,8 +638,7 @@ class _GroupSheet extends StatelessWidget {
                         enabled:
                             selected.any((f) => f.key == feeling.key) ||
                             selected.length < max,
-                        onToggle: () => onToggle(feeling),
-                        journal: journal,
+                        onTap: () => onToggle(feeling),
                       ),
                   ],
                 ),
@@ -519,98 +652,6 @@ class _GroupSheet extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// One feeling inside a group's sheet.
-///
-/// A checkbox, not a radio: an entry carries several feelings, so this is
-/// genuinely multi-select and must announce as such rather than as one
-/// exclusive choice.
-class _FeelingSheetChip extends StatelessWidget {
-  const _FeelingSheetChip({
-    required this.feeling,
-    required this.selected,
-    required this.suggested,
-    required this.enabled,
-    required this.onToggle,
-    required this.journal,
-  });
-
-  final Feeling feeling;
-  final bool selected;
-  final bool suggested;
-  final bool enabled;
-  final VoidCallback onToggle;
-  final JournalColors journal;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final accent = feeling.accent(journal);
-    return Semantics(
-      container: true,
-      checked: selected,
-      enabled: enabled,
-      label: feeling.label,
-      onTap: enabled ? onToggle : null,
-      child: ExcludeSemantics(
-        child: Opacity(
-          // Dimmed *and* genuinely non-toggleable, so touch and a screen
-          // reader learn the same thing.
-          opacity: enabled ? 1 : 0.45,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: enabled ? onToggle : null,
-              customBorder: const RoundedRectangleBorder(
-                borderRadius: JournalShapes.full,
-              ),
-              child: Container(
-                constraints: const BoxConstraints(
-                  minHeight: JournalSpacing.x7,
-                  minWidth: JournalSpacing.x7,
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: JournalSpacing.x4,
-                  vertical: JournalSpacing.x2,
-                ),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: selected
-                      ? accent.withValues(alpha: 0.12)
-                      : theme.colorScheme.surfaceContainerHigh,
-                  borderRadius: JournalShapes.full,
-                  border: Border.all(
-                    color: selected ? accent : theme.colorScheme.outline,
-                    width: selected ? 2 : 1,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    FeelingDot(color: accent),
-                    const SizedBox(width: JournalSpacing.x2),
-                    Text(
-                      feeling.label,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        fontWeight: selected
-                            ? FontWeight.bold
-                            : FontWeight.w500,
-                      ),
-                    ),
-                    if (suggested) ...[
-                      const SizedBox(width: JournalSpacing.x2),
-                      Text('suggested', style: theme.textTheme.labelSmall),
-                    ],
-                  ],
-                ),
-              ),
-            ),
           ),
         ),
       ),
