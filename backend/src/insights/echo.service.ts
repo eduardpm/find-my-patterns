@@ -1,0 +1,147 @@
+import { Inject, Injectable } from '@nestjs/common';
+import { decodeJson, encodeDate, encodeJson, todayLocal } from '../db/codecs';
+import { DIARY_DB } from '../db/database.provider';
+import type { DiaryDatabase } from '../db/database';
+import { TopicsService } from '../topics/topics.service';
+import { PatternsService } from './patterns.service';
+
+/**
+ * The pattern echo (I4): what the diary already says about what was just written.
+ *
+ * Three properties do all the work, and each is a restriction rather than a feature:
+ *
+ *  - **After, never during.** The echo is served for a *stored* entry, so there is no request the
+ *    composer could make that would put a statistic in front of someone mid-sentence. An app that
+ *    told you "you usually feel anxious about meetings" while you were still describing the meeting
+ *    would be shaping the evidence it then counts (I4-02).
+ *  - **Observation only.** The numbers are the pattern card's own numbers, unchanged. Nothing here
+ *    predicts, advises, or says anything about how the user feels today (I4-03).
+ *  - **It reads; it never recomputes.** Recomputation stays on `GET /insights` (C-06), so saving an
+ *    entry never pays for the engine.
+ */
+
+export interface EchoOut {
+  pattern_id: string;
+  topic: string;
+  feeling: string;
+  kind: string;
+  status: string;
+  occurrence_count: number;
+  present_count: number;
+  present_total: number;
+  lift: number | null;
+  /** The pattern's own sentence, verbatim — the echo states nothing the card does not. */
+  narrative_text: string;
+}
+
+const ECHO_LOG_KEY = 'pattern_echo_log';
+
+@Injectable()
+export class EchoService {
+  constructor(
+    @Inject(DIARY_DB) private readonly db: DiaryDatabase,
+    private readonly patterns: PatternsService,
+    private readonly topics: TopicsService,
+  ) {}
+
+  /**
+   * The echoes for one saved entry.
+   *
+   * Empty is the normal answer, not a failure: an entry whose topics carry no active pattern gets
+   * nothing at all, because inventing a "maybe this matters" line would be the app talking rather
+   * than the diary (I4-09).
+   */
+  forEntry(entryId: string): EchoOut[] {
+    const entry = this.db
+      .prepare('SELECT id, entry_date, raw_text FROM diary_entries WHERE id = ?')
+      .get(entryId) as { id: string; entry_date: string; raw_text: string } | undefined;
+    if (!entry) return [];
+
+    // I4-01: the entry's topics are computed here rather than read from `entry_topics`, because
+    // those links are written by the recompute and an entry saved a second ago has none yet. The
+    // computation is the same deterministic keyword match, minus the writes.
+    const topicIds = new Set([
+      ...this.topics.topicsForEntry(entryId).map((topic) => topic.id),
+      ...this.topics.matchExistingTopics(entry.raw_text).map((topic) => topic.id),
+    ]);
+    if (topicIds.size === 0) return [];
+
+    const patternTopics = new Map(
+      (
+        this.db.prepare('SELECT p.id, p.topic_id FROM patterns p').all() as Array<{
+          id: string;
+          topic_id: string;
+        }>
+      ).map((row) => [row.id, row.topic_id]),
+    );
+
+    // I4-05: an echo is only ever an *active* pattern, and only a forward one — "you felt X in 8 of
+    // 12 entries mentioning this" is an observation about the entry in hand. An inverse pattern is
+    // about the entries that do *not* mention it, so echoing it here would be a non sequitur.
+    const matches = this.patterns
+      .listPatterns()
+      .filter(
+        (pattern) =>
+          pattern.status === 'active' &&
+          pattern.kind === 'forward' &&
+          topicIds.has(patternTopics.get(pattern.id) ?? ''),
+      );
+
+    const today = encodeDate(todayLocal());
+    const log = this.readLog();
+    const allowed = matches.filter((pattern) => {
+      const seen = log[pattern.id];
+      // I4-06: once per pattern per day. Re-reading the same entry's echo is deliberately still
+      // allowed — a client that reloads the confirmation screen should not lose what it was shown.
+      return !seen || seen.date !== today || seen.entryId === entryId;
+    });
+
+    if (allowed.length > 0) {
+      for (const pattern of allowed) log[pattern.id] = { date: today, entryId };
+      this.writeLog(log, today);
+    }
+
+    return allowed.map((pattern) => ({
+      pattern_id: pattern.id,
+      topic: pattern.topic,
+      feeling: pattern.feeling,
+      kind: pattern.kind,
+      status: pattern.status,
+      occurrence_count: pattern.occurrence_count,
+      present_count: pattern.present_count,
+      present_total: pattern.present_total,
+      lift: pattern.lift,
+      narrative_text: pattern.narrative_text,
+    }));
+  }
+
+  private readLog(): Record<string, { date: string; entryId: string }> {
+    const row = this.db
+      .prepare('SELECT value FROM diary_meta WHERE "key" = ?')
+      .get(ECHO_LOG_KEY) as { value: string } | undefined;
+    if (!row) return {};
+    try {
+      return decodeJson<Record<string, { date: string; entryId: string }>>(row.value);
+    } catch {
+      // A log that cannot be read is not worth failing a save over. The worst outcome of starting
+      // again is one extra echo.
+      return {};
+    }
+  }
+
+  /** Yesterday's entries are dropped on write, so the log stays one day wide. */
+  private writeLog(log: Record<string, { date: string; entryId: string }>, today: string): void {
+    const pruned = Object.fromEntries(
+      Object.entries(log).filter(([, seen]) => seen.date === today),
+    );
+    const value = encodeJson(pruned);
+    const updated = this.db
+      .prepare('UPDATE diary_meta SET value = ? WHERE "key" = ?')
+      .run(value, ECHO_LOG_KEY);
+    if (updated.changes === 0) {
+      this.db
+        .prepare('INSERT INTO diary_meta ("key", value) VALUES (?, ?)')
+        .run(ECHO_LOG_KEY, value);
+    }
+  }
+}

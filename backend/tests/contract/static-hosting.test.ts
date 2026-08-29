@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/main';
-import { GOLDEN } from '../helpers/app';
+import { GOLDEN, startOnLoopback } from '../helpers/app';
 
 let dir: string;
 let dbPath: string;
@@ -40,7 +40,7 @@ afterEach(async () => {
 describe('with the web client built', () => {
   beforeEach(async () => {
     app = await createApp({ databasePath: dbPath, webDistPath: distPath });
-    await app.init();
+    await startOnLoopback(app);
   });
 
   it('serves the app at /app', async () => {
@@ -82,7 +82,7 @@ describe('with the web client built', () => {
 describe('with the web client NOT built', () => {
   beforeEach(async () => {
     app = await createApp({ databasePath: dbPath, webDistPath: path.join(dir, 'missing') });
-    await app.init();
+    await startOnLoopback(app);
   });
 
   it('still starts and serves the API', async () => {
@@ -95,7 +95,7 @@ describe('with the web client NOT built', () => {
 describe('cache headers (FR-025)', () => {
   beforeEach(async () => {
     app = await createApp({ databasePath: dbPath, webDistPath: distPath });
-    await app.init();
+    await startOnLoopback(app);
   });
 
   it('sets baseline browser security headers', async () => {

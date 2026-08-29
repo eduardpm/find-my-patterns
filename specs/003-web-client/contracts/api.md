@@ -20,24 +20,36 @@ existing endpoint keeps its path and meaning. The one behavioral break is delibe
 
 Serves the fixed feeling set so no client hardcodes it (constitution Principle VII, research.md §4).
 
-**Response 200**:
+**Response 200** (abridged — see `backend/src/db/feeling-vocabulary.ts` for the full list):
 ```json
 {
+  "groups": [
+    { "key": "uplifted", "label": "Uplifted", "valence": "positive",
+      "feelings": [
+        { "key": "happy", "label": "Happy", "valence": "positive", "group_key": "uplifted" },
+        { "key": "grateful", "label": "Grateful", "valence": "positive", "group_key": "uplifted" }
+      ] },
+    { "key": "steady", "label": "Steady", "valence": "neutral", "feelings": [ ... ] },
+    { "key": "tense",  "label": "Tense",  "valence": "negative", "feelings": [ ... ] },
+    { "key": "low",    "label": "Low",    "valence": "negative", "feelings": [ ... ] }
+  ],
   "feelings": [
-    { "key": "happy",     "label": "Happy",     "valence": "positive" },
-    { "key": "excited",   "label": "Excited",   "valence": "positive" },
-    { "key": "neutral",   "label": "Neutral",   "valence": "neutral"  },
-    { "key": "sleepy",    "label": "Sleepy",    "valence": "negative" },
-    { "key": "exhausted", "label": "Exhausted", "valence": "negative" },
-    { "key": "stressed",  "label": "Stressed",  "valence": "negative" },
-    { "key": "sad",       "label": "Sad",       "valence": "negative" },
-    { "key": "depressed", "label": "Depressed", "valence": "negative" }
+    { "key": "happy", "label": "Happy", "valence": "positive", "group_key": "uplifted" }
   ]
 }
 ```
 
-Order is the backend's seed order and is stable; clients may reorder for display. Emoji are
-deliberately **not** included — presentation stays with the client.
+The same words are served twice on purpose. `groups` is what both clients render — the vocabulary
+is around thirty words, far too many to put on screen at once without slowing the entry flow
+(Principle VI), so a client shows the four groups and opens a group's own feelings on demand.
+`feelings` is the flat lookup for resolving a stored `feeling_key`.
+
+**Every feeling in a group carries that group's `valence`.** That invariant is what lets a client
+tint an entire group with one accent colour without asserting anything the backend did not say —
+and it is why there are four accent colours per theme rather than thirty.
+
+Order is the backend's `sort_order` and is stable; clients render what they are given. Emoji and
+accent colours are deliberately **not** included — presentation stays with the client.
 
 ---
 
@@ -64,13 +76,20 @@ Every response that returns an entry (`POST /entries`, `GET /entries`, `GET /ent
   "mode": "guided",
   "raw_text": "...",
   "feeling_key": "sleepy",
+  "feeling_keys": ["sleepy", "stressed"],
   "feeling_source": "suggested",
   "suggested_feeling": { "key": "sleepy", "confidence": 0.82 },
+  "suggested_feelings": [
+    { "key": "sleepy", "confidence": 0.82 },
+    { "key": "stressed", "confidence": 0.41 }
+  ],
   "version": 1
 }
 ```
 
-Additive: existing clients that ignore the field are unaffected on reads.
+Additive: existing clients that ignore the field are unaffected on reads. An entry carries a **set**
+of up to four feelings; `feeling_key` is `feeling_keys[0]`, the primary one, and both stay on the
+wire so a client built before the vocabulary grew keeps working.
 
 ---
 
@@ -78,10 +97,18 @@ Additive: existing clients that ignore the field are unaffected on reads.
 
 **Request**:
 ```json
-{ "feeling_key": "sleepy", "raw_text": "edited text", "version": 3 }
+{ "feeling_keys": ["sleepy", "stressed"], "raw_text": "edited text", "version": 3 }
 ```
 
-`version` is **required**; `raw_text` and `feeling_key` remain optional.
+`version` is **required**; `raw_text`, `feeling_keys` and `feeling_key` are all optional.
+
+`feeling_keys` replaces the entry's whole set, in the order sent, and is capped at **4**. The
+single-key `feeling_key` form is still accepted and means a set of one; sending both is not an
+error and `feeling_keys` wins. An **absent or empty** list leaves the feelings unchanged — there is
+no way to clear an entry's feelings, which is deliberate.
+
+`feeling_source` becomes `confirmed` when the saved set matches what the analyser suggested and
+`overridden` otherwise; the comparison ignores order.
 
 - **200** — applied. Response is the entry with `version` incremented by 1.
 - **409** — the entry changed since the client read it (FR-011). Nothing was modified.

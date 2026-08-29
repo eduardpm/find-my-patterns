@@ -1,13 +1,53 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchFeelings } from '../src/api/feelings';
 import { fetchMonthlySummary } from '../src/api/monthlySummary';
 import { MonthlyCalendarScreen } from '../src/screens/MonthlyCalendarScreen';
-import type { MonthlySummary } from '../src/domain/types';
+import type { FeelingVocabulary, MonthlySummary } from '../src/domain/types';
 
 vi.mock('../src/api/monthlySummary', () => ({ fetchMonthlySummary: vi.fn() }));
+vi.mock('../src/api/feelings', async (importOriginal) => ({
+  // `feelingLookup` and `resolveFeelings` are pure helpers, so only the network call is replaced.
+  ...(await importOriginal<typeof import('../src/api/feelings')>()),
+  fetchFeelings: vi.fn(),
+}));
 
 const fetchMock = vi.mocked(fetchMonthlySummary);
+const feelingsMock = vi.mocked(fetchFeelings);
+
+/**
+ * The summary carries bare feeling keys; the labels and the group each one is coloured by come
+ * from here. Only the keys the summary actually uses are listed — the screen must never assume
+ * the whole vocabulary is present.
+ */
+const VOCABULARY: FeelingVocabulary = {
+  groups: [
+    {
+      key: 'uplifted',
+      label: 'Uplifted',
+      valence: 'positive',
+      feelings: [{ key: 'happy', label: 'Happy', valence: 'positive', group_key: 'uplifted' }],
+    },
+    {
+      key: 'steady',
+      label: 'Steady',
+      valence: 'neutral',
+      feelings: [{ key: 'neutral', label: 'Neutral', valence: 'neutral', group_key: 'steady' }],
+    },
+    {
+      key: 'low',
+      label: 'Low',
+      valence: 'negative',
+      feelings: [{ key: 'sleepy', label: 'Sleepy', valence: 'negative', group_key: 'low' }],
+    },
+  ],
+  feelings: [
+    { key: 'happy', label: 'Happy', valence: 'positive', group_key: 'uplifted' },
+    { key: 'neutral', label: 'Neutral', valence: 'neutral', group_key: 'steady' },
+    { key: 'sleepy', label: 'Sleepy', valence: 'negative', group_key: 'low' },
+  ],
+};
 
 /**
  * Deliberately booby-trapped: if the screen ever re-tallies `days` instead of rendering the
@@ -23,10 +63,10 @@ const fetchMock = vi.mocked(fetchMonthlySummary);
 const SERVED: MonthlySummary = {
   month: '2026-05',
   days: [
-    { date: '2026-05-01', feelings: ['happy'] },
-    { date: '2026-05-02', feelings: ['sleepy', 'neutral'] },
-    { date: '2026-05-03', feelings: [] },
-    { date: '2026-05-04', feelings: ['happy'] },
+    { date: '2026-05-01', feelings: ['happy'], intensity: null },
+    { date: '2026-05-02', feelings: ['sleepy', 'neutral'], intensity: null },
+    { date: '2026-05-03', feelings: [], intensity: null },
+    { date: '2026-05-04', feelings: ['happy'], intensity: null },
   ],
   totals_by_feeling: { happy: 9, sleepy: 4, neutral: 2 },
   average_entries_per_day: 1.4285714285714286,
@@ -45,6 +85,8 @@ function totalsRow(label: string): HTMLElement {
 beforeEach(() => {
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(ok(SERVED));
+  feelingsMock.mockReset();
+  feelingsMock.mockResolvedValue({ ok: true, value: VOCABULARY });
 });
 
 describe('MonthlyCalendarScreen — served numbers, never recomputed (Principle VII, SC-005)', () => {
@@ -82,7 +124,7 @@ describe('MonthlyCalendarScreen — served numbers, never recomputed (Principle 
     fetchMock.mockResolvedValue(
       ok({
         month: '2026-05',
-        days: [{ date: '2026-05-01', feelings: [] }],
+        days: [{ date: '2026-05-01', feelings: [], intensity: null }],
         totals_by_feeling: { stressed: 6 },
         average_entries_per_day: 0.2,
       }),
@@ -106,7 +148,7 @@ describe('MonthlyCalendarScreen — served numbers, never recomputed (Principle 
     fetchMock.mockResolvedValue(
       ok({
         month: 'previous',
-        days: [{ date: '2026-04-01', feelings: ['happy'] }],
+        days: [{ date: '2026-04-01', feelings: ['happy'], intensity: null }],
         totals_by_feeling: { happy: 31 },
         average_entries_per_day: 2.93,
       }),
@@ -163,5 +205,26 @@ describe('CalendarGrid day cells (US5 AC1/AC3/AC4)', () => {
       true,
     );
     expect(within(cells[4]).getByText(/^1 .+: Happy$/)).toBeInTheDocument();
+  });
+});
+
+describe('CalendarGrid colour, keyed on the group (Principle VII)', () => {
+  it('tints a dot with its feeling’s group accent, not with the feeling key', async () => {
+    render(<MonthlyCalendarScreen />);
+    await screen.findByRole('heading', { name: 'This month' });
+
+    const dot = totalsRow('Sleepy').querySelector('.feeling-dot');
+    // `sleepy` lives in the `low` group, so the token is the group's — a `--feeling-sleepy`
+    // here would mean this client had gone back to inventing a colour per word.
+    expect(dot?.getAttribute('style')).toContain('--feeling-group-low');
+  });
+
+  it('falls back to a readable label for a key the vocabulary has not got', async () => {
+    feelingsMock.mockResolvedValue({ ok: true, value: { groups: [], feelings: [] } });
+    render(<MonthlyCalendarScreen />);
+    await screen.findByRole('heading', { name: 'This month' });
+
+    // A feeling the backend gained after this build shipped still renders, just plainly.
+    expect(screen.getByText('Sleepy')).toBeInTheDocument();
   });
 });

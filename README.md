@@ -11,9 +11,9 @@ Use Node 20 or newer.
 ```sh
 cd web && npm ci && npm run build
 cd ../backend && npm ci && npm run build
-npm run init-db                 # first run only
-npm start                       # terminal 1: API/web server
-npm run start:worker            # terminal 2: local inference worker
+npm run init-db                      # first run only
+npm start                            # terminal 1: API/web server
+cd backend && npm run start:worker   # terminal 2: local inference worker
 ```
 
 Open <http://127.0.0.1:8000/app>. The safe default listens only on this computer. To use the Android
@@ -95,11 +95,13 @@ permissions. Restart both after changing that file.
 cd backend && npm test && npm run lint && npm run build
 cd ../web && npm test && npm run lint && npm run build
 E2E_BASE_URL=http://127.0.0.1:8000 npm run test:e2e  # with backend running
-cd ../android && ./gradlew testDebugUnitTest ktlintCheck assembleDebug
+cd ../mobile && ./scripts/check && flutter build apk --debug
 ```
 
-Android requires JDK 17 and Android SDK 35. See the component READMEs and `specs/` for detailed
-design decisions.
+The smartphone app is Flutter (`mobile/`), replacing the earlier Kotlin/Compose Android client.
+Its gate is `./scripts/check` — format, lint fixes, analysis, tests and the 95% coverage floor —
+and building the APK additionally needs JDK 17 and the Android SDK. See the component READMEs,
+`mobile/CONSTITUTION.md`, and `specs/` for detailed design decisions.
 
 ## Protect the diary
 

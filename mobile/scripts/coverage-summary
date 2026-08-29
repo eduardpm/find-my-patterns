@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+#
+# Prints per-file line coverage from coverage/lcov.info, worst first.
+# Fails if total coverage falls below the threshold.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+threshold="${COVERAGE_THRESHOLD:-95}"
+[ -f coverage/lcov.info ] || { echo "No coverage/lcov.info — run flutter test --coverage first." >&2; exit 1; }
+
+python3 - "$threshold" <<'PY'
+import collections, sys
+
+threshold = float(sys.argv[1])
+current = None
+hits, totals, missing = {}, {}, collections.defaultdict(list)
+
+for line in open('coverage/lcov.info'):
+    line = line.strip()
+    if line.startswith('SF:'):
+        current = line[3:]
+        hits[current] = totals[current] = 0
+    elif line.startswith('DA:'):
+        number, count = line[3:].split(',')
+        totals[current] += 1
+        if int(count) > 0:
+            hits[current] += 1
+        else:
+            missing[current].append(number)
+
+covered = sum(hits.values())
+total = sum(totals.values())
+
+for path in sorted(totals, key=lambda p: hits[p] / totals[p] if totals[p] else 0):
+    name = path.split('find_my_patterns/')[-1] if 'find_my_patterns/' in path else path
+    percent = 100 * hits[path] / totals[path] if totals[path] else 100.0
+    gap = '   uncovered: ' + ','.join(missing[path][:10]) if missing[path] else ''
+    print(f'{percent:6.1f}%  {hits[path]:3}/{totals[path]:<3}  {name}{gap}')
+
+percent = 100 * covered / total if total else 100.0
+print(f'\nTOTAL  {percent:.1f}%  ({covered}/{total} lines)')
+if percent < threshold:
+    print(f'\nCoverage {percent:.1f}% is below the {threshold:.0f}% threshold.', file=sys.stderr)
+    sys.exit(1)
+PY

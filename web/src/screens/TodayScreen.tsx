@@ -5,7 +5,7 @@ import { fetchFeelings } from '../api/feelings';
 import { EntryCard } from '../components/EntryCard';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { Icon } from '../components/Icon';
-import type { Entry, Feeling } from '../domain/types';
+import type { Entry, FeelingVocabulary } from '../domain/types';
 import { useRefreshable } from '../hooks/useRefreshable';
 
 function todayIso(): string {
@@ -39,7 +39,9 @@ function longDate(iso: string): string {
 export function TodayScreen() {
   const date = todayIso();
   const entries = useRefreshable<Entry[]>(useCallback(() => listEntries(date), [date]));
-  const { data: feelings } = useRefreshable<Feeling[]>(useCallback(() => fetchFeelings(), []));
+  const { data: feelings } = useRefreshable<FeelingVocabulary>(
+    useCallback(() => fetchFeelings(), []),
+  );
 
   const list = entries.data ?? [];
   const settled = !entries.loading && !entries.failure;
@@ -99,7 +101,7 @@ export function TodayScreen() {
         <ul className="entry-list">
           {list.map((entry) => (
             <li key={entry.id}>
-              <EntryCard entry={entry} feelings={feelings ?? []} />
+              <EntryCard entry={entry} vocabulary={feelings} />
             </li>
           ))}
         </ul>

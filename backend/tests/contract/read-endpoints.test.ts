@@ -7,6 +7,7 @@
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootOnCopy, teardown, type Harness } from '../helpers/app';
+import { FEELING_GROUP_SEED, FEELING_SEED } from '../../src/db/feeling-vocabulary';
 
 let h: Harness;
 
@@ -32,14 +33,17 @@ async function populatedFixtureDate(): Promise<string> {
 }
 
 describe('GET /feelings', () => {
-  it('serves all eight seeded feelings', async () => {
+  it('serves the whole vocabulary flat, in vocabulary order', async () => {
     const res = await request(server()).get('/feelings').expect(200);
-    expect(res.body.feelings).toHaveLength(8);
+    expect(res.body.feelings.map((f: { key: string }) => f.key)).toEqual(
+      FEELING_SEED.map((feeling) => feeling.key),
+    );
   });
 
-  it('serves them in seed order', async () => {
+  it('still serves the eight original keys, so existing entries keep resolving', async () => {
     const res = await request(server()).get('/feelings');
-    expect(res.body.feelings.map((f: { key: string }) => f.key)).toEqual([
+    const keys = new Set(res.body.feelings.map((f: { key: string }) => f.key));
+    for (const key of [
       'happy',
       'excited',
       'neutral',
@@ -48,13 +52,41 @@ describe('GET /feelings', () => {
       'stressed',
       'sad',
       'depressed',
-    ]);
+    ]) {
+      expect(keys.has(key)).toBe(true);
+    }
   });
 
-  it('exposes key, label and valence — and nothing else', async () => {
+  it('exposes key, label, valence and group_key — and nothing else', async () => {
     const res = await request(server()).get('/feelings');
     for (const feeling of res.body.feelings) {
-      expect(Object.keys(feeling).sort()).toEqual(['key', 'label', 'valence']);
+      expect(Object.keys(feeling).sort()).toEqual(['group_key', 'key', 'label', 'valence']);
+    }
+  });
+
+  it('serves the same vocabulary nested as groups', async () => {
+    const res = await request(server()).get('/feelings');
+    expect(res.body.groups.map((g: { key: string }) => g.key)).toEqual(
+      FEELING_GROUP_SEED.map((group) => group.key),
+    );
+
+    const nested = res.body.groups.flatMap((g: { feelings: Array<{ key: string }> }) =>
+      g.feelings.map((f) => f.key),
+    );
+    expect(nested.sort()).toEqual(res.body.feelings.map((f: { key: string }) => f.key).sort());
+  });
+
+  it('gives every group between three and eight feelings, all of its own valence', async () => {
+    const res = await request(server()).get('/feelings');
+    for (const group of res.body.groups) {
+      expect(group.feelings.length).toBeGreaterThanOrEqual(3);
+      expect(group.feelings.length).toBeLessThanOrEqual(8);
+      // A group is tinted with one accent by both clients, which is only honest while every
+      // feeling inside it carries the group's valence.
+      for (const feeling of group.feelings) {
+        expect(feeling.valence).toBe(group.valence);
+        expect(feeling.group_key).toBe(group.key);
+      }
     }
   });
 });
@@ -62,12 +94,27 @@ describe('GET /feelings', () => {
 describe('GET /guiding-questions', () => {
   it('serves the library with decoded trigger keywords', async () => {
     const res = await request(server()).get('/guiding-questions').expect(200);
-    expect(res.body.questions).toHaveLength(4);
+    // A6-01/A6-02: the library grew by three optional time-slot prompts and the questions that
+    // were already there are unchanged — same keys, same wording, same mandatory flags. Entries
+    // already store a snapshot of the wording they were answered under, so rewording one of these
+    // would make those snapshots misquote the user.
+    expect(res.body.questions).toHaveLength(7);
     const core = res.body.questions.filter((q: { is_mandatory: boolean }) => q.is_mandatory);
     expect(core.map((q: { key: string }) => q.key)).toEqual([
       'general_feeling',
       'mind_body',
       'small_influences',
+    ]);
+    expect(
+      res.body.questions
+        .filter((q: { category: string }) =>
+          ['morning', 'afternoon', 'evening'].includes(q.category),
+        )
+        .map((q: { key: string; is_mandatory: boolean }) => [q.key, q.is_mandatory]),
+    ).toEqual([
+      ['morning_start', false],
+      ['afternoon_middle', false],
+      ['evening_close', false],
     ]);
     const responseOutcome = res.body.questions.find(
       (q: { key: string }) => q.key === 'response_outcome',
@@ -107,14 +154,20 @@ describe('GET /entries?date=', () => {
 
     for (const entry of res.body.entries) {
       expect(Object.keys(entry).sort()).toEqual([
+        'analysis_pending',
         'created_at',
         'entry_date',
+        'feeling_intensities',
+        'feeling_intensity',
         'feeling_key',
+        'feeling_keys',
         'feeling_source',
+        'guided_answers',
         'id',
         'mode',
         'raw_text',
         'suggested_feeling',
+        'suggested_feelings',
         'version',
       ]);
     }

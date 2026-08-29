@@ -179,6 +179,10 @@ td {
   gap: var(--space-6);
 }
 
+.stack--tight {
+  gap: var(--space-2);
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -335,10 +339,37 @@ td {
   }
 }
 
-/* Below the brand's breakpoint the wordmark goes, but the mark stays as an anchor. */
+/*
+ * Below the brand's breakpoint the wordmark goes, but the mark stays as an anchor.
+ *
+ * Five destinations do not fit across a 375px phone even without the wordmark, so the nav is
+ * allowed to take a second line rather than scroll sideways. A nav that scrolls hides whichever
+ * item is furthest right — which would be Settings, the one place a person goes looking for
+ * deliberately — and the page itself must never scroll horizontally. Two short rows cost a few
+ * pixels of height and keep every destination visible.
+ */
 @media (max-width: 30rem) {
   .app-brand__text {
     display: none;
+  }
+
+  .app-nav {
+    flex-wrap: wrap;
+    row-gap: 0;
+    justify-content: center;
+  }
+
+  /*
+   * The mark gives up its `margin-right: auto` so the destinations centre as a block instead of
+   * being shoved right by a spacer that is only there to hold a wordmark no longer being shown.
+   */
+  .app-brand {
+    margin-right: 0;
+    padding-right: var(--space-2);
+  }
+
+  .app-nav a {
+    padding-inline: var(--space-2);
   }
 }
 
@@ -495,37 +526,30 @@ td {
 }
 
 /* ---- Feeling colour token plumbing ----
- * `[data-feeling]` sets one custom property; everything downstream (dot, rail, text) reads it. That
- * keeps the eight-way branch in one place instead of once per component.
+ * `[data-feeling-group]` sets one custom property; everything downstream (dot, rail, text) reads
+ * it. That keeps the four-way branch in one place instead of once per component.
+ *
+ * The attribute carries the *group* key, not the feeling's own key. A component that has a feeling
+ * reads `feeling.group_key` off it; the vocabulary comes from the backend, so no component has to
+ * know which group a word is in. An unknown group — one this build shipped before the backend
+ * gained it — falls back to the outline colour rather than disappearing.
  */
 
-[data-feeling] {
+[data-feeling-group] {
   --feeling-color: var(--color-outline);
 }
 
-[data-feeling='happy'] {
-  --feeling-color: var(--feeling-happy);
+[data-feeling-group='uplifted'] {
+  --feeling-color: var(--feeling-group-uplifted);
 }
-[data-feeling='excited'] {
-  --feeling-color: var(--feeling-excited);
+[data-feeling-group='steady'] {
+  --feeling-color: var(--feeling-group-steady);
 }
-[data-feeling='neutral'] {
-  --feeling-color: var(--feeling-neutral);
+[data-feeling-group='tense'] {
+  --feeling-color: var(--feeling-group-tense);
 }
-[data-feeling='sleepy'] {
-  --feeling-color: var(--feeling-sleepy);
-}
-[data-feeling='exhausted'] {
-  --feeling-color: var(--feeling-exhausted);
-}
-[data-feeling='stressed'] {
-  --feeling-color: var(--feeling-stressed);
-}
-[data-feeling='sad'] {
-  --feeling-color: var(--feeling-sad);
-}
-[data-feeling='depressed'] {
-  --feeling-color: var(--feeling-depressed);
+[data-feeling-group='low'] {
+  --feeling-color: var(--feeling-group-low);
 }
 
 .feeling-dot {
@@ -592,6 +616,9 @@ td {
   letter-spacing: var(--tracking-eyebrow);
   text-transform: uppercase;
   color: var(--color-on-surface-variant);
+  /* A time is one token. On a narrow screen a card carrying several feelings squeezes this
+     column, and "08:51 PM" broken across two lines is harder to read than a card one line taller. */
+  white-space: nowrap;
 }
 
 .entry-card__feeling {
@@ -743,22 +770,141 @@ kbd {
   line-height: 1.5;
 }
 
-/* ---- Feeling chips ---- */
+/* ---- Feeling picker ---- */
 
-.feeling-chips {
-  border: none;
-  padding: 0;
+.feeling-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
   min-width: 0;
 }
 
-.feeling-chips legend {
-  margin-bottom: var(--space-3);
-  padding: 0;
+.feeling-picker__legend {
+  margin: 0;
+  font-family: var(--font-sans);
   font-size: var(--text-micro-size);
   font-weight: 600;
   letter-spacing: var(--tracking-eyebrow);
   text-transform: uppercase;
   color: var(--color-on-surface-variant);
+}
+
+/* Both rows wrap before anything shrinks: a truncated feeling name is worse than a taller
+   control, and at the largest text sizes these are the words the whole screen is about. */
+.feeling-picker__chosen,
+.feeling-picker__groups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.feeling-picker__empty,
+.feeling-picker__limit {
+  margin: 0;
+  font-size: var(--text-body-md-size);
+}
+
+/*
+ * The group row is the second level visually as well as structurally: it is what the user reaches
+ * for, but the answer above it is what they read. A hairline above the groups separates the two
+ * without adding another box.
+ */
+.feeling-picker__groups {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-hairline);
+}
+
+.chip--group .chip__count {
+  min-width: 1.25rem;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--feeling-color, var(--color-primary));
+  color: var(--color-surface-container);
+  font-size: var(--text-micro-size);
+  font-weight: 700;
+  text-align: center;
+}
+
+/* The removal icon is dimmed until the chip is hovered or focused, so a row of chosen feelings
+   reads as words first and controls second — without ever being hidden. */
+.chip--chosen .icon {
+  color: var(--color-on-surface-variant);
+  opacity: 0.7;
+  transition: opacity var(--motion-fast) var(--easing-standard);
+}
+
+.chip--chosen:hover .icon,
+.chip--chosen:focus-visible .icon {
+  opacity: 1;
+}
+
+/* ---- The group's own feelings, in a modal ---- */
+
+.feeling-dialog {
+  /* The UA centres a modal dialog with `margin: auto` inside its `inset: 0` box. The reset at the
+     top of this file zeroes every margin, which lands the dialog in the top-left corner instead —
+     so the centring is restated here rather than left to a rule this stylesheet has overridden. */
+  margin: auto;
+  width: min(30rem, calc(100vw - 2 * var(--space-4)));
+  max-height: min(32rem, calc(100dvh - 2 * var(--space-6)));
+  padding: var(--space-5);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-container);
+  color: var(--color-on-surface);
+  overflow-y: auto;
+  /* A visible left edge in the group's own colour, so the dialog and the chip that opened it are
+     recognisably the same thing. */
+  border-left: 4px solid var(--feeling-color, var(--color-primary));
+}
+
+.feeling-dialog::backdrop {
+  background: color-mix(in srgb, #000 45%, transparent);
+}
+
+.feeling-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.feeling-dialog__head h2 {
+  margin: 0;
+  font-size: var(--text-title-lg-size);
+}
+
+.feeling-dialog__hint {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-body-md-size);
+}
+
+.feeling-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-5);
+}
+
+/*
+ * Motion is a short rise from below rather than a fade: the dialog is a level deeper than the chip
+ * that opened it, and the direction says so. Anyone who has asked for less motion gets the dialog
+ * without the movement — never without the dialog.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .feeling-dialog[open] {
+    animation: feeling-dialog-in var(--motion-base) var(--easing-standard);
+  }
+}
+
+@keyframes feeling-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
 }
 
 /* Wraps before it shrinks: a truncated feeling name is worse than a taller control. */
@@ -772,6 +918,9 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  /* A chip's label is a control, not prose. Without this, a tap-and-hold on a touch screen
+     selects the word instead of pressing the chip. */
+  user-select: none;
   min-height: 44px;
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-outline);
@@ -793,12 +942,24 @@ kbd {
 }
 
 /*
- * The ring has to be drawn on the label, because the real radio inside it is visually hidden —
- * without this the keyboard user would have no focus indicator at all (FR-027, SC-014).
+ * The ring has to be drawn on the label, because the real checkbox inside it is visually hidden —
+ * without this the keyboard user would have no focus indicator at all (FR-027, SC-014). A chip
+ * that is a real `<button>` gets its ring the ordinary way.
  */
-.chip:has(input:focus-visible) {
+.chip:has(input:focus-visible),
+button.chip:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
+}
+
+/*
+ * At the per-entry limit the unchosen chips stop being offers. Dimmed *and* non-interactive via
+ * the real `disabled` attribute, so a pointer, a keyboard and a screen reader all learn the same
+ * thing — and the chips already chosen stay fully live, which is the only way back under the limit.
+ */
+.chip:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /*
@@ -1055,6 +1216,655 @@ blockquote.card {
   background: var(--color-error-container);
 }
 
+/*
+ * ---- The evidence on a pattern card (A1, A3, I1, I2, I3) ----
+ *
+ * The card grew from "a sentence and a count" into an argument: the claim, the numbers behind it,
+ * what could not be concluded, what else it might really be about, and the entries themselves. The
+ * styling exists to keep that readable as a hierarchy rather than as a wall — narrative first,
+ * figures second, caveats third, advice last, entries on demand.
+ *
+ * Every distinction is carried by a word as well as by colour, because the pattern colours are
+ * exactly the pair that disappears for the most common form of colour blindness (FR-027).
+ */
+
+.pattern-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.pattern-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.1rem var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-hairline);
+  background: var(--color-surface-variant);
+  color: var(--color-on-surface-variant);
+  font-size: var(--text-micro-size);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.pattern-tag--inverse {
+  border-color: var(--color-accent);
+  background: var(--color-accent-container);
+  color: var(--color-accent);
+}
+
+.pattern-tag--strong {
+  border-color: var(--color-primary);
+  background: var(--color-primary-container);
+  color: var(--color-primary);
+}
+
+/* A historical pattern is quieter, never hidden — withdrawal is the only removal path (I3-09). */
+.pattern-card--historical {
+  opacity: 0.92;
+  border-style: dashed;
+}
+
+.pattern-card--strong {
+  border-left: 3px solid var(--color-primary);
+}
+
+/*
+ * The four figures every pattern states (C-05). A grid rather than prose because the comparison —
+ * this rate against that one against the usual rate — is the entire point, and a sentence makes
+ * the reader hold three numbers in their head to make it.
+ */
+.pattern-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-variant);
+}
+
+.pattern-stats__item dt {
+  font-size: var(--text-micro-size);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--color-on-surface-variant);
+}
+
+.pattern-stats__item dt::first-letter {
+  text-transform: uppercase;
+}
+
+.pattern-stats__item dd {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-title-md-size);
+  font-weight: 600;
+}
+
+.pattern-stats__raw {
+  font-size: var(--text-micro-size);
+  font-weight: 400;
+  color: var(--color-on-surface-variant);
+}
+
+.pattern-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-body-md-size);
+  color: var(--color-on-surface-variant);
+  background: var(--color-surface-variant);
+}
+
+.pattern-note .icon {
+  margin-top: 0.25em;
+  flex: none;
+}
+
+.pattern-note--confounder {
+  background: var(--color-primary-container);
+  color: var(--color-on-surface);
+}
+
+.pattern-card__footer {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.pattern-card__counts {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.btn--ghost {
+  background: transparent;
+  border: 1px solid var(--color-hairline);
+  color: var(--color-on-surface-variant);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--color-surface-variant);
+  color: var(--color-on-surface);
+}
+
+.btn--small {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-label-size);
+}
+
+/* ---- The evidence trail (A1) ---- */
+
+.evidence-trail {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--color-hairline);
+}
+
+.evidence-trail__item + .evidence-trail__item {
+  border-top: 1px solid var(--color-hairline);
+}
+
+.evidence-trail__link {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+
+.evidence-trail__link:hover {
+  background: var(--color-surface-variant);
+}
+
+.evidence-trail__date {
+  font-size: var(--text-micro-size);
+  color: var(--color-on-surface-variant);
+  white-space: nowrap;
+}
+
+/* Two lines of the entry, so the trail is scannable without opening each one (A1-09). */
+.evidence-trail__text {
+  font-family: var(--font-serif);
+  font-size: var(--text-body-md-size);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.evidence-trail__feelings {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.evidence-trail__feeling {
+  padding: 0.05rem var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-variant);
+  color: var(--color-on-surface-variant);
+  font-size: var(--text-micro-size);
+}
+
+.evidence-trail__empty {
+  padding: var(--space-3) var(--space-2);
+  font-size: var(--text-body-md-size);
+}
+
+/* ---- Withdrawal notices (A2) ---- */
+
+.withdrawals__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.withdrawals__count {
+  font-size: var(--text-label-size);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.withdrawals__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.withdrawal {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-variant);
+  border-left: 3px solid var(--color-outline);
+}
+
+/* Unacknowledged notices are marked, so "since you last looked" is visible and not just counted. */
+.withdrawal--new {
+  border-left-color: var(--color-primary);
+  background: var(--color-primary-container);
+}
+
+.withdrawal__icon {
+  color: var(--color-on-surface-variant);
+  margin-top: 0.15em;
+}
+
+.withdrawal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.withdrawal__head {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.withdrawal__topic::first-letter {
+  text-transform: uppercase;
+}
+
+.withdrawal__reason {
+  padding: 0.05rem var(--space-2);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-hairline);
+  font-size: var(--text-micro-size);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-on-surface-variant);
+}
+
+.withdrawal__detail,
+.withdrawal__counts {
+  margin: 0;
+  font-size: var(--text-body-md-size);
+}
+
+/* ---- "When it happens" (I5) ---- */
+
+.when-panel__lede {
+  font-size: var(--text-body-md-size);
+}
+
+.when-group__title {
+  font-size: var(--text-title-md-size);
+  margin-bottom: var(--space-2);
+}
+
+.when-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.when-row {
+  display: grid;
+  /* `max-content` on the label column, capped: the labels are weekday names and a "Best" pill, and
+     a fixed width narrow enough for "Monday" chopped "Wednesday" in half at the reading measure. */
+  grid-template-columns: minmax(max-content, 12rem) 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.when-row__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body-md-size);
+  white-space: nowrap;
+}
+
+.when-row__tag {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-micro-size);
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.when-row__tag--best {
+  background: var(--color-success-container);
+  color: var(--color-success);
+}
+
+.when-row__tag--worst {
+  background: var(--color-error-container);
+  color: var(--color-on-error-container);
+}
+
+/* A track with a marker rather than a bar: the scale runs from -1 to +1, and a bar growing from
+   the left edge would read as "more", when what is meant is "further one way or the other". */
+.when-row__track {
+  position: relative;
+  height: 0.6rem;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-variant);
+}
+
+.when-row__zero {
+  position: absolute;
+  left: 50%;
+  top: -0.15rem;
+  bottom: -0.15rem;
+  width: 1px;
+  background: var(--color-hairline);
+}
+
+.when-row__marker {
+  position: absolute;
+  top: -0.15rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-left: -0.45rem;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-surface-container);
+}
+
+.when-row__marker--high {
+  background: var(--color-success);
+}
+
+.when-row__marker--low {
+  background: var(--color-error);
+}
+
+.when-row__insufficient {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-micro-size);
+}
+
+.when-row__count {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-micro-size);
+  white-space: nowrap;
+}
+
+.when-row__entries {
+  color: var(--color-on-surface-variant);
+}
+
+@media (max-width: 34rem) {
+  .when-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .when-row__track,
+  .when-row__insufficient {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+}
+
+/*
+ * A heading inside a page, below the page's own `h1`. Sized between a card title and the page
+ * title so the Insights view reads as sections of one argument rather than as several pages
+ * stacked on top of each other.
+ */
+.section-heading {
+  font-size: var(--text-title-lg-size);
+  line-height: var(--text-title-lg-line);
+  letter-spacing: var(--tracking-tight);
+}
+
+/* ---- Topics and their aliases (A4-04) ---- */
+
+.input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-container);
+  color: var(--color-on-surface);
+  font: inherit;
+  font-size: var(--text-body-md-size);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.topic-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.topic-row__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.topic-row__name {
+  font-size: var(--text-title-md-size);
+}
+
+.topic-row__name::first-letter {
+  text-transform: uppercase;
+}
+
+.topic-row__aliases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.topic-alias {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.1rem var(--space-1) 0.1rem var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-variant);
+  font-size: var(--text-label-size);
+}
+
+.topic-alias__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-on-surface-variant);
+  cursor: pointer;
+}
+
+.topic-alias__remove:hover {
+  background: var(--color-error-container);
+  color: var(--color-on-error-container);
+}
+
+.topic-row__form {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* ---- The optional intensity dial (I6) ---- */
+
+.intensity {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin: 0;
+}
+
+.intensity__legend {
+  font-size: var(--text-label-size);
+  color: var(--color-on-surface-variant);
+  padding: 0 var(--space-2);
+}
+
+/*
+  One block per feeling. Separated by a rule rather than by spacing alone: at four feelings the
+  rows are four near-identical strips of five circles, and without a divider it is genuinely hard
+  to see which row belongs to which word.
+*/
+.intensity__feeling-row + .intensity__feeling-row {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-hairline);
+}
+
+.intensity__feeling {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-label-size);
+  font-weight: 600;
+  color: var(--color-on-surface);
+}
+
+.intensity__feeling::first-letter {
+  text-transform: uppercase;
+}
+
+/* Said in words, not implied by the field being empty — "optional" is the whole promise here. */
+.intensity__optional {
+  margin-left: var(--space-2);
+  font-size: var(--text-micro-size);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-eyebrow);
+  color: var(--color-outline);
+}
+
+.intensity__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.intensity__stop {
+  width: 2.75rem;
+  height: 2.75rem; /* a comfortable touch target; the dial is used on phones too */
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-hairline);
+  background: var(--color-surface-container);
+  color: var(--color-on-surface-variant);
+  font-size: var(--text-body-md-size);
+  cursor: pointer;
+}
+
+.intensity__stop:hover {
+  border-color: var(--color-outline);
+}
+
+/* Filled up to the chosen stop, so the row reads as a level rather than as five separate buttons. */
+.intensity__stop--on {
+  background: var(--color-primary-container);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.intensity__hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-micro-size);
+}
+
+.calendar-day__intensity {
+  display: block;
+  height: 3px;
+  margin-top: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-variant);
+  overflow: hidden;
+}
+
+.calendar-day__intensity-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+}
+
+/* ---- The pattern echo after a save (I4) ---- */
+
+.echo-panel {
+  border-left: 3px solid var(--color-accent);
+}
+
+.echo-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.echo-panel__header .section-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.echo-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.echo-panel__narrative {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-serif);
+  font-size: var(--text-body-md-size);
+}
+
+.echo-panel__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-label-size);
+  color: var(--color-accent);
+}
+
 /* ---- Conflict resolution (US2) ---- */
 
 .conflict-pair {
@@ -1277,6 +2087,247 @@ blockquote.card {
   .textarea {
     min-height: 13rem;
   }
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Settings: appearance
+ *
+ * The one screen that is about the browser rather than the diary, and the only one whose controls
+ * change the look of the page they sit on. That is why the palette options are previews rather
+ * than labels — the result of the choice is visible before it is made, and visible again in the
+ * whole page the instant it is.
+ * ---------------------------------------------------------------------------------------------- */
+
+.settings__heading {
+  font-family: var(--font-serif);
+  font-size: var(--text-title-lg-size);
+  line-height: var(--text-title-lg-line);
+  letter-spacing: var(--tracking-tight);
+  margin: 0;
+}
+
+/* `fieldset` carries the grouping for assistive tech; none of its default chrome survives. */
+.settings__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
+.settings__group > legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+
+/* ---- Light / dark ---- */
+
+.segmented {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-variant);
+  /* Three 44px targets plus padding outgrow a narrow phone; wrapping beats a horizontal scroll. */
+  flex-wrap: wrap;
+  /* `inline-flex` alone still stretches inside the column that holds it. */
+  align-self: flex-start;
+}
+
+.segmented__option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding-inline: var(--space-4);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-on-surface-variant);
+  font: inherit;
+  font-size: var(--text-label-size);
+  font-weight: 500;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  transition:
+    background var(--motion-fast) var(--easing-standard),
+    color var(--motion-fast) var(--easing-standard);
+}
+
+.segmented__option:hover {
+  color: var(--color-on-surface);
+}
+
+.segmented__option:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/*
+ * The pressed segment is marked by fill, weight and colour together. `aria-pressed` is both the
+ * accessible state and the style hook, so the two cannot fall out of step.
+ */
+.segmented__option[aria-pressed='true'] {
+  background: var(--color-surface-container);
+  color: var(--color-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-1);
+}
+
+/* ---- Paper ---- */
+
+/*
+ * Three across, or one down — never two and a stray.
+ *
+ * `auto-fit` was the obvious choice and the wrong one: at the in-between widths it drops to two
+ * columns and leaves the third paper orphaned on its own row, which reads as an afterthought
+ * rather than as the third of three equals. An explicit switch keeps the three either side by
+ * side, where they can be compared, or stacked full-width, where each preview is large enough to
+ * judge on a phone.
+ */
+.palette-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 34rem) {
+  .palette-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.palette-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-container);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    border-color var(--motion-fast) var(--easing-standard),
+    background var(--motion-fast) var(--easing-standard);
+}
+
+.palette-option:hover {
+  border-color: var(--color-outline);
+}
+
+.palette-option:has(input:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Border weight, fill and a tick — three marks, so the choice survives greyscale. */
+.palette-option--selected {
+  border-color: var(--color-primary);
+  border-width: 2px;
+  padding: calc(var(--space-3) - 1px);
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface-container));
+}
+
+/*
+ * The preview carries its own `data-palette`/`data-mode`, so every colour inside it comes from
+ * that palette's real tokens rather than from a copied hex. It is scaled-down chrome, not art:
+ * the page, a card on it, two lines of prose, and the four feeling dots.
+ */
+.palette-preview {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: 6.5rem;
+  padding: var(--space-3);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.palette-preview__card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-container);
+  box-shadow: var(--shadow-1);
+}
+
+.palette-preview__title {
+  height: 7px;
+  width: 55%;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+}
+
+.palette-preview__line {
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-on-surface-variant);
+  opacity: 0.55;
+}
+
+.palette-preview__line--short {
+  width: 70%;
+}
+
+.palette-preview__dots {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.palette-preview__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+}
+
+.palette-option__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.palette-option__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-title-md-size);
+  font-weight: 600;
+  color: var(--color-on-surface);
+}
+
+.palette-option__check {
+  display: inline-flex;
+  color: var(--color-primary);
+}
+
+.palette-option__description {
+  font-size: var(--text-body-md-size);
+  line-height: 1.5;
+  color: var(--color-on-surface-variant);
+}
+
+/*
+ * Held for one frame by `applyAppearance` while the palette attributes change, so that a theme
+ * switch lands everywhere at once instead of animating a page's worth of backgrounds past text
+ * that has already changed colour.
+ */
+[data-theme-switching],
+[data-theme-switching] *,
+[data-theme-switching] *::before,
+[data-theme-switching] *::after {
+  transition: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

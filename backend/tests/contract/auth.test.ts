@@ -7,7 +7,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { hashPassword } from '../../src/auth/password';
 import type { AuthConfig } from '../../src/config';
 import { createApp } from '../../src/main';
-import { GOLDEN } from '../helpers/app';
+import { GOLDEN, startOnLoopback } from '../helpers/app';
 
 const EMAIL = 'owner@example.com';
 const PASSWORD = 'correct horse diary staple';
@@ -47,7 +47,7 @@ async function boot(overrides: Partial<AuthConfig> = {}): Promise<void> {
       ...overrides,
     },
   });
-  await app.init();
+  await startOnLoopback(app);
 }
 
 function server() {

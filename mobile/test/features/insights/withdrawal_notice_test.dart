@@ -1,0 +1,95 @@
+import 'package:find_my_patterns/core/diary/pattern.dart';
+import 'package:find_my_patterns/core/theme/app_theme.dart';
+import 'package:find_my_patterns/features/insights/withdrawal_notice.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'fixtures.dart';
+
+void main() {
+  Widget app(Widget child) => MaterialApp(
+    theme: buildLightTheme(),
+    home: Scaffold(body: SingleChildScrollView(child: child)),
+  );
+
+  testWidgets(
+    'a forward withdrawal reads "Topic → feeling" with a leading capital',
+    (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        app(
+          WithdrawalNotice(
+            withdrawal: buildWithdrawal(
+              topic: 'coffee',
+              feeling: 'stressed',
+              kind: PatternKind.forward,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Coffee → stressed'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'an inverse withdrawal reads "Without topic → feeling", never the '
+    'forward form',
+    (tester) async {
+      await tester.pumpWidget(
+        app(
+          WithdrawalNotice(
+            withdrawal: buildWithdrawal(
+              topic: 'coffee',
+              feeling: 'stressed',
+              kind: PatternKind.inverse,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Without coffee → stressed'), findsOneWidget);
+      expect(find.text('Coffee → stressed'), findsNothing);
+    },
+  );
+
+  testWidgets('shows the previous and new counts', (tester) async {
+    await tester.pumpWidget(
+      app(
+        WithdrawalNotice(
+          withdrawal: buildWithdrawal(previousCount: 5, newCount: 1),
+        ),
+      ),
+    );
+
+    expect(find.text('5 → 1'), findsOneWidget);
+  });
+
+  testWidgets('shows the detail text the backend sent', (tester) async {
+    await tester.pumpWidget(
+      app(
+        WithdrawalNotice(
+          withdrawal: buildWithdrawal(detailText: 'Only 1 of the last 5 held.'),
+        ),
+      ),
+    );
+
+    expect(find.text('Only 1 of the last 5 held.'), findsOneWidget);
+  });
+
+  for (final entry in {
+    WithdrawalReason.belowThreshold: 'NOT ENOUGH LEFT',
+    WithdrawalReason.belowLift: 'ASSOCIATION TOO WEAK',
+    WithdrawalReason.noLongerConfirmed: 'NO CONFIRMED FEELINGS',
+    WithdrawalReason.topicMerged: 'TOPIC MERGED',
+  }.entries) {
+    testWidgets('labels ${entry.key} as "${entry.value}"', (tester) async {
+      await tester.pumpWidget(
+        app(WithdrawalNotice(withdrawal: buildWithdrawal(reason: entry.key))),
+      );
+
+      expect(find.text(entry.value), findsOneWidget);
+    });
+  }
+}

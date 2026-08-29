@@ -1,8 +1,0 @@
-root = true
-
-[*.{kt,kts}]
-# @Composable functions are conventionally PascalCase (e.g. TodayScreen(), EntryComposer()) --
-# this is standard, documented Jetpack Compose style, not a naming bug. ktlint's default
-# function-naming rule doesn't know about Compose's convention, so this is the officially
-# documented override.
-ktlint_function_naming_ignore_when_annotated_with = Composable

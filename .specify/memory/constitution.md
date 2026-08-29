@@ -1,49 +1,73 @@
 <!--
 Sync Impact Report
-- Version change: 1.1.0 → 1.2.0 (MINOR)
-- Bump rationale: public access through an authenticated outbound tunnel is now an explicit,
-  narrowly bounded deployment option. This materially expands Product Constraints without
-  removing or reversing a Core Principle.
-- Bump rationale: a new principle (VII) is added and the Product Constraints section is materially
-  expanded. Per this constitution's own versioning policy, MAJOR is reserved for "a principle is
-  removed or reversed in meaning"; the client-platform change edits a Product Constraint via the
-  amendment escape hatch that clause explicitly provided ("unless a future amendment changes
-  this"), and no Core Principle is removed or reversed.
+- Version change: 1.2.0 → 2.0.0 (MAJOR)
+- Bump rationale: Principle IV's storage boundary is reversed in meaning. v1.2.0 forbade
+  persisting diary content in "third-party or cloud storage" outright; v2.0.0 permits it in a
+  named managed provider held under the user's own account. This constitution's own versioning
+  policy defines MAJOR as "a principle is removed or reversed in meaning", which this is. The
+  Product Constraints clause forbidding "cloud-hosted backend option" is removed for the same
+  reason.
 - Modified principles:
-  - V. Test-First for Logic, Not for UI Polish — scope generalized from "the Android UI" to any
-    client UI (Android or web). No change to what is gated; only which clients it covers.
-- Added principles:
-  - VII. One Backend, Thin Clients
-- Modified sections:
-  - Product Constraints — replaced the LAN-only/public-exposure prohibition with an authenticated
-    reverse-tunnel exception and made in-app authentication mandatory on the public hostname.
-  - Product Constraints — "Client platform: Android only for v1" replaced with "Client platforms:
-    Android app and web app"; added an explicit LAN-only/no-public-exposure constraint for the web
-    client; generalized the no-in-app-auth clause from "device lock" to any client device's lock.
+  - II. Simplicity & YAGNI — clarified that authenticating the single user through an account
+    system (registration, password reset, MFA) is not multi-tenancy. What stays forbidden is
+    per-owner data partitioning, authorization roles, and a second person's account holding diary
+    content. The rule is unchanged; its edge is now stated, because a managed identity provider
+    would otherwise read as the "user accounts/roles" the old wording banned outright.
+  - IV. Privacy by Architecture — storage boundary moved from "a backend the user runs and
+    controls themselves" to "a datastore the user owns and administers", with Supabase Postgres
+    named as the only permitted managed provider. Added TLS, encryption-at-rest, export and
+    permanent-delete requirements. Split storage from processing: transmitting diary content to
+    third-party LLM, speech-to-text, analytics or error-reporting services remains forbidden by
+    default and still requires a named, justified spec Assumption. That split is the load-bearing
+    half of this amendment — permission to host the database elsewhere is not permission to send
+    diary text to an inference API.
+  - VII. One Backend, Thin Clients — added an explicit prohibition on a client reading or writing
+    the datastore directly, bypassing the backend, even where a client SDK and row-level security
+    make it technically possible. Necessary because a managed Postgres ships exactly such an SDK.
+    Also dropped "self-hosted" from "the single self-hosted backend", which the new deployment
+    shapes make inaccurate.
+- Added principles: none
 - Removed sections: none
+- Modified sections:
+  - Product Constraints — "Single-user, self-hosted only" became "Single-user,
+    owner-administered"; the one backend MAY now run on hosting the user rents and administers.
+  - Product Constraints — the single tunnel-only public-access bullet became two named deployment
+    shapes, self-hosted and managed. A managed backend is itself a publicly routable origin, which
+    the previous text forbade outright, so the old bullet could not simply be widened.
+  - Product Constraints — "Single-user authentication" generalized from a local scrypt hash to
+    either a local slow hash or a managed identity provider whose tokens are verified against its
+    published signing keys, with public sign-up disabled and the accepted subject allowlisted.
+    Added a mandatory locally verifiable fallback so provider downtime cannot lock the user out of
+    their own diary.
 - Templates requiring updates:
-  - .specify/templates/tasks-template.md — ✅ updated (Principle V note generalized from "Android
-    UI layout/motion/theming" to client UI, Android or web)
-  - .specify/templates/plan-template.md — ✅ reviewed, no change required (Constitution Check reads
-    gates dynamically from this file; its Android/iOS mentions are generic layout examples)
-  - .specify/templates/spec-template.md — ✅ reviewed, no change required
+  - .specify/templates/plan-template.md — ✅ reviewed, no change required (its Constitution Check
+    reads gates dynamically from this file)
+  - .specify/templates/spec-template.md — ✅ reviewed, no change required (its authentication
+    mentions are generic placeholder examples, not principle content)
+  - .specify/templates/tasks-template.md — ✅ reviewed, no change required (its only principle
+    reference is to Principle V, unchanged here)
   - .specify/templates/checklist-template.md — ✅ reviewed, no change required
-  - .claude/skills/speckit-*/SKILL.md — ✅ reviewed, all reference constitution.md dynamically; no
-    hardcoded principle content to update
-  - No README.md/CLAUDE.md exists at the repo root; backend/README.md and android/README.md carry
-    run instructions only, no principle references — ✅ no change required
-- Resolved from v1.0.0's report:
-  - specs/002-mood-pattern-diary-mobile/plan.md's Constitution Check has since been re-checked
-    against v1.0.0 — that follow-up TODO is closed.
-  - PRINCIPLE_VII_RECONCILIATION is closed by 003-web-client T044/T045. The Android
-    domain/Feeling.kt enum is gone; the feeling set's keys, labels and valences now come from
-    `GET /feelings` via data/FeelingApi.kt, so both clients source them from the backend. Only
-    emoji and accent colors remain client-side, and those are presentation the backend
-    deliberately does not serve.
+  - .claude/skills/speckit-*/SKILL.md — ✅ reviewed, all ten load constitution.md dynamically; no
+    hardcoded principle text and no outdated agent-specific references
+  - web/README.md — ✅ reviewed, no change required; its Principle VII reference concerns
+    client-side computation, which this amendment expands rather than alters
+  - README.md — ⚠ pending, deliberately: its "Public access through Cloudflare Tunnel" section
+    documents the scrypt/AUTH_PASSWORD_HASH flow, which is still the only implemented path. The
+    constitution now permits a managed provider, but no code implements one, and documenting an
+    unbuilt flow would make the README false. Update it in the feature that implements
+    provider-based authentication.
 - Follow-up TODOs:
-  - specs/002-mood-pattern-diary-mobile/plan.md was gated against v1.0.0 and does not evaluate
-    Principle VII. Per Amendment reconciliation it is not retroactively blocked; reconcile at its
-    next /speckit-plan or /speckit-tasks run if one occurs.
+  - This amendment permits provider-based authentication and managed Postgres storage; it
+    requires neither. Until a feature ships, the running system remains scrypt + local SQLite and
+    is fully compliant with v2.0.0.
+  - specs/005-public-auth lists "registration, password reset ... social login, persistent
+    cross-restart sessions" as out of scope. That is a scope statement for that feature, not a
+    rule, and is now superseded rather than contradicted; reconcile at the next /speckit-plan run
+    that touches authentication.
+- Retained from v1.2.0's report:
+  - specs/002-mood-pattern-diary-mobile/plan.md still does not evaluate Principle VII. Per
+    Amendment reconciliation it is not retroactively blocked; reconcile at its next /speckit-plan
+    or /speckit-tasks run if one occurs.
 -->
 
 # Mood Pattern Diary Constitution
@@ -63,11 +87,15 @@ you) guessing at decisions instead of reading them.
 
 ### II. Simplicity & YAGNI
 
-The system MUST be designed for exactly one user and one backend instance. Multi-tenancy, user
-accounts/roles, horizontal scaling, and speculative extension points MUST NOT be introduced unless
-a spec explicitly requires them. When a design choice could be solved with a direct, boring
-implementation or a more general/abstracted one, the direct implementation MUST be chosen unless
-current requirements demand the general one.
+The system MUST be designed for exactly one user and one backend instance. Multi-tenancy, per-user
+data partitioning, authorization roles, horizontal scaling, and speculative extension points MUST
+NOT be introduced unless a spec explicitly requires them. Authenticating that single user through
+an account system — including a managed identity provider offering registration, password reset or
+multi-factor authentication — is NOT multi-tenancy and is permitted; what remains forbidden is
+diary data partitioned by owner, authorization roles, and any second person's account holding
+diary content. When a design choice could be solved with a direct, boring implementation or a more
+general/abstracted one, the direct implementation MUST be chosen unless current requirements demand
+the general one.
 
 **Rationale**: Solo-maintained personal software accumulates cost fastest through unused
 generality. Every abstraction must earn its place against a concrete, current requirement, not a
@@ -88,15 +116,24 @@ pattern-finding — untestable and unreliable.
 
 ### IV. Privacy by Architecture
 
-All diary content MUST be stored only on a backend the user runs and controls themselves; no diary
-content MUST be persisted in third-party or cloud storage. Any dependency or integration that would
-transmit diary content off the user's own machine (including LLM API calls) MUST be explicitly
-called out in the relevant spec's Assumptions and justified there — it is never an implicit
-default.
+Diary content MUST be stored only in a datastore the user owns and administers: either a machine
+the user runs themselves, or a named managed database provider under the user's own account. The
+permitted managed provider is Supabase Postgres; adding any other provider requires an amendment to
+this principle, not a spec-level decision. Wherever content is stored, connections MUST use TLS,
+encryption at rest MUST be enabled, and the user MUST retain a working path to export a complete
+local copy and to delete all content permanently.
 
-**Rationale**: This is a personal diary containing sensitive reflections. Privacy is a product
-requirement, not an afterthought, and every exception to "stays on my machine" deserves a visible
-decision trail.
+Storage location is a separate question from processing. Diary content MUST NOT be transmitted to
+any third-party processor — including hosted LLM, speech-to-text, analytics, or error-reporting
+services — by default. Inference over diary content MUST run locally unless a specific spec names
+the service, states exactly what content reaches it, and justifies it in that spec's Assumptions.
+Moving storage to a managed provider MUST NOT be read as permission to move inference too.
+
+**Rationale**: This is a personal diary containing sensitive reflections. The original boundary was
+"stays on my machine"; it is now "stays in infrastructure I own and administer", which admits
+managed hosting without admitting the wider class of services that would read the content in order
+to produce a result. Those are different risks, and the weaker one must not silently license the
+stronger. Every exception still deserves a visible decision trail.
 
 ### V. Test-First for Logic, Not for UI Polish
 
@@ -127,13 +164,15 @@ on the app's central purpose, not a nice-to-have.
 ### VII. One Backend, Thin Clients
 
 Every client — the Android app, the web app, and any client added later — MUST be a presentation
-layer over the single self-hosted backend. The feeling set, the guiding-question library, the
+layer over the single backend. The feeling set, the guiding-question library, the
 minimum-occurrence threshold, topic extraction, pattern detection, and all counts and averages MUST
 be defined and computed in the backend only and served to clients. A client MUST NOT hardcode,
 duplicate, or independently recompute any of them. Clients MAY own purely presentational concerns
-locally — icons, emoji, ordering, animation, layout, and the wording of their own UI chrome. Given
-identical backend data, all clients MUST present identical facts; where they disagree, the backend
-is authoritative and the client is wrong.
+locally — icons, emoji, ordering, animation, layout, and the wording of their own UI chrome. A
+client MUST NOT read or write diary data directly from the datastore, bypassing the backend, even
+where the datastore offers a client SDK and row-level security that would make it technically
+possible. Given identical backend data, all clients MUST present identical facts; where they
+disagree, the backend is authoritative and the client is wrong.
 
 **Rationale**: A second client doubles the number of places a rule can live, and duplicated rules
 drift silently — a threshold changed in one place, a feeling added in another, and the app starts
@@ -143,21 +182,31 @@ than to detect later by noticing two screens disagree.
 
 ## Product Constraints
 
-- **Single-user, self-hosted only**: no multi-user accounts and no cloud-hosted backend option are
-  in scope for the lifetime of this constitution version (see Principles II and IV).
-- **Client platforms**: an Android app and a web app, both thin clients of the one self-hosted
-  backend (see Principle VII). No iOS client and no desktop-native client is in scope unless a
-  future amendment changes this.
-- **Private by default, authenticated tunnel as the only public option**: clients MAY remain
-  LAN/VPN-only without in-app authentication. Public web access is permitted only through an
-  outbound reverse tunnel whose public hostname is protected by the backend's authentication;
-  direct router port-forwarding and a publicly routable origin remain forbidden. An identity-aware
-  proxy such as Cloudflare Access SHOULD provide an additional outer authorization layer.
-- **Single-user authentication**: authentication on a public hostname MUST protect both the web
-  shell and every diary API route, use a slow password hash and an HttpOnly secure session cookie,
-  throttle failed logins, and fail closed when enabled with incomplete configuration. The public
-  hostname MAY be protected without forcing authentication on direct LAN clients, provided the
-  origin is reachable from the public internet only through the configured tunnel.
+- **Single-user, owner-administered**: no multi-user accounts and no third-party-owned backend
+  are in scope for the lifetime of this constitution version (see Principles II and IV). The single
+  backend MAY run on the user's own hardware or on hosting the user rents and administers.
+- **Client platforms**: an Android app and a web app, both thin clients of the one backend (see
+  Principle VII). No iOS client and no desktop-native client is in scope unless a future amendment
+  changes this.
+- **Two permitted deployment shapes**: (a) *self-hosted* — clients MAY remain LAN/VPN-only without
+  in-app authentication, and public web access is permitted only through an outbound reverse tunnel
+  whose hostname is protected by the backend's authentication; direct router port-forwarding of a
+  self-hosted origin remains forbidden. (b) *managed* — a publicly routable origin is permitted
+  only when authentication is enabled for every route and cannot be turned off by configuration,
+  TLS terminates at or before the origin, and no unauthenticated LAN bypass is configured. In both
+  shapes an identity-aware proxy such as Cloudflare Access SHOULD provide an additional outer
+  authorization layer.
+- **Single-user authentication**: authentication MUST protect both the web shell and every diary
+  API route, throttle failed attempts, and fail closed when enabled with incomplete configuration.
+  Credentials MAY be verified either locally with a slow password hash or by a managed identity
+  provider; when a provider is used, the backend MUST verify its tokens against the provider's
+  published signing keys, public sign-up MUST be disabled, and the accepted subject MUST be
+  allowlisted so that an account created elsewhere on that provider cannot reach the diary. Browser
+  sessions MUST use an HttpOnly, Secure, SameSite session cookie; native clients MAY use bearer
+  tokens. A locally verifiable credential path MUST remain available so the diary stays reachable
+  when the identity provider is unavailable. The public hostname MAY be protected without forcing
+  authentication on direct LAN clients only in the self-hosted shape, and only while the origin is
+  reachable from the public internet solely through the configured tunnel.
 
 ## Development Workflow
 
@@ -190,4 +239,4 @@ rule change.
 against the current version of this file; any unjustified violation blocks progressing to Phase 0
 research.
 
-**Version**: 1.2.0 | **Ratified**: 2026-07-27 | **Last Amended**: 2026-08-14
+**Version**: 2.0.0 | **Ratified**: 2026-07-27 | **Last Amended**: 2026-08-27

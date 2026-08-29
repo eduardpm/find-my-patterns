@@ -30,6 +30,10 @@ npm start
 
 Then open **`http://<your-machine-lan-ip>:8000/app`** from any device on your home network.
 
+Settings offers three papers to write on — warm paper, sage and dusk — each with a light and a dark
+half, plus a light/dark/system switch. The choice is kept in that browser and is never sent to the
+backend. The Android app offers the same three.
+
 The backend binds safely to `127.0.0.1` by default. For a trusted home LAN or VPN, start it with
 `HOST=0.0.0.0`; that makes it reachable from your phone or laptop, but it must never be port-forwarded
 or placed on a public host because there is no login.
@@ -65,9 +69,10 @@ forbids. See `specs/003-web-client/research.md` §2.
   you at 9:00 (FR-020).
 - **No login.** Access control is your computer's lock screen plus your home network, the same
   bargain the Android app makes. This only holds while the backend stays off the public internet.
-- **Nothing is remembered locally.** No local storage, no cookies, no draft recovery. Close the tab
-  mid-entry and the browser will ask you to confirm first — but if it crashes, that writing is gone.
-  That's the accepted cost of not storing diary text on disk.
+- **No diary text is remembered locally.** No cookies, no draft recovery, and the only thing in
+  local storage is which of the three papers you picked in Settings and whether you want light or
+  dark. Close the tab mid-entry and the browser will ask you to confirm first — but if it crashes,
+  that writing is gone. That's the accepted cost of not storing diary text on disk (FR-025).
 - **URLs never contain diary text.** Addresses carry only which view you're on and an opaque entry
   id, because browser history syncs across devices.
 - **Manual refresh, not live updates.** If you add an entry on your phone, hit Refresh here to see
@@ -83,10 +88,12 @@ web/
 │   ├── main.tsx, App.tsx        # shell, nav, routes
 │   ├── api/                     # fetch wrappers per endpoint + ApiResult/409 mapping
 │   ├── domain/types.ts          # mirrors of the backend schemas
-│   ├── screens/                 # Today, Composer, Guided flow, Detail, Conflict, Insights, Calendar
+│   ├── screens/                 # Today, Composer, Guided flow, Detail, Conflict, Insights,
+│   │                            #   Calendar, Topics, Settings
 │   ├── components/              # FeelingChips, EntryCard, PatternCard, CalendarGrid, ErrorBanner
-│   ├── hooks/                   # useUnsavedGuard (FR-026), useRefreshable (FR-019)
-│   └── styles/                  # design tokens mirroring the Android Material 3 palette
+│   ├── hooks/                   # useUnsavedGuard (FR-026), useRefreshable (FR-019), useAppearance
+│   ├── theme.ts                 # the three palettes' ids, labels and stored preference
+│   └── styles/                  # the design tokens both clients share
 └── tests/                       # Vitest + React Testing Library
 ```
 

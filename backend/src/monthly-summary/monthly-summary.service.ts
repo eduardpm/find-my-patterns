@@ -6,9 +6,11 @@ import { EntriesRepository } from '../entries/entries.repository';
  * Monthly aggregation (spec 002 FR-016).
  *
  * Three details are deliberate and each would be easy to "improve" into a divergence:
- *  - `totals_by_feeling` counts **entries**, while `days[].feelings` is the **distinct set** per
- *    day. Summing the day sets gives a different answer — which is the trap feature 003's web
- *    calendar test relies on.
+ *  - `totals_by_feeling` counts **entry–feeling pairs**, while `days[].feelings` is the
+ *    **distinct set** per day. Summing the day sets gives a different answer — which is the trap
+ *    feature 003's web calendar test relies on. Since an entry can carry several feelings, one
+ *    entry now adds one to each of its feelings' totals; `average_entries_per_day` still counts
+ *    entries, so the two no longer sum to the same number and were never meant to.
  *  - the average divides by **days elapsed** (day-of-month for the current month, full month
  *    length otherwise), a value the client cannot compute for itself.
  *  - the average is **not rounded**. Both clients round for display; rounding here would change
@@ -18,6 +20,15 @@ import { EntriesRepository } from '../entries/entries.repository';
 export interface DaySummary {
   date: string;
   feelings: string[];
+  /**
+   * The strongest intensity recorded on this day, or null when nothing was rated (I6-04).
+   *
+   * The maximum rather than the mean: the calendar cell answers "how much did this day register",
+   * and averaging a rated 5 with two unrated entries would report a quieter day than the one the
+   * user had. Optional throughout, so a user who never touches the dial sees exactly what they
+   * saw before.
+   */
+  intensity: number | null;
 }
 
 export interface MonthlySummary {
@@ -70,23 +81,31 @@ export class MonthlySummaryService {
     );
 
     const feelingsByDay = new Map<string, Set<string>>();
+    const intensityByDay = new Map<string, number>();
     const totals: Record<string, number> = {};
     let totalEntries = 0;
 
     for (const entry of entries) {
       totalEntries += 1;
-      if (entry.feelingKey) {
-        const key = encodeDate(entry.entryDate);
+      const key = encodeDate(entry.entryDate);
+      if (entry.feelingIntensity !== null) {
+        intensityByDay.set(key, Math.max(intensityByDay.get(key) ?? 0, entry.feelingIntensity));
+      }
+      for (const feelingKey of entry.feelingKeys) {
         if (!feelingsByDay.has(key)) feelingsByDay.set(key, new Set());
-        feelingsByDay.get(key)!.add(entry.feelingKey);
-        totals[entry.feelingKey] = (totals[entry.feelingKey] ?? 0) + 1;
+        feelingsByDay.get(key)!.add(feelingKey);
+        totals[feelingKey] = (totals[feelingKey] ?? 0) + 1;
       }
     }
 
     const days: DaySummary[] = [];
     for (let day = 1; day <= monthLength; day += 1) {
       const key = encodeDate({ year, month: monthNum, day });
-      days.push({ date: key, feelings: [...(feelingsByDay.get(key) ?? [])].sort() });
+      days.push({
+        date: key,
+        feelings: [...(feelingsByDay.get(key) ?? [])].sort(),
+        intensity: intensityByDay.get(key) ?? null,
+      });
     }
 
     return {

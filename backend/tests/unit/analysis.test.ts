@@ -1,0 +1,209 @@
+/**
+ * The arithmetic every new insight rests on (roadmap A3, I1, I2, I3, I5, I6).
+ *
+ * Pure functions, no database, no model — which is the point. Each number the user is shown has to
+ * be reproducible from their own diary, and a claim that cannot be reproduced in a unit test cannot
+ * be reproduced by the person reading it either.
+ */
+
+import { describe, expect, it } from 'vitest';
+import {
+  associationFrom,
+  averageValence,
+  confounderSplit,
+  daysBetween,
+  forwardNarrative,
+  historicalNote,
+  invert,
+  inverseNarrative,
+  isStrong,
+  percent,
+  suppressedByLift,
+  timeOfDayBucket,
+  trajectorySignal,
+  weekdayIndex,
+  withinWindow,
+} from '../../src/insights/analysis';
+import { MIN_LIFT, RECENCY_WINDOW_DAYS } from '../../src/insights/constants';
+
+const at = (hour: number) => ({
+  year: 2026,
+  month: 8,
+  day: 26,
+  hour,
+  minute: 0,
+  second: 0,
+  microsecond: 0,
+});
+
+describe('the recency window (I3)', () => {
+  const today = { year: 2026, month: 8, day: 26 };
+
+  it('counts whole days across a month boundary', () => {
+    expect(daysBetween({ year: 2026, month: 7, day: 27 }, today)).toBe(30);
+  });
+
+  it('includes an entry one day short of the window and excludes one exactly on it', () => {
+    const inside = { year: 2026, month: 7, day: 28 }; // 29 days ago
+    const outside = { year: 2026, month: 7, day: 27 }; // 30 days ago
+    expect(withinWindow(inside, today, RECENCY_WINDOW_DAYS)).toBe(true);
+    expect(withinWindow(outside, today, RECENCY_WINDOW_DAYS)).toBe(false);
+  });
+
+  it('excludes a future date rather than treating it as very recent', () => {
+    expect(withinWindow({ year: 2026, month: 9, day: 1 }, today)).toBe(false);
+  });
+});
+
+describe('lift (A3)', () => {
+  it('computes the ratio of the two rates — A3-SC1', () => {
+    // 8 of 12 entries mentioning meetings are anxious; 3 of 28 without them are.
+    const association = associationFrom(8, 12, 3, 28);
+    expect(percent(association.presentRate!)).toBe(67);
+    expect(percent(association.absentRate!)).toBe(11);
+    expect(association.lift).toBeCloseTo(6.22, 2);
+    expect(suppressedByLift(association)).toBe(false);
+  });
+
+  it('suppresses a pair that merely rides the base rate — A3-SC2', () => {
+    // The topic appears in 5 tired entries out of 6, but 80% of everything is tired anyway.
+    const association = associationFrom(5, 6, 19, 24);
+    expect(association.lift!).toBeLessThan(MIN_LIFT);
+    expect(suppressedByLift(association)).toBe(true);
+  });
+
+  it('reports no lift, and a reason, when nothing is left to compare against — A3-SC3', () => {
+    const association = associationFrom(6, 6, 0, 0);
+    expect(association.lift).toBeNull();
+    expect(association.comparisonReason).toBe('insufficient_comparison');
+  });
+
+  it('refuses to fabricate a number when the feeling never occurs without the topic', () => {
+    // A real and strong finding, but the ratio is a division by zero. Reporting it as a lift would
+    // be inventing the one number A3-02 forbids inventing.
+    const association = associationFrom(5, 6, 0, 20);
+    expect(association.lift).toBeNull();
+    expect(association.comparisonReason).toBe('no_absent_occurrences');
+    // …and it is emphatically not suppressed: an un-computable lift is not a weak one.
+    expect(suppressedByLift(association)).toBe(false);
+  });
+
+  it('marks a pattern strong only when the lift and the evidence both qualify (A3-07)', () => {
+    const strong = associationFrom(8, 10, 2, 20); // 4x
+    expect(isStrong(strong, 8)).toBe(true);
+    expect(isStrong(strong, 3)).toBe(false); // same lift, too little behind it
+  });
+
+  it('inverts into the absent-side view without recomputing anything (I1-01)', () => {
+    const forward = associationFrom(2, 12, 12, 16);
+    const inverse = invert(forward);
+    expect(inverse.presentCount).toBe(12);
+    expect(inverse.presentTotal).toBe(16);
+    expect(inverse.absentCount).toBe(2);
+    expect(inverse.absentTotal).toBe(12);
+    expect(inverse.lift!).toBeGreaterThan(MIN_LIFT);
+  });
+});
+
+describe('the sentence states the numbers beside it (A3-06, I3-04)', () => {
+  it('names the window in days and both rates', () => {
+    const text = forwardNarrative('anxious', 'meetings', associationFrom(8, 12, 3, 28));
+    expect(text).toBe(
+      'You felt anxious in 8 of 12 entries mentioning meetings in the last 30 days (67%), ' +
+        'and in 3 of 28 entries without it (11%).',
+    );
+    // I3-SC3 — the word that used to make the sentence false is gone.
+    expect(text).not.toMatch(/\brecent\b/i);
+  });
+
+  it('says so plainly when the comparison could not be made (A3-05)', () => {
+    expect(forwardNarrative('anxious', 'meetings', associationFrom(4, 4, 0, 0))).toContain(
+      'There are not enough entries without meetings to compare.',
+    );
+  });
+
+  it('phrases the inverse card as "less", never as protection (I1-04, I1-07)', () => {
+    const text = inverseNarrative('sad', 'exercise', invert(associationFrom(9, 12, 4, 10)));
+    expect(text).toBe(
+      'You felt sad in 4 of 10 entries without exercise in the last 30 days (40%), ' +
+        'and in 9 of 12 entries that mention it (75%).',
+    );
+    expect(text).not.toMatch(/protect|prevent|because|causes/i);
+  });
+
+  it('tells a historical pattern how long ago it was (I3-07)', () => {
+    expect(historicalNote(5, 62)).toBe(
+      'Last seen 62 days ago. 5 occurrences across your whole diary.',
+    );
+  });
+});
+
+describe('confounders (I2)', () => {
+  it('annotates a collinear pair with the rate and the split — I2-SC1', () => {
+    const split = confounderSplit('work', 'coffee', 9, 1, 2, 8)!;
+    expect(split.coOccurrenceRate).toBeCloseTo(0.9);
+    expect(split.inseparable).toBe(false);
+    expect(split.note).toContain('9 of 10');
+    expect(split.note).toContain('90%');
+    expect(split.note).toContain('could really be about coffee');
+    // I2-08: the note never claims one topic causes the other.
+    expect(split.note).not.toMatch(/because|causes|due to/i);
+  });
+
+  it('says the two cannot be separated when no entry has one without the other — I2-04', () => {
+    const split = confounderSplit('work', 'coffee', 10, 0, 2, 8)!;
+    expect(split.inseparable).toBe(true);
+    expect(split.note).toContain('cannot separate work from coffee');
+  });
+
+  it('stays quiet about topics that merely overlap', () => {
+    expect(confounderSplit('work', 'coffee', 5, 5, 3, 10)).toBeNull();
+  });
+});
+
+describe('valence and time buckets (I5)', () => {
+  it('averages one score per entry, not one per feeling', () => {
+    // Left as one row per feeling, the three-word entry would outvote the other two.
+    const average = averageValence([
+      { valences: ['negative', 'negative', 'negative'] },
+      { valences: ['positive'] },
+      { valences: ['positive'] },
+    ]);
+    expect(average).toBeCloseTo((-1 + 1 + 1) / 3);
+  });
+
+  it('has nothing to say about entries carrying no known valence', () => {
+    expect(averageValence([{ valences: [] }])).toBeNull();
+  });
+
+  it('files each hour into exactly one bucket, with the evening wrapping past midnight', () => {
+    expect(timeOfDayBucket(at(7))).toBe('morning');
+    expect(timeOfDayBucket(at(13))).toBe('afternoon');
+    expect(timeOfDayBucket(at(21))).toBe('evening');
+    expect(timeOfDayBucket(at(1))).toBe('evening');
+  });
+
+  it('indexes weekdays Monday-first', () => {
+    expect(weekdayIndex({ year: 2026, month: 8, day: 24 })).toBe(0); // a Monday
+    expect(weekdayIndex({ year: 2026, month: 8, day: 30 })).toBe(6); // the Sunday after
+  });
+});
+
+describe('trajectory signal (I6-05)', () => {
+  it('uses intensity when the user set one', () => {
+    expect(trajectorySignal({ valence: 'negative', intensity: 4 })).toBeCloseTo(-0.8);
+  });
+
+  it('falls back to discrete valence when they did not — never a blend of the two scales', () => {
+    expect(trajectorySignal({ valence: 'negative', intensity: null })).toBe(-1);
+    expect(trajectorySignal({ valence: 'positive', intensity: null })).toBe(1);
+  });
+
+  it('keeps a neutral feeling at zero however strongly it was felt', () => {
+    expect(trajectorySignal({ valence: 'neutral', intensity: 5 })).toBe(0);
+  });
+
+  it('contributes nothing at all for an entry with no feeling — not recorded is not neutral', () => {
+    expect(trajectorySignal({ valence: null, intensity: 3 })).toBeNull();
+  });
+});

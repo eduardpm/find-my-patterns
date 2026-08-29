@@ -6,6 +6,18 @@
     <!-- No diary content ever reaches a third party, so no external fonts or CDNs (FR-017). -->
     <meta name="referrer" content="no-referrer" />
     <title>Mood Pattern Diary</title>
+    <!--
+      Blocking and same-origin on purpose: it must run before the first paint so the page never
+      flashes the default paper, and it cannot be inline because the backend serves this app under
+      `script-src 'self'`. See public/theme-boot.js.
+
+      The path is written root-absolute and *without* `%BASE_URL%`, which is the opposite of what
+      the Vite docs suggest for a public asset. `%BASE_URL%theme-boot.js` substitutes to
+      `/app/theme-boot.js` and the dev server then applies the base a second time, serving
+      `/app/app/theme-boot.js` — correct in the build, 404 under `npm run dev`. A leading slash is
+      rewritten to the base exactly once in both.
+    -->
+    <script src="/theme-boot.js"></script>
   </head>
   <body>
     <div id="root"></div>

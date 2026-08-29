@@ -95,6 +95,17 @@ native Android UI quickly, and directly supports the "modern, sleek, pleasant to
 by the spec. A single FAB-to-composer path minimizes screens between "open app" and "start typing,"
 supporting SC-001/SC-002.
 
+**Superseded (2026-08-25), in part**: dynamic colour and the FAB are no longer used. Once a web
+client existed, wallpaper-derived colour meant the app was a different colour on every phone and
+shared no brand with the web app, so the Android theme now ports the web client's fixed warm-paper
+palette and its serif/sans split (`web/src/styles/tokens.css` is the source of truth;
+`ui/theme/Color.kt` mirrors it). The composer is now reached from a pill in the Today header rather
+than a floating button -- on a screen whose job is reading, a FAB parked over the last entry costs
+more than it gives, and it keeps the two clients' primary action in the same visual language.
+Unchanged: Compose + Material 3 as the toolkit, large touch targets, the single-focus composer,
+minimal chrome while writing, and light motion between guided-question steps. SC-004 is now read as
+"feels like a well-made app" rather than "matches the phone's own theme".
+
 **Alternatives considered**: Flutter — the cross-platform benefit isn't needed since the spec
 scopes this to Android only (FR-017). Classic View/XML-based UI — slower to iterate on modern
 motion/theming and a dated look relative to the spec's UI bar.

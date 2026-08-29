@@ -13,7 +13,9 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { assertCompatible } from '../src/db/compatibility';
 import { openDiary } from '../src/db/database';
+import { FEELING_GROUP_SEED, FEELING_SEED } from '../src/db/feeling-vocabulary';
 import { initDiary } from '../src/db/init';
+import { GUIDING_QUESTIONS } from '../src/db/seed';
 
 let dir: string;
 
@@ -60,10 +62,14 @@ describe('initDiary', () => {
     const questions = db
       .prepare<{ n: number }>('SELECT COUNT(*) AS n FROM guiding_questions')
       .get() as { n: number };
+    const groups = db.prepare<{ n: number }>('SELECT COUNT(*) AS n FROM feeling_groups').get() as {
+      n: number;
+    };
     db.close();
 
-    expect(feelings.n).toBe(8);
-    expect(questions.n).toBe(4);
+    expect(feelings.n).toBe(FEELING_SEED.length);
+    expect(groups.n).toBe(FEELING_GROUP_SEED.length);
+    expect(questions.n).toBe(GUIDING_QUESTIONS.length);
   });
 
   it('starts empty — no entries invented', () => {

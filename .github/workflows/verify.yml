@@ -25,11 +25,11 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
-  android:
+  mobile:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: android
+        working-directory: mobile
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -38,8 +38,14 @@ jobs:
           java-version: 17
           cache: gradle
       - uses: android-actions/setup-android@v3
-      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-      - run: ./gradlew testDebugUnitTest ktlintCheck assembleDebug
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      # --ci changes nothing on disk and fails on anything unformatted, which is
+      # what makes this the same gate a developer runs locally.
+      - run: ./scripts/check --ci
+      - run: flutter build apk --debug
 
   browser:
     runs-on: ubuntu-latest

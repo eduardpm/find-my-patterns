@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ApiFailure } from '../api/client';
-import { createEntry, getEntry, updateEntry } from '../api/entries';
+import { createEntry, fetchEntryEcho, getEntry, updateEntry } from '../api/entries';
+import { fetchInsights } from '../api/insights';
 import { fetchFeelings } from '../api/feelings';
 import { fetchGuidingQuestions } from '../api/guidingQuestions';
 import {
@@ -14,12 +15,43 @@ import {
 import { ErrorBanner } from '../components/ErrorBanner';
 import { FeelingChips } from '../components/FeelingChips';
 import { Icon } from '../components/Icon';
-import type { Entry, Feeling, GuidedAnswerInput, GuidingQuestion } from '../domain/types';
+import { IntensityDials } from '../components/IntensityDial';
+import { PatternEchoPanel } from '../components/PatternEchoPanel';
+import type {
+  EngineConstants,
+  Entry,
+  FeelingVocabulary,
+  GuidedAnswerInput,
+  GuidingQuestion,
+  PatternEcho,
+} from '../domain/types';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { useRefreshable } from '../hooks/useRefreshable';
 import { GuidedQuestionFlow } from './GuidedQuestionFlow';
 
-type Stage = 'guided' | 'writing' | 'suggesting' | 'confirming';
+/**
+ * `echo` is a step, not a modal: after the feeling is confirmed the diary has something to say
+ * about what was just written, and it gets its own screen rather than a toast that scrolls past
+ * (I4). It is also the only stage the user can reach *after* their entry is fully stored, which is
+ * the whole constraint the echo is under (I4-02).
+ */
+type Stage = 'guided' | 'writing' | 'suggesting' | 'confirming' | 'echo';
+
+const EYEBROW: Record<Stage, string> = {
+  guided: 'Step 1 of 2 · New entry',
+  writing: 'Step 1 of 2 · New entry',
+  suggesting: 'Step 1 of 2 · New entry',
+  confirming: 'Step 2 of 2 · Saved',
+  echo: 'Saved',
+};
+
+const TITLE: Record<Stage, string> = {
+  guided: 'What just happened?',
+  writing: 'What just happened?',
+  suggesting: 'What just happened?',
+  confirming: 'How did that feel?',
+  echo: 'Entry saved',
+};
 
 /**
  * The freeform composer, and the reason this feature exists: writing at a real keyboard should be
@@ -31,7 +63,9 @@ type Stage = 'guided' | 'writing' | 'suggesting' | 'confirming';
  */
 export function EntryComposer() {
   const navigate = useNavigate();
-  const { data: feelings } = useRefreshable<Feeling[]>(useCallback(() => fetchFeelings(), []));
+  const { data: feelings } = useRefreshable<FeelingVocabulary>(
+    useCallback(() => fetchFeelings(), []),
+  );
   const { data: questions } = useRefreshable<GuidingQuestion[]>(
     useCallback(() => fetchGuidingQuestions(), []),
   );
@@ -41,8 +75,13 @@ export function EntryComposer() {
   // to freeform is one click away (FR-005).
   const [stage, setStage] = useState<Stage>('guided');
   const [saved, setSaved] = useState<Entry | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
+  // Keyed by feeling, so unpicking a word takes its rating with it (I6).
+  const [intensities, setIntensities] = useState<Record<string, number>>({});
+  const [echoes, setEchoes] = useState<PatternEcho[]>([]);
+  // The scale's bounds belong to the backend like every other threshold this client shows.
+  const [constants, setConstants] = useState<EngineConstants | null>(null);
   const [guidedDirty, setGuidedDirty] = useState(false);
   const [draftKey, setDraftKey] = useState<string | null>(null);
   const [initialAnswers, setInitialAnswers] = useState<GuidedAnswerInput[]>([]);
@@ -87,6 +126,12 @@ export function EntryComposer() {
     if (stage === 'writing') textareaRef.current?.focus();
   }, [stage]);
 
+  useEffect(() => {
+    void fetchInsights().then((result) => {
+      if (result.ok) setConstants(result.value.constants);
+    });
+  }, []);
+
   // Saving never waits for local inference. Observe the worker's later update while leaving the
   // feeling controls usable, so a cold model cannot hold the entry or the user hostage.
   useEffect(() => {
@@ -101,7 +146,9 @@ export function EntryComposer() {
       if (stopped) return;
       if (result.ok && result.value.feeling_source !== 'unset') {
         setSaved(result.value);
-        setChosen((current) => current ?? result.value.feeling_key);
+        // Only adopted while the user has not touched the control. The analyser arriving late must
+        // never overwrite a choice already made by hand.
+        setChosen((current) => (current.length > 0 ? current : result.value.feeling_keys));
         return;
       }
       if (Date.now() < deadline) timer = setTimeout(() => void poll(), 1_000);
@@ -128,7 +175,7 @@ export function EntryComposer() {
     }
 
     setSaved(result.value);
-    setChosen(result.value.suggested_feeling?.key ?? result.value.feeling_key ?? null);
+    setChosen(suggestedKeysFor(result.value));
     setStage('confirming');
   }
 
@@ -155,7 +202,7 @@ export function EntryComposer() {
       return;
     }
     setSaved(result.value);
-    setChosen(result.value.suggested_feeling?.key ?? result.value.feeling_key ?? null);
+    setChosen(suggestedKeysFor(result.value));
     setStage('confirming');
   }
 
@@ -173,12 +220,25 @@ export function EntryComposer() {
   }
 
   async function handleConfirm() {
-    if (!saved || !chosen) return;
+    if (!saved || chosen.length === 0) return;
     setFailure(null);
 
-    const result = await updateEntry(saved.id, { feeling_key: chosen, version: saved.version });
+    const result = await updateEntry(saved.id, {
+      feeling_keys: chosen,
+      feeling_intensities: intensities,
+      version: saved.version,
+    });
     if (!result.ok) {
       setFailure(result.error);
+      return;
+    }
+
+    // I4-02: only now, with the entry stored and the feeling settled, is the diary asked what it
+    // already knows about these topics. Nothing was on screen while the user was writing.
+    const echo = await fetchEntryEcho(saved.id);
+    if (echo.ok && echo.value.length > 0) {
+      setEchoes(echo.value);
+      setStage('echo');
       return;
     }
     navigate('/app/today');
@@ -198,12 +258,12 @@ export function EntryComposer() {
         <div className="page-header__titles">
           {/*
             The eyebrow names the step so the two-stage save (write, then confirm the feeling) is
-            visible as a sequence rather than as the page unexpectedly changing its question.
+            visible as a sequence rather than as the page unexpectedly changing its question. The
+            echo is deliberately *after* the count — it is what the diary had to say once the entry
+            was safely stored, not a third thing standing between the user and being finished.
           */}
-          <span className="page-header__eyebrow">
-            {stage === 'confirming' ? 'Step 2 of 2 · Saved' : 'Step 1 of 2 · New entry'}
-          </span>
-          <h1>{stage === 'confirming' ? 'How did that feel?' : 'What just happened?'}</h1>
+          <span className="page-header__eyebrow">{EYEBROW[stage]}</span>
+          <h1>{TITLE[stage]}</h1>
         </div>
       </header>
 
@@ -265,6 +325,19 @@ export function EntryComposer() {
         </>
       )}
 
+      {stage === 'echo' && saved && (
+        <>
+          <blockquote className="card entry-card__text">{saved.raw_text}</blockquote>
+          <PatternEchoPanel echoes={echoes} onDismiss={() => navigate('/app/today')} />
+          <div className="composer-actions">
+            <button type="button" className="btn" onClick={() => navigate('/app/today')}>
+              Done
+              <Icon name="check" />
+            </button>
+          </div>
+        </>
+      )}
+
       {stage === 'confirming' && saved && (
         <>
           <blockquote className="card entry-card__text">{saved.raw_text}</blockquote>
@@ -274,17 +347,37 @@ export function EntryComposer() {
             </p>
           )}
           <FeelingChips
-            legend="Pick the feeling that fits"
-            feelings={feelings ?? []}
+            legend="Pick the feelings that fit"
+            vocabulary={feelings}
             selected={chosen}
-            onSelect={setChosen}
-            suggestedKey={
-              saved.suggested_feeling?.key ??
-              (saved.feeling_source === 'suggested' ? saved.feeling_key : null)
-            }
+            onChange={(keys) => {
+              setChosen(keys);
+              // A rating belongs to its feeling, so dropping a word drops its number too.
+              setIntensities((current) =>
+                Object.fromEntries(Object.entries(current).filter(([key]) => keys.includes(key))),
+              );
+            }}
+            suggestedKeys={suggestedKeysFor(saved)}
           />
+          {/* Optional, after the feelings and never before them (I6-07). */}
+          {constants && (
+            <IntensityDials
+              feelings={chosen.flatMap(
+                (key) => feelings?.feelings.filter((feeling) => feeling.key === key) ?? [],
+              )}
+              values={intensities}
+              onChange={setIntensities}
+              min={constants.min_intensity}
+              max={constants.max_intensity}
+            />
+          )}
           <div className="composer-actions">
-            <button type="button" className="btn" onClick={handleConfirm} disabled={!chosen}>
+            <button
+              type="button"
+              className="btn"
+              onClick={handleConfirm}
+              disabled={chosen.length === 0}
+            >
               Done
               <Icon name="check" />
             </button>
@@ -300,4 +393,18 @@ export function EntryComposer() {
       )}
     </div>
   );
+}
+
+/**
+ * What the backend is proposing for an entry, as keys.
+ *
+ * `suggested_feelings` is populated only while the analyser's answer differs from what the entry
+ * already carries; once the two agree it is empty and the entry's own `feeling_keys` *are* the
+ * suggestion. Reading both is what keeps the "suggested" marks on screen either way.
+ */
+function suggestedKeysFor(entry: Entry): string[] {
+  if (entry.suggested_feelings.length > 0) {
+    return entry.suggested_feelings.map((suggestion) => suggestion.key);
+  }
+  return entry.feeling_source === 'suggested' ? entry.feeling_keys : [];
 }

@@ -1,6 +1,7 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { z, type ZodType } from 'zod';
-import { FEELING_KEYS } from '../inference/inference';
+import { FEELING_KEYS, MAX_FEELINGS_PER_ENTRY } from '../db/feeling-vocabulary';
+import { MAX_INTENSITY, MIN_INTENSITY } from '../insights/constants';
 
 /**
  * Request validation.
@@ -31,14 +32,53 @@ export const entryCreateSchema = z.object({
   guided_answers: z.array(guidedAnswerSchema).default([]),
 });
 
-/** `version` is required — without it there is no way to tell a deliberate edit from a stale one. */
+/**
+ * `version` is required — without it there is no way to tell a deliberate edit from a stale one.
+ *
+ * `feeling_key` and `feeling_keys` both stay accepted. The single-key form is what a client built
+ * before the vocabulary grew sends, and rejecting it would break that client for no gain — the
+ * service reads it as a set of one. Sending both is not an error either; `feeling_keys` wins.
+ *
+ * The list is capped at the same ceiling the analyser is held to: a user may tag an entry with as
+ * many feelings as the app is willing to propose, and no more.
+ */
 export const entryUpdateSchema = z.object({
   raw_text: z.string().nullish(),
   feeling_key: z.enum(FEELING_KEYS).nullish(),
+  feeling_keys: z.array(z.enum(FEELING_KEYS)).max(MAX_FEELINGS_PER_ENTRY).nullish(),
+  /**
+   * The optional intensity dial on the primary feeling (I6-01).
+   *
+   * Three states, all meaningful and all different: absent means "leave whatever is stored",
+   * `null` means "clear it", and 1–5 sets it. Collapsing absent and null would make every
+   * feeling-only edit silently erase an intensity the user set earlier (I6-03).
+   */
+  feeling_intensity: z.number().int().min(MIN_INTENSITY).max(MAX_INTENSITY).nullable().optional(),
+  /**
+   * The dial as it now works: one optional rating per feeling on the entry, keyed by feeling key.
+   *
+   * The single-value [feeling_intensity] above stays accepted and means a rating of the primary
+   * feeling — that is what a client built before the dial moved sends. Sending both is not an
+   * error; this map wins, because it is the form that can express the whole answer.
+   *
+   * Absent leaves the stored ratings alone; a map (including an empty one) replaces them outright,
+   * which is how a rating is cleared.
+   */
+  feeling_intensities: z
+    .record(
+      z.enum(FEELING_KEYS),
+      z.number().int().min(MIN_INTENSITY).max(MAX_INTENSITY),
+    )
+    .nullish(),
   version: z.number().int(),
 });
 
 export const versionQuerySchema = z.coerce.number().int();
+
+/** One user-added spelling of a topic (A4-04). Length matches the `topics.name` column. */
+export const topicAliasSchema = z.object({
+  alias: z.string().trim().min(1).max(128),
+});
 
 export const guidedDraftAnswerSchema = z.object({
   answer_text: z.string().trim().min(1),

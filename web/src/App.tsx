@@ -5,7 +5,10 @@ import { EntryComposer } from './screens/EntryComposer';
 import { EntryDetailScreen } from './screens/EntryDetailScreen';
 import { InsightsScreen } from './screens/InsightsScreen';
 import { MonthlyCalendarScreen } from './screens/MonthlyCalendarScreen';
+import { SettingsScreen } from './screens/SettingsScreen';
 import { TodayScreen } from './screens/TodayScreen';
+import { TopicsScreen } from './screens/TopicsScreen';
+import { initAppearance } from './hooks/useAppearance';
 
 /**
  * The app shell and route table.
@@ -20,15 +23,26 @@ import { TodayScreen } from './screens/TodayScreen';
  * (FR-018). See research.md §2.
  */
 
+/*
+ * Settings is last and stays last. The first four are places you go to read or write; the fifth is
+ * where you go to change the app itself, which is a different kind of errand and belongs at the
+ * end of the row rather than mixed in among them.
+ */
 const NAV = [
   { to: '/app/today', label: 'Today' },
   { to: '/app/insights', label: 'Insights' },
   { to: '/app/calendar', label: 'Calendar' },
+  { to: '/app/topics', label: 'Topics' },
+  { to: '/app/settings', label: 'Settings' },
 ];
 
 export default function App() {
   const [authEnabled, setAuthEnabled] = useState(false);
   const { pathname } = useLocation();
+
+  // Applies the stored palette/mode and keeps "System" honest if the OS flips while the tab is
+  // open. index.html has already set the attributes before first paint; this is the live half.
+  useEffect(() => initAppearance(), []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -84,6 +98,8 @@ export default function App() {
           <Route path="/app/entry/:entryId" element={<EntryDetailScreen />} />
           <Route path="/app/insights" element={<InsightsScreen />} />
           <Route path="/app/calendar" element={<MonthlyCalendarScreen />} />
+          <Route path="/app/topics" element={<TopicsScreen />} />
+          <Route path="/app/settings" element={<SettingsScreen />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

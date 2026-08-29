@@ -1,0 +1,133 @@
+/// Wire fixtures shared by the compose feature's tests.
+library;
+
+/// A `GET /feelings` body with `happy` and `sad`, each in their own group.
+Map<String, Object?> feelingsCatalogJson() => {
+  'feelings': [
+    {
+      'key': 'happy',
+      'label': 'Happy',
+      'valence': 'positive',
+      'group_key': 'uplifted',
+    },
+    {'key': 'sad', 'label': 'Sad', 'valence': 'negative', 'group_key': 'low'},
+  ],
+  'groups': [
+    {
+      'key': 'uplifted',
+      'label': 'Uplifted',
+      'valence': 'positive',
+      'feelings': [
+        {
+          'key': 'happy',
+          'label': 'Happy',
+          'valence': 'positive',
+          'group_key': 'uplifted',
+        },
+      ],
+    },
+    {
+      'key': 'low',
+      'label': 'Low',
+      'valence': 'negative',
+      'feelings': [
+        {
+          'key': 'sad',
+          'label': 'Sad',
+          'valence': 'negative',
+          'group_key': 'low',
+        },
+      ],
+    },
+  ],
+};
+
+/// A `GET /guiding-questions` body: one mandatory prompt, one optional
+/// prompt triggered by the word "work".
+Map<String, Object?> guidingQuestionsJson() => {
+  'questions': [
+    {
+      'key': 'general',
+      'category': 'general',
+      'prompt_text': "What's on your mind?",
+      'trigger_keywords': <String>[],
+      'is_mandatory': true,
+    },
+    {
+      'key': 'work',
+      'category': 'small_influences',
+      'prompt_text': 'How was work?',
+      'trigger_keywords': ['work'],
+      'is_mandatory': false,
+    },
+  ],
+};
+
+/// A `GET /insights` body carrying just the engine constants.
+Map<String, Object?> insightsJson({
+  int minIntensity = 1,
+  int maxIntensity = 5,
+}) => {
+  'patterns': <Object?>[],
+  'withdrawals': <Object?>[],
+  'new_withdrawal_count': 0,
+  'insufficient_data': false,
+  'constants': {
+    'min_occurrence_threshold': 3,
+    'recency_window_days': 30,
+    'min_lift': 1.5,
+    'strong_lift': 3.0,
+    'strong_min_occurrences': 5,
+    'min_comparison_entries': 3,
+    'collinearity_threshold': 0.8,
+    'min_bucket_entries': 3,
+    'min_intensity': minIntensity,
+    'max_intensity': maxIntensity,
+  },
+};
+
+/// One entry, as `POST /entries` or `PATCH /entries/{id}` returns it.
+Map<String, Object?> entryJson({
+  String id = 'entry-1',
+  String feelingKey = 'happy',
+  List<String>? feelingKeys,
+  int version = 1,
+  String rawText = 'a day',
+  List<Map<String, Object?>>? suggestedFeelings,
+  bool analysisPending = false,
+}) => {
+  'id': id,
+  'created_at': '2026-07-28T13:05:00',
+  'entry_date': '2026-07-28',
+  'mode': 'freeform',
+  'raw_text': rawText,
+  'feeling_key': feelingKey,
+  'feeling_keys': feelingKeys ?? [feelingKey],
+  'feeling_source': 'suggested',
+  'version': version,
+  'analysis_pending': analysisPending,
+  'suggested_feelings': ?suggestedFeelings,
+};
+
+/// One suggested-feeling DTO, nested under an entry's `suggested_feelings`.
+Map<String, Object?> suggestedFeelingJson({
+  String key = 'happy',
+  double confidence = 0.9,
+}) => {'key': key, 'confidence': confidence};
+
+/// A `GET /entries/{id}/echo` body carrying [count] narrative sentences.
+Map<String, Object?> echoJson({int count = 1}) => {
+  'echoes': [
+    for (var i = 0; i < count; i++)
+      {
+        'pattern_id': 'pattern-$i',
+        'topic': 'topic-$i',
+        'feeling': 'happy',
+        'occurrence_count': 4,
+        'present_count': 3,
+        'present_total': 4,
+        'lift': 2.0,
+        'narrative_text': 'You often feel happy about topic-$i.',
+      },
+  ],
+};

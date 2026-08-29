@@ -49,4 +49,26 @@ export default tseslint.config(
       ],
     },
   },
+  /*
+   * The one file allowed to touch localStorage, and it is deliberately one file.
+   *
+   * FR-025 forbids persistent browser storage of *diary content* — "entry text, guided answers, or
+   * feelings". `theme.ts` stores neither: it stores two enum values naming a palette and a
+   * light/dark preference, which say nothing about what was written or felt and would tell an
+   * attacker at the machine only that someone prefers a green page. research.md §5 states the
+   * decision more broadly than the requirement ("no localStorage" full stop), which is why this
+   * exception is written here rather than assumed — it is a narrowing of that decision to the
+   * requirement behind it, not a quiet retreat from either.
+   *
+   * The exception is scoped to the file rather than left as inline disable comments so that the
+   * complete list of places that may persist anything is readable in one place. Anything that
+   * needs storage and is not appearance does not belong in `theme.ts`.
+   */
+  {
+    files: ['src/theme.ts'],
+    rules: {
+      'no-restricted-globals': 'off',
+      'no-restricted-properties': 'off',
+    },
+  },
 );

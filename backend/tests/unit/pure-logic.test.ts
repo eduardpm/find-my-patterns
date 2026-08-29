@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  directionForValence,
+  directionFor,
   MIN_OCCURRENCE_THRESHOLD,
   qualifyingPairs,
 } from '../../src/insights/patterns.service';
@@ -61,17 +61,26 @@ describe('qualifyingPairs — the minimum-occurrence rule (FR-008)', () => {
   });
 });
 
-describe('directionForValence (FR-011)', () => {
+describe('directionFor (FR-011, I1-05)', () => {
   it('suggests keeping a positive habit', () => {
-    expect(directionForValence('positive')).toBe('keep');
+    expect(directionFor('forward', 'positive')).toBe('keep');
   });
 
   it('suggests changing a negative one', () => {
-    expect(directionForValence('negative')).toBe('change');
+    expect(directionFor('forward', 'negative')).toBe('change');
   });
 
   it('groups neutral with change — there is no positive signal to reinforce', () => {
-    expect(directionForValence('neutral')).toBe('change');
+    expect(directionFor('forward', 'neutral')).toBe('change');
+  });
+
+  // I1-05. The inverse card is not a mirror of the forward one. It says the feeling is likelier
+  // *without* the topic, so a bad feeling on the absent side makes the topic itself the thing
+  // worth keeping — the opposite verdict from the same valence.
+  it('reads an inverse pattern the other way round: absence of the topic coincides with the feeling', () => {
+    expect(directionFor('inverse', 'negative')).toBe('keep');
+    expect(directionFor('inverse', 'positive')).toBe('change');
+    expect(directionFor('inverse', 'neutral')).toBe('change');
   });
 });
 

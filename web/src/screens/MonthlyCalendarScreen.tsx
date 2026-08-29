@@ -1,15 +1,16 @@
 import { useCallback, useState } from 'react';
+import { fetchFeelings } from '../api/feelings';
 import { fetchMonthlySummary } from '../api/monthlySummary';
 import {
   CalendarGrid,
   feelingDotStyle,
-  feelingLabel,
+  feelingLookup,
   monthLabel,
 } from '../components/CalendarGrid';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { Icon } from '../components/Icon';
 import { useRefreshable } from '../hooks/useRefreshable';
-import type { MonthlySummary } from '../domain/types';
+import type { FeelingVocabulary, MonthlySummary } from '../domain/types';
 
 /** The month the user is in right now — local, because "this month" is a local-calendar question. */
 function currentMonth(): string {
@@ -84,6 +85,11 @@ export function MonthlyCalendarScreen() {
 function MonthPanel({ month }: { month: string }) {
   const load = useCallback(() => fetchMonthlySummary(month), [month]);
   const { data, failure, loading, refresh } = useRefreshable(load);
+  // The summary aggregates over feeling *keys*; their labels and group colours come from the
+  // vocabulary, which is the backend's, not this file's.
+  const { data: feelings } = useRefreshable<FeelingVocabulary>(
+    useCallback(() => fetchFeelings(), []),
+  );
 
   return (
     <div className="stack">
@@ -98,9 +104,9 @@ function MonthPanel({ month }: { month: string }) {
       {data && (
         <>
           <div className="card calendar-card">
-            <CalendarGrid month={data.month} days={data.days} />
+            <CalendarGrid month={data.month} days={data.days} vocabulary={feelings} />
           </div>
-          <MonthTotals summary={data} />
+          <MonthTotals summary={data} vocabulary={feelings} />
           <div className="row">
             <button type="button" className="btn btn--text" onClick={refresh}>
               <Icon name="refresh" />
@@ -122,8 +128,15 @@ function MonthPanel({ month }: { month: string }) {
  * *elapsed*, a rule this client has no business knowing. Not even rounding is applied, so what is
  * on screen is provably the served value (SC-005, and `tests/monthlyCalendar.test.tsx` guards it).
  */
-function MonthTotals({ summary }: { summary: MonthlySummary }) {
+function MonthTotals({
+  summary,
+  vocabulary,
+}: {
+  summary: MonthlySummary;
+  vocabulary: FeelingVocabulary | null;
+}) {
   const totals = Object.entries(summary.totals_by_feeling);
+  const lookup = feelingLookup(vocabulary);
 
   return (
     <section className="card stack" aria-labelledby="month-totals-heading">
@@ -149,8 +162,12 @@ function MonthTotals({ summary }: { summary: MonthlySummary }) {
         <ul className="totals">
           {totals.map(([feeling, count]) => (
             <li key={feeling} className="totals__item">
-              <span className="feeling-dot" style={feelingDotStyle(feeling)} aria-hidden="true" />
-              <span className="totals__label">{feelingLabel(feeling)}</span>
+              <span
+                className="feeling-dot"
+                style={feelingDotStyle(lookup.groupKey(feeling))}
+                aria-hidden="true"
+              />
+              <span className="totals__label">{lookup.label(feeling)}</span>
               <span className="totals__count">{count}</span>
             </li>
           ))}

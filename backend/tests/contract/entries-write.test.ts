@@ -48,7 +48,7 @@ describe('POST /entries', () => {
 });
 
 describe('guided entries — derived values (data-model.md "Derived values")', () => {
-  it('composes raw_text as "{prompt} {answer}" joined by single spaces', async () => {
+  it('composes raw_text as one prompt/answer block per answer, blank line between', async () => {
     const body = (
       await request(server())
         .post('/entries')
@@ -64,8 +64,10 @@ describe('guided entries — derived values (data-model.md "Derived values")', (
     ).body;
 
     expect(body.raw_text).toBe(
-      'Since your last entry—or in the last few hours—what happened? What were you doing, where were you, and who was around? Sluggish after lunch ' +
-        'What did you notice in your mind and body? Include thoughts, energy, tension, hunger, pain, or other sensations. Low energy and a little tense',
+      'Since your last entry—or in the last few hours—what happened? What were you doing, where were you, and who was around?\n' +
+        'Sluggish after lunch\n\n' +
+        'What did you notice in your mind and body? Include thoughts, energy, tension, hunger, pain, or other sensations.\n' +
+        'Low energy and a little tense',
     );
     expect(body.mode).toBe('guided');
   });
@@ -82,7 +84,7 @@ describe('guided entries — derived values (data-model.md "Derived values")', (
         .expect(201)
     ).body;
 
-    expect(body.raw_text).toBe('not_a_real_question fallback case');
+    expect(body.raw_text).toBe('not_a_real_question\nfallback case');
   });
 
   it('keeps a submitted raw_text instead of composing over it', async () => {
@@ -271,5 +273,96 @@ describe('DELETE /entries/{id}', () => {
     // Foreign keys are off (see db/database.ts), so nothing removes these for us — orphaned rows
     // would accumulate silently and inflate later pattern counts.
     await request(server()).get(`/entries/${entry.id}`).expect(404);
+  });
+});
+
+describe('PATCH /entries/{id} — a set of feelings', () => {
+  it('stores every feeling sent, in the order it was sent', async () => {
+    const created = await create('Rough morning, but the evening was lovely.');
+    const patched = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({ feeling_keys: ['stressed', 'grateful', 'relieved'], version: created.version })
+      .expect(422);
+    // `relieved` is not in the vocabulary — the whole request is rejected rather than partly
+    // applied, so the client never has to guess which of its feelings landed.
+    expect(patched.body.error.code).toBe('validation_error');
+
+    const ok = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({ feeling_keys: ['stressed', 'grateful'], version: created.version })
+      .expect(200);
+    expect(ok.body.feeling_keys).toEqual(['stressed', 'grateful']);
+  });
+
+  it('makes the first feeling the entry’s primary one', async () => {
+    const created = await create('Tired but proud of the work.');
+    const ok = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({ feeling_keys: ['proud', 'exhausted'], version: created.version })
+      .expect(200);
+    expect(ok.body.feeling_key).toBe('proud');
+    expect(ok.body.feeling_keys[0]).toBe('proud');
+  });
+
+  it('still accepts the single-feeling form as a set of one', async () => {
+    const created = await create('A flat, ordinary day.');
+    const ok = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({ feeling_key: 'neutral', version: created.version })
+      .expect(200);
+    expect(ok.body.feeling_keys).toEqual(['neutral']);
+    expect(ok.body.feeling_key).toBe('neutral');
+  });
+
+  it('de-duplicates a repeated feeling instead of failing', async () => {
+    const created = await create('Anxious, really quite anxious.');
+    const ok = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({ feeling_keys: ['anxious', 'anxious'], version: created.version })
+      .expect(200);
+    expect(ok.body.feeling_keys).toEqual(['anxious']);
+  });
+
+  it('records confirming the suggested set, and overriding it, differently', async () => {
+    const created = await create('A calm afternoon.');
+    expect(created.feeling_source).toBe('suggested');
+
+    const confirmed = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({ feeling_keys: created.feeling_keys, version: created.version })
+      .expect(200);
+    expect(confirmed.body.feeling_source).toBe('confirmed');
+
+    const overridden = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({ feeling_keys: ['angry'], version: confirmed.body.version })
+      .expect(200);
+    expect(overridden.body.feeling_source).toBe('overridden');
+  });
+
+  it('rejects more feelings than an entry may carry', async () => {
+    const created = await create('Everything at once.');
+    const res = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({
+        feeling_keys: ['happy', 'sad', 'angry', 'calm', 'proud'],
+        version: created.version,
+      })
+      .expect(422);
+    expect(res.body.error.code).toBe('validation_error');
+  });
+
+  it('leaves the feelings alone when the edit does not mention them', async () => {
+    const created = await create('First draft.');
+    const withFeelings = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({ feeling_keys: ['hopeful', 'restless'], version: created.version })
+      .expect(200);
+
+    const textOnly = await request(server())
+      .patch(`/entries/${created.id}`)
+      .send({ raw_text: 'Second draft.', version: withFeelings.body.version })
+      .expect(200);
+    expect(textOnly.body.feeling_keys).toEqual(['hopeful', 'restless']);
   });
 });

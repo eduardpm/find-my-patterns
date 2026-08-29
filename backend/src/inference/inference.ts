@@ -6,19 +6,20 @@ import { DIARY_DB } from '../db/database.provider';
 import type { DiaryDatabase } from '../db/database';
 import type { SuggestedFeeling } from '../domain/types';
 
-export const FEELING_KEYS = [
-  'happy',
-  'excited',
-  'neutral',
-  'sleepy',
-  'exhausted',
-  'stressed',
-  'sad',
-  'depressed',
-] as const;
+/**
+ * Re-exported so the request validator and the model's output schema keep reading the vocabulary
+ * from the one place that defines it (`db/feeling-vocabulary.ts`), rather than from a second list
+ * here that would drift the first time a feeling is added.
+ */
+export { FEELING_KEYS, FEELING_GROUP_KEYS } from '../db/feeling-vocabulary';
 
 export interface EntryAnalysis {
-  feeling: SuggestedFeeling;
+  /**
+   * Every feeling the analyser found in the text, strongest first — an entry about a hard day
+   * that ended well is genuinely two feelings, and forcing it to one throws away the half the
+   * user would most want to see later. The first element is the entry's primary feeling.
+   */
+  feelings: SuggestedFeeling[];
   topics: string[];
 }
 
@@ -107,7 +108,7 @@ export class QueuedTranscriptFormatting implements TranscriptFormatting {
 /** Test-only contract double: production always uses the durable queue above. */
 export class ImmediateTestInference implements EntryInference {
   enqueueEntry(): EntryAnalysis {
-    return { feeling: { key: 'neutral', confidence: 0 }, topics: [] };
+    return { feelings: [{ key: 'neutral', confidence: 0 }], topics: [] };
   }
 }
 

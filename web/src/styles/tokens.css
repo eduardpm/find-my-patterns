@@ -1,73 +1,57 @@
 /*
- * Design tokens for the web client.
+ * Design tokens for the web client, and the source of truth for the product's look.
  *
- * This file used to mirror the Android app's Material 3 palette value-for-value. It no longer does,
- * and that is deliberate: constitution Principle VII reserves presentation to each client, and the
- * two clients are read in different places. The phone is glanced at; the desk is where entries get
- * written and re-read at length. So the web app gets a warm, paper-like reading surface and an
- * editorial type scale instead of a phone palette stretched across a monitor.
+ * These tokens began as a divergence: the file used to mirror the Android app's Material 3 palette
+ * value-for-value, then stopped, on the grounds that a phone is glanced at and a desk is where
+ * entries get written and re-read at length. The Android client has since adopted this palette
+ * instead, so the mirroring is back but the direction is reversed -- `ui/theme/Color.kt` is a port
+ * of this file, not the other way round. Change a token here and the Android theme is the thing
+ * that needs updating to match.
  *
- * What is still shared with Android is the part that carries meaning rather than mood: the eight
- * feelings each keep their hue family, so a green day on the calendar is a green day on both
- * clients. The exact values differ because the Android hues are tuned for an OLED phone panel and
- * several of them fall under 3:1 against a light web page — see the contrast note below.
+ * What made the Android side move was not the surfaces but the brand: it was using Material's
+ * wallpaper-derived dynamic colour, so the app was a different colour on every phone and shared
+ * nothing with this client. Constitution Principle VII reserves presentation to each client, so
+ * neither arrangement is required -- but a diary read on a desk and on a phone reading as one
+ * product is worth more than either client matching its own platform's chrome.
+ *
+ * ---- Three palettes ----
+ *
+ * There are now three, chosen in Settings and stored per device: `paper` (the original warm cream),
+ * `sage` and `dusk`. They are alternative papers to write on, not three brands -- every one of them
+ * keeps the same warm-neutral page, the same three surface depths, the same one-serif-one-sans
+ * split, and the same restraint about saturation. A diary should feel like somewhere to sit down,
+ * and none of these should feel like a product tour.
+ *
+ * Each palette is a *pair*: a light set and a dark set designed together, because a dark theme
+ * built by inverting a light one is how a warm page turns into a cold one. Which half applies is
+ * decided by `data-mode` on <html>, which `theme.ts` always resolves to a literal `light` or
+ * `dark` -- the "System" preference is resolved in script rather than by a media query here, so
+ * every palette needs one dark block instead of two.
+ *
+ * Selector contract, and it matters: each block below re-declares *every* colour token, and the
+ * blocks are ordered light-then-dark. `[data-palette]` and `[data-mode]` weigh the same, so the
+ * dark blocks win on order and the palette+mode blocks win outright on specificity. Adding a token
+ * to one block means adding it to all six.
  *
  * Contrast: every foreground/background pair defined here was checked against its intended
- * surface. Body and label text clears 4.5:1 (FR-027); control borders, focus rings and feeling dots
- * clear 3:1. The feeling tokens are re-declared per theme rather than shared, because a single hue
- * cannot clear 3:1 against both #FBF7F0 and #17130F.
+ * surface, for all six blocks. Body and label text clears 4.5:1 (FR-027); control borders, focus
+ * rings and feeling dots clear 3:1, and in practice the feeling hues clear 4.5:1 because they also
+ * tint text. The feeling tokens are re-declared per palette *and* per mode rather than shared,
+ * because a single hue cannot clear 3:1 against both #FBF7F0 and #17130F. Android re-declares them
+ * for the same reason.
  *
  * No webfonts. index.html rules out third-party requests (FR-017), and self-hosting a display face
  * would add binary assets to a repo that currently has none. The stacks below name real fonts that
  * ship with macOS, Windows and most Linux desktops, and degrade to the generic family elsewhere.
+ * Android holds that line with the platform families (Noto Serif / Roboto) rather than by shipping
+ * the same faces, so neither client carries a font binary.
  */
+
+/* ------------------------------------------------------------------------------------------------
+ * Palette-independent tokens. Type, space, shape and motion are the product's skeleton and do not
+ * change with the paper.
+ * ---------------------------------------------------------------------------------------------- */
 :root {
-  color-scheme: light dark;
-
-  /* ---- Surfaces: warm paper, three depths ---- */
-  --color-surface: #fbf7f0; /* the page */
-  --color-surface-container: #ffffff; /* cards, raised things */
-  --color-surface-variant: #f3ece1; /* sunken things: wells, secondary buttons */
-  --color-surface-overlay: #ffffff; /* sticky nav, popovers */
-
-  /* ---- Ink ---- */
-  --color-on-surface: #231c14;
-  --color-on-surface-variant: #6a5c4c;
-
-  /* ---- Brand: journal brown, with ink violet for anything advisory ---- */
-  --color-primary: #92400e;
-  --color-primary-hover: #7a350b;
-  --color-on-primary: #ffffff;
-  --color-primary-container: #f6e8d5;
-  --color-accent: #4f46e5;
-  --color-accent-container: #ecebfd;
-
-  /* ---- Lines. `outline` bounds real controls (3:1); `hairline` only separates. ---- */
-  --color-outline: #94897a;
-  --color-hairline: #e6dccc;
-
-  /* ---- Status ---- */
-  --color-error: #b3261e;
-  --color-error-container: #fdecea;
-  --color-on-error-container: #8c1d18;
-  --color-success: #1b5e20;
-  --color-success-container: #e6f0e6;
-
-  /*
-   * ---- Per-feeling accents ----
-   * Same eight hue families as Android, darkened for a light page: every one of these clears 4.5:1
-   * on white, so the identical token can tint a dot, a rail and a text label without a second
-   * variant. `CalendarGrid.feelingDotStyle` reads these by key, so the names are load-bearing.
-   */
-  --feeling-happy: #2e7d32;
-  --feeling-excited: #8a5a12;
-  --feeling-neutral: #5f5f5f;
-  --feeling-sleepy: #1565a6;
-  --feeling-exhausted: #4a54a8;
-  --feeling-stressed: #b3441a;
-  --feeling-sad: #3f4ba8;
-  --feeling-depressed: #4a4a4a;
-
   /* ---- Type ----
    * A serif for the things a person reads (headings, their own diary prose) and a sans for the
    * things they operate (nav, buttons, labels, numbers). The serif stack leads with faces that are
@@ -111,12 +95,7 @@
   --radius-lg: 16px;
   --radius-full: 999px;
 
-  /* Warm-tinted rather than neutral black, so shadows sit on paper instead of over it. */
-  --shadow-1: 0 1px 2px rgb(60 42 20 / 6%), 0 1px 3px rgb(60 42 20 / 4%);
-  --shadow-2: 0 2px 4px rgb(60 42 20 / 6%), 0 8px 20px rgb(60 42 20 / 8%);
-
   --focus-ring-width: 3px;
-  --focus-ring-color: #92400e;
   --focus-ring-offset: 2px;
 
   --motion-fast: 120ms;
@@ -128,44 +107,283 @@
   --layout-wide-width: 60rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-surface: #17130f;
-    --color-surface-container: #211b15;
-    --color-surface-variant: #2a231b;
-    --color-surface-overlay: #1c1712;
+/* ------------------------------------------------------------------------------------------------
+ * LIGHT
+ * ---------------------------------------------------------------------------------------------- */
 
-    --color-on-surface: #f2eae0;
-    --color-on-surface-variant: #bcab98;
+/*
+ * Paper — warm cream, journal brown, ink violet. The original, and the default for anyone who
+ * never opens Settings, which is why it is also what a bare `:root` resolves to.
+ */
+:root,
+[data-palette='paper'] {
+  color-scheme: light;
 
-    --color-primary: #e8a857;
-    --color-primary-hover: #f0b970;
-    --color-on-primary: #231c14;
-    --color-primary-container: #3a2a17;
-    --color-accent: #a5b4fc;
-    --color-accent-container: #262647;
+  /* ---- Surfaces: warm paper, three depths ---- */
+  --color-surface: #fbf7f0; /* the page */
+  --color-surface-container: #ffffff; /* cards, raised things */
+  --color-surface-variant: #f3ece1; /* sunken things: wells, secondary buttons */
+  --color-surface-overlay: #ffffff; /* sticky nav, popovers */
 
-    --color-outline: #7e6c58;
-    --color-hairline: #3f342b;
+  /* ---- Ink ---- */
+  --color-on-surface: #231c14;
+  --color-on-surface-variant: #6a5c4c;
 
-    --color-error: #f2b8b5;
-    --color-error-container: #48211f;
-    --color-on-error-container: #f9dedc;
-    --color-success: #a5d6a7;
-    --color-success-container: #1e2e1f;
+  /* ---- Brand: journal brown, with ink violet for anything advisory ---- */
+  --color-primary: #92400e;
+  --color-primary-hover: #7a350b;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #f6e8d5;
+  --color-accent: #4f46e5;
+  --color-accent-container: #ecebfd;
 
-    /* Lightened counterparts: each clears 4.5:1 on the dark card. */
-    --feeling-happy: #7cc47f;
-    --feeling-excited: #e8b33c;
-    --feeling-neutral: #b4a99b;
-    --feeling-sleepy: #7fc0f0;
-    --feeling-exhausted: #a3abe8;
-    --feeling-stressed: #ff9e70;
-    --feeling-sad: #93a0ec;
-    --feeling-depressed: #b0a79c;
+  /* ---- Lines. `outline` bounds real controls (3:1); `hairline` only separates. ---- */
+  --color-outline: #8e8373;
+  --color-hairline: #e6dccc;
 
-    --focus-ring-color: #e8a857;
-    --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
-    --shadow-2: 0 2px 4px rgb(0 0 0 / 30%), 0 8px 20px rgb(0 0 0 / 35%);
-  }
+  /* ---- Status ---- */
+  --color-error: #b3261e;
+  --color-error-container: #fdecea;
+  --color-on-error-container: #8c1d18;
+  --color-success: #1b5e20;
+  --color-success-container: #e6f0e6;
+
+  /*
+   * ---- Per-group accents ----
+   *
+   * One accent per feeling *group*, not per feeling. This used to be eight per-key tokens, and
+   * the vocabulary has since grown past thirty words — thirty hues a reader could tell apart at
+   * the size of a calendar dot do not exist, and inventing them would make the calendar less
+   * legible, not more. Four do exist, and every feeling in a group shares that group's valence,
+   * so tinting the whole group with one accent asserts nothing the backend did not say.
+   *
+   * The four hue families are constant across all three palettes — green stays uplifted, blue
+   * stays low — and only their exact value is re-tuned per palette, warmer on paper and cooler on
+   * dusk, so that switching the paper never re-labels a day on the calendar. Each value clears
+   * 4.5:1 on all three of its palette's surfaces, so the same token can tint a dot, a rail and a
+   * text label without a second variant. `CalendarGrid.feelingDotStyle` reads these by group key,
+   * so the names are load-bearing.
+   */
+  --feeling-group-uplifted: #2a7430;
+  --feeling-group-steady: #5f5f5f;
+  --feeling-group-tense: #b3441a;
+  --feeling-group-low: #3f4ba8;
+
+  /* Warm-tinted rather than neutral black, so shadows sit on paper instead of over it. */
+  --shadow-1: 0 1px 2px rgb(60 42 20 / 6%), 0 1px 3px rgb(60 42 20 / 4%);
+  --shadow-2: 0 2px 4px rgb(60 42 20 / 6%), 0 8px 20px rgb(60 42 20 / 8%);
+
+  --focus-ring-color: #92400e;
+}
+
+/*
+ * Sage — a greener paper and a pine ink, with clay for anything advisory. The quietest of the
+ * three: green-grey is the one page tint that reads as restful rather than as a colour choice.
+ */
+[data-palette='sage'] {
+  color-scheme: light;
+
+  --color-surface: #f4f6f1;
+  --color-surface-container: #ffffff;
+  --color-surface-variant: #e7eee3;
+  --color-surface-overlay: #ffffff;
+
+  --color-on-surface: #1b241c;
+  --color-on-surface-variant: #556356;
+
+  --color-primary: #2f6146;
+  --color-primary-hover: #24503a;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #dbe9de;
+  --color-accent: #9a5426;
+  --color-accent-container: #f6e7da;
+
+  --color-outline: #7c8c7d;
+  --color-hairline: #dae3d6;
+
+  --color-error: #b3261e;
+  --color-error-container: #fbeae8;
+  --color-on-error-container: #8c1d18;
+  --color-success: #26643c;
+  --color-success-container: #dfebdf;
+
+  --feeling-group-uplifted: #2a7430;
+  --feeling-group-steady: #5b635c;
+  --feeling-group-tense: #a8451c;
+  --feeling-group-low: #3d4f9c;
+
+  --shadow-1: 0 1px 2px rgb(28 48 32 / 6%), 0 1px 3px rgb(28 48 32 / 4%);
+  --shadow-2: 0 2px 4px rgb(28 48 32 / 6%), 0 8px 20px rgb(28 48 32 / 8%);
+
+  --focus-ring-color: #2f6146;
+}
+
+/*
+ * Dusk — cool grey-blue paper, deep indigo ink, plum for anything advisory. The one to write on at
+ * night with the lights still on; its dark half is where it really lives.
+ */
+[data-palette='dusk'] {
+  color-scheme: light;
+
+  --color-surface: #f4f5fa;
+  --color-surface-container: #ffffff;
+  --color-surface-variant: #e9ebf3;
+  --color-surface-overlay: #ffffff;
+
+  --color-on-surface: #1b1d2a;
+  --color-on-surface-variant: #575d72;
+
+  --color-primary: #3b4a7a;
+  --color-primary-hover: #2f3c68;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #e0e4f3;
+  --color-accent: #87406b;
+  --color-accent-container: #f4e6ef;
+
+  --color-outline: #7b8298;
+  --color-hairline: #dcdfea;
+
+  --color-error: #b3261e;
+  --color-error-container: #fceceb;
+  --color-on-error-container: #8c1d18;
+  --color-success: #1b5e20;
+  --color-success-container: #e5efe7;
+
+  --feeling-group-uplifted: #2f7355;
+  --feeling-group-steady: #5c6172;
+  --feeling-group-tense: #a94523;
+  --feeling-group-low: #3f4ba8;
+
+  --shadow-1: 0 1px 2px rgb(24 28 48 / 7%), 0 1px 3px rgb(24 28 48 / 5%);
+  --shadow-2: 0 2px 4px rgb(24 28 48 / 7%), 0 8px 20px rgb(24 28 48 / 9%);
+
+  --focus-ring-color: #3b4a7a;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * DARK
+ *
+ * Ordered after every light block, so `[data-mode='dark']` beats a bare `[data-palette]` on source
+ * order and the two-attribute selectors beat both on specificity.
+ * ---------------------------------------------------------------------------------------------- */
+
+/* Paper after dark: the cream goes to a warm near-black, and the brown has to come up to amber to
+ * stay readable on it — a dark theme, not an inverted one. */
+[data-mode='dark'],
+[data-palette='paper'][data-mode='dark'] {
+  color-scheme: dark;
+
+  --color-surface: #17130f;
+  --color-surface-container: #211b15;
+  --color-surface-variant: #2a231b;
+  --color-surface-overlay: #1c1712;
+
+  --color-on-surface: #f2eae0;
+  --color-on-surface-variant: #bcab98;
+
+  --color-primary: #e8a857;
+  --color-primary-hover: #f0b970;
+  --color-on-primary: #231c14;
+  --color-primary-container: #3a2a17;
+  --color-accent: #a5b4fc;
+  --color-accent-container: #262647;
+
+  --color-outline: #7e6c58;
+  --color-hairline: #3f342b;
+
+  --color-error: #f2b8b5;
+  --color-error-container: #48211f;
+  --color-on-error-container: #f9dedc;
+  --color-success: #a5d6a7;
+  --color-success-container: #1e2e1f;
+
+  /* Lightened counterparts: each clears 4.5:1 on the dark card. */
+  --feeling-group-uplifted: #7cc47f;
+  --feeling-group-steady: #b4a99b;
+  --feeling-group-tense: #ff9e70;
+  --feeling-group-low: #93a0ec;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-2: 0 2px 4px rgb(0 0 0 / 30%), 0 8px 20px rgb(0 0 0 / 35%);
+
+  --focus-ring-color: #e8a857;
+}
+
+/* Sage after dark: a forest floor rather than a lawn. The pine ink lifts to a soft sage, the clay
+ * accent to a lit terracotta. */
+[data-palette='sage'][data-mode='dark'] {
+  color-scheme: dark;
+
+  --color-surface: #10150f;
+  --color-surface-container: #1a211a;
+  --color-surface-variant: #232b22;
+  --color-surface-overlay: #151b14;
+
+  --color-on-surface: #e6ede2;
+  --color-on-surface-variant: #a8b7a5;
+
+  --color-primary: #8fc79b;
+  --color-primary-hover: #a5d6af;
+  --color-on-primary: #12251a;
+  --color-primary-container: #24382a;
+  --color-accent: #e0a97a;
+  --color-accent-container: #3a2a1e;
+
+  --color-outline: #6d7c6c;
+  --color-hairline: #2e382c;
+
+  --color-error: #f2b8b5;
+  --color-error-container: #46201f;
+  --color-on-error-container: #f9dedc;
+  --color-success: #a5d6a7;
+  --color-success-container: #1c2c1d;
+
+  --feeling-group-uplifted: #84cc8b;
+  --feeling-group-steady: #adb9ab;
+  --feeling-group-tense: #f5a07a;
+  --feeling-group-low: #9aa8ee;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-2: 0 2px 4px rgb(0 0 0 / 30%), 0 8px 20px rgb(0 0 0 / 35%);
+
+  --focus-ring-color: #8fc79b;
+}
+
+/* Dusk after dark: the palette's home. Near-black with a blue cast, periwinkle ink, soft plum. */
+[data-palette='dusk'][data-mode='dark'] {
+  color-scheme: dark;
+
+  --color-surface: #101220;
+  --color-surface-container: #191c2c;
+  --color-surface-variant: #222537;
+  --color-surface-overlay: #141724;
+
+  --color-on-surface: #e8e9f4;
+  --color-on-surface-variant: #adb3c9;
+
+  --color-primary: #a3b6f2;
+  --color-primary-hover: #b7c6f7;
+  --color-on-primary: #161a2e;
+  --color-primary-container: #2a3050;
+  --color-accent: #e39bc4;
+  --color-accent-container: #3a2434;
+
+  --color-outline: #737a94;
+  --color-hairline: #313650;
+
+  --color-error: #f2b8b5;
+  --color-error-container: #46212a;
+  --color-on-error-container: #f9dedc;
+  --color-success: #a5d6a7;
+  --color-success-container: #1d2e22;
+
+  --feeling-group-uplifted: #7fcaa4;
+  --feeling-group-steady: #b9b8bd;
+  --feeling-group-tense: #f9a17f;
+  --feeling-group-low: #9fb0f5;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 45%);
+  --shadow-2: 0 2px 4px rgb(0 0 0 / 35%), 0 8px 20px rgb(0 0 0 / 40%);
+
+  --focus-ring-color: #a3b6f2;
 }

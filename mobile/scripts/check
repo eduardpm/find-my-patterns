@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+#
+# Formats, fixes, analyses and tests the project.
+#
+#   ./scripts/check            format and fix in place, then analyse and test
+#   ./scripts/check --ci       change nothing; fail if anything is unformatted
+#   ./scripts/check --no-tests stop after analysis
+#
+# Exits non-zero on the first failure, so it works as a pre-commit gate.
+usage() { awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; }
+
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+ci=false
+tests=true
+for arg in "$@"; do
+  case "$arg" in
+    --ci) ci=true ;;
+    --no-tests) tests=false ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
+bold=$(tput bold 2>/dev/null || true)
+red=$(tput setaf 1 2>/dev/null || true)
+green=$(tput setaf 2 2>/dev/null || true)
+plain=$(tput sgr0 2>/dev/null || true)
+
+step() { echo; echo "${bold}▸ $1${plain}"; }
+fail() { echo "${red}✗ $1${plain}" >&2; exit 1; }
+
+step 'Formatting'
+if $ci; then
+  dart format --output=none --set-exit-if-changed . \
+    || fail "Unformatted files. Run ./scripts/check to fix them."
+  echo "${green}✓${plain} all files formatted"
+else
+  dart format .
+fi
+
+step 'Mechanical lint fixes'
+if $ci; then
+  # --dry-run reports rather than rewrites; anything left is a real finding.
+  output=$(dart fix --dry-run)
+  echo "$output"
+  echo "$output" | grep -q 'Nothing to fix!' \
+    || fail "Fixable lints remain. Run ./scripts/check to apply them."
+else
+  dart fix --apply
+fi
+
+step 'Static analysis'
+# --fatal-infos so lint infos block the build rather than accumulating.
+dart analyze --fatal-infos || fail 'Analysis found problems.'
+echo "${green}✓${plain} no analyzer issues"
+
+if $tests; then
+  step 'Tests'
+  flutter test --coverage || fail 'Tests failed.'
+  scripts/coverage-summary
+fi
+
+echo
+echo "${green}${bold}✓ all checks passed${plain}"

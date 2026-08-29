@@ -11,7 +11,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDiary } from '../src/db/database';
-import { seed } from '../src/db/seed';
+import { FEELING_SEED } from '../src/db/feeling-vocabulary';
+import { GUIDING_QUESTIONS, seed } from '../src/db/seed';
 
 const GOLDEN = path.resolve(__dirname, 'fixtures/golden.db');
 const hash = (p: string): string =>
@@ -60,7 +61,7 @@ describe('seeding a populated diary', () => {
       .prepare<{ n: number }>('SELECT COUNT(*) AS n FROM guiding_questions')
       .get() as { n: number };
     db.close();
-    expect(feelings.n).toBe(8);
-    expect(questions.n).toBe(4);
+    expect(feelings.n).toBe(FEELING_SEED.length);
+    expect(questions.n).toBe(GUIDING_QUESTIONS.length);
   });
 });

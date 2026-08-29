@@ -1,11 +1,33 @@
 import type { CSSProperties } from 'react';
-import type { MonthlyDay } from '../domain/types';
+import type { FeelingVocabulary, MonthlyDay } from '../domain/types';
 
 interface Props {
   /** The month being shown, `YYYY-MM`. Used only for the caption and cell labels. */
   month: string;
   /** One item per day of the month, exactly as the backend returned them. */
   days: MonthlyDay[];
+  /** Resolves the keys in `days[].feelings` to their labels and groups. */
+  vocabulary: FeelingVocabulary | null;
+}
+
+/**
+ * Key → label and group, for the summary shapes that carry bare feeling keys.
+ *
+ * The month summary sends keys, not feelings, because a key is what the aggregation is over. Both
+ * the label and the group colour still belong to the vocabulary, so they are looked up rather than
+ * derived — and a key this build has no entry for still renders, just plainly.
+ */
+export interface FeelingLookup {
+  label: (key: string) => string;
+  groupKey: (key: string) => string | undefined;
+}
+
+export function feelingLookup(vocabulary: FeelingVocabulary | null): FeelingLookup {
+  const byKey = new Map((vocabulary?.feelings ?? []).map((feeling) => [feeling.key, feeling]));
+  return {
+    label: (key) => byKey.get(key)?.label ?? feelingLabel(key),
+    groupKey: (key) => byKey.get(key)?.group_key,
+  };
 }
 
 /** Monday-first, matching the Android calendar so the two clients read the same (SC-005). */
@@ -20,9 +42,9 @@ const WEEKDAYS = [
 ];
 
 /**
- * Presentational only: the feeling *key* comes from the backend, and this turns it into something
- * readable. The set of keys is never assumed — an unknown key still renders, just with the outline
- * colour (see `feelingDotStyle`).
+ * Last-resort label for a key the vocabulary has no entry for — a feeling the backend gained after
+ * this build shipped. `feelingLookup` prefers the backend's own label, which is the authority
+ * (Principle VII); this exists so an unknown key is still readable rather than absent.
  */
 export function feelingLabel(key: string): string {
   const words = key.split('_').filter(Boolean);
@@ -31,12 +53,20 @@ export function feelingLabel(key: string): string {
 }
 
 /**
- * The per-feeling accent from tokens.css, falling back to the neutral outline for any key this
- * client has no colour for. Colour is decoration here — every dot is also named in text, because
- * FR-027 forbids conveying meaning by colour alone.
+ * The accent for a feeling's *group*, from tokens.css, falling back to the neutral outline for a
+ * group this client has no colour for. Colour is decoration here — every dot is also named in text,
+ * because FR-027 forbids conveying meaning by colour alone.
+ *
+ * Keyed on the group rather than the feeling because the vocabulary is around thirty words and a
+ * calendar dot is 8px across: four accents a reader can actually tell apart beat thirty they
+ * cannot. See the token block in `tokens.css`.
  */
-export function feelingDotStyle(key: string): CSSProperties {
-  return { backgroundColor: `var(--feeling-${key}, var(--color-outline))` };
+export function feelingDotStyle(groupKey: string | undefined): CSSProperties {
+  return {
+    backgroundColor: groupKey
+      ? `var(--feeling-group-${groupKey}, var(--color-outline))`
+      : 'var(--color-outline)',
+  };
 }
 
 /** `2026-07-04` → `4`, without constructing a Date and inviting a timezone shift. */
@@ -89,9 +119,10 @@ export function monthLabel(month: string): string {
  * It is a real `<table>`: a month grid genuinely is tabular data, and a table gives screen readers
  * the row/column relationships for free, which a div grid would have to reconstruct with ARIA.
  */
-export function CalendarGrid({ month, days }: Props) {
+export function CalendarGrid({ month, days, vocabulary }: Props) {
   const label = monthLabel(month);
   const today = todayIso();
+  const lookup = feelingLookup(vocabulary);
 
   if (days.length === 0) {
     return <p className="muted">No days to show for {label}.</p>;
@@ -125,7 +156,13 @@ export function CalendarGrid({ month, days }: Props) {
           <tr key={weekIndex}>
             {week.map((day, dayIndex) =>
               day ? (
-                <DayCell key={day.date} day={day} month={label} isToday={day.date === today} />
+                <DayCell
+                  key={day.date}
+                  day={day}
+                  month={label}
+                  isToday={day.date === today}
+                  lookup={lookup}
+                />
               ) : (
                 <td key={`blank-${weekIndex}-${dayIndex}`} className="calendar-day--outside" />
               ),
@@ -137,12 +174,27 @@ export function CalendarGrid({ month, days }: Props) {
   );
 }
 
-function DayCell({ day, month, isToday }: { day: MonthlyDay; month: string; isToday: boolean }) {
+function DayCell({
+  day,
+  month,
+  isToday,
+  lookup,
+}: {
+  day: MonthlyDay;
+  month: string;
+  isToday: boolean;
+  lookup: FeelingLookup;
+}) {
   const logged = day.feelings.length > 0;
   const number = dayOfMonth(day.date);
-  const feelings = logged ? day.feelings.map(feelingLabel).join(', ') : 'no entries';
+  const feelings = logged ? day.feelings.map(lookup.label).join(', ') : 'no entries';
+  // I6-04: how strongly, not only which. Announced in the same sentence rather than added as a
+  // second label, because it qualifies the feelings rather than standing beside them.
+  // `== null` rather than `=== null`: a backend that predates the dial omits the field, and an
+  // absent rating and a cleared one mean the same thing to a reader.
+  const intensity = day.intensity == null ? '' : `, intensity ${day.intensity}`;
   // "Today" leads, because that is the thing a reader scanning the grid is looking for.
-  const description = `${isToday ? 'Today, ' : ''}${number} ${month}: ${feelings}`;
+  const description = `${isToday ? 'Today, ' : ''}${number} ${month}: ${feelings}${intensity}`;
 
   return (
     <td
@@ -158,9 +210,26 @@ function DayCell({ day, month, isToday }: { day: MonthlyDay; month: string; isTo
       </span>
       <span className="calendar-day__dots" aria-hidden="true" title={description}>
         {day.feelings.map((feeling) => (
-          <span key={feeling} className="calendar-day__dot" style={feelingDotStyle(feeling)} />
+          <span
+            key={feeling}
+            className="calendar-day__dot"
+            style={feelingDotStyle(lookup.groupKey(feeling))}
+          />
         ))}
       </span>
+      {/*
+        A short bar rather than a number: the cell is already carrying a date and a row of dots,
+        and a second digit in it reads as a count of entries. Days with no rating show nothing at
+        all, so a diary where nobody uses the dial looks exactly as it did before (I6-01).
+      */}
+      {day.intensity != null && (
+        <span className="calendar-day__intensity" aria-hidden="true">
+          <span
+            className="calendar-day__intensity-fill"
+            style={{ width: `${(day.intensity / 5) * 100}%` }}
+          />
+        </span>
+      )}
     </td>
   );
 }

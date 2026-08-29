@@ -1,0 +1,788 @@
+{
+  "$comment": [
+    "A corpus of diary situations, each written to probe one way the Insights view could mislead.",
+    "",
+    "Every scenario is deterministic: the feelings are the ones a user settled on, and the topics",
+    "come from the keyword extractor, so no model runs and the right answer can be worked out by",
+    "hand. `expect` always describes what the app SHOULD do, never what it currently does.",
+    "",
+    "`verdict` records how it behaves today:",
+    "  holds  - the app already meets the expectation, and the test guards it.",
+    "  defect - it does not. The test is run as a failing expectation, so fixing the underlying",
+    "           problem turns the suite red and forces this file to be updated alongside it.",
+    "",
+    "Sources are per scenario: the repo's own research under specs/research, the self-tracking",
+    "literature on confounding and reverse causation, or plain reasoning about the code."
+  ],
+  "scenarios": [
+    {
+      "name": "walking lifts energy",
+      "concern": "The happy path. A real habit, written plainly, three times over.",
+      "source": "product pitch",
+      "verdict": "holds",
+      "entries": [
+        {
+          "text": "Went for a walk at lunch instead of eating at my desk.",
+          "feelings": [
+            "energised"
+          ]
+        },
+        {
+          "text": "Walked home the long way and felt awake again.",
+          "feelings": [
+            "energised"
+          ]
+        },
+        {
+          "text": "Short walk around the block between meetings.",
+          "feelings": [
+            "energised"
+          ]
+        }
+      ],
+      "expect": {
+        "patterns": [
+          {
+            "topic": "walking",
+            "feeling": "energised",
+            "count": 3,
+            "direction": "keep"
+          }
+        ]
+      }
+    },
+    {
+      "name": "two occurrences stay quiet",
+      "concern": "Two is a coincidence. The threshold is the only defence against reading meaning into noise.",
+      "source": "FR-008",
+      "verdict": "holds",
+      "entries": [
+        {
+          "text": "Pizza for dinner again.",
+          "feelings": [
+            "sleepy"
+          ]
+        },
+        {
+          "text": "Pizza again, second night running.",
+          "feelings": [
+            "sleepy"
+          ]
+        }
+      ],
+      "expect": {
+        "noPatterns": true
+      }
+    },
+    {
+      "name": "an entry that is only a feeling",
+      "concern": "No topic at all. There is nothing to correlate, and the app must not invent one.",
+      "source": "reasoning",
+      "verdict": "holds",
+      "entries": [
+        {
+          "text": "Flat.",
+          "feelings": [
+            "sad"
+          ]
+        },
+        {
+          "text": "Low again.",
+          "feelings": [
+            "sad"
+          ]
+        },
+        {
+          "text": "Not great.",
+          "feelings": [
+            "sad"
+          ]
+        }
+      ],
+      "expect": {
+        "noPatterns": true
+      }
+    },
+    {
+      "name": "a word inside another word",
+      "concern": "Topic extraction on word boundaries, which a previous implementation got wrong.",
+      "source": "topics.service.ts",
+      "verdict": "holds",
+      "entries": [
+        {
+          "text": "The network was down and I had homework to finish.",
+          "feelings": [
+            "frustrated"
+          ]
+        },
+        {
+          "text": "Network problems again, plus homework.",
+          "feelings": [
+            "frustrated"
+          ]
+        },
+        {
+          "text": "More network trouble. Homework still not done.",
+          "feelings": [
+            "frustrated"
+          ]
+        }
+      ],
+      "expect": {
+        "absentTopics": [
+          "work"
+        ],
+        "patterns": [
+          {
+            "topic": "study",
+            "feeling": "frustrated",
+            "count": 3,
+            "direction": "change"
+          }
+        ]
+      },
+      "note": "'network' must not register as 'work'. 'homework' correctly registers as 'study'."
+    },
+    {
+      "name": "a long run of the same habit",
+      "concern": "Counts scale without the sentence becoming absurd.",
+      "source": "reasoning about the narrative wording",
+      "verdict": "holds",
+      "repeat": {
+        "times": 20,
+        "entry": {
+          "text": "Walked to work again.",
+          "feelings": [
+            "energised"
+          ]
+        }
+      },
+      "expect": {
+        "patterns": [
+          {
+            "topic": "walking",
+            "feeling": "energised",
+            "count": 20,
+            "direction": "keep"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a habit the writer explicitly did not have",
+      "concern": "Negation. The entry says the topic did NOT happen, and the extractor counts it anyway.",
+      "source": "reasoning about keyword extraction",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "No coffee at all today, and I slept properly for once.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "Skipped the coffee again. Another decent night.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "Still no coffee. Sleeping much better without it.",
+          "feelings": [
+            "calm"
+          ]
+        }
+      ],
+      "expect": {
+        "absentTopics": [
+          "coffee"
+        ]
+      },
+      "note": "The true reading is the opposite of what is recorded: coffee's ABSENCE is what goes with feeling calm."
+    },
+    {
+      "name": "an intention, not an event",
+      "concern": "Hypothetical and future-tense mentions are counted as things that happened.",
+      "source": "reasoning about keyword extraction",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "I should really cut down on the wine one of these days.",
+          "feelings": [
+            "guilty"
+          ]
+        },
+        {
+          "text": "Keep telling myself I will give up wine in the new year.",
+          "feelings": [
+            "guilty"
+          ]
+        },
+        {
+          "text": "Thinking again about quitting wine for a while.",
+          "feelings": [
+            "guilty"
+          ]
+        }
+      ],
+      "expect": {
+        "absentTopics": [
+          "alcohol"
+        ]
+      },
+      "note": "Nobody drank anything. The insight reads as though they did."
+    },
+    {
+      "name": "somebody else's habit",
+      "concern": "A topic belonging to another person is attributed to the writer.",
+      "source": "reasoning about keyword extraction",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "My colleague drank another coffee before the meeting. I had water.",
+          "feelings": [
+            "curious"
+          ]
+        },
+        {
+          "text": "Colleague on the coffee again all morning. Water for me.",
+          "feelings": [
+            "curious"
+          ]
+        },
+        {
+          "text": "Watched my colleague finish a coffee in one go. I stuck to water.",
+          "feelings": [
+            "curious"
+          ]
+        }
+      ],
+      "expect": {
+        "absentTopics": [
+          "coffee"
+        ]
+      },
+      "note": "The writer drank water every time. The insight will be about coffee they never had."
+    },
+    {
+      "name": "a dominant mood makes everything look causal",
+      "concern": "Base rate. When one feeling fills the diary, every topic co-occurs with it and every co-occurrence crosses the threshold.",
+      "source": "specs/research/diff-1-base-rate-patterns.md; fixed by roadmap A3",
+      "verdict": "holds",
+      "entries": [
+        {
+          "text": "Long day at work.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Work again, back to back.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Another day of work.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Walked to the shops.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Walked into town.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Walked the dog, twice.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Had tea in the garden.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Tea with my sister.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Made a pot of tea and read.",
+          "feelings": [
+            "exhausted"
+          ]
+        }
+      ],
+      "expect": {
+        "noPatterns": true
+      },
+      "note": "Fixed by A3. Every topic here co-occurs with exhaustion at exactly the base rate, so lift is 1.0x for all three and all three are suppressed. The >=3 rule still passes them; lift is what tells them apart from a real finding."
+    },
+    {
+      "name": "two things that always happen together",
+      "concern": "Confounding. Coffee and bad sleep never appear apart, so each is reported as an independent influence.",
+      "source": "n-of-1 self-tracking literature on unmeasured confounding; addressed by roadmap I2",
+      "verdict": "holds",
+      "entries": [
+        {
+          "text": "Espresso late again and then barely slept.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Late espresso, slept badly.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Coffee after dinner. Slept terribly.",
+          "feelings": [
+            "exhausted"
+          ]
+        }
+      ],
+      "expect": {
+        "confounderNotedFor": [
+          "coffee",
+          "sleep"
+        ]
+      },
+      "note": "Addressed by I2, and deliberately not by hiding either pattern (I2-07). The fixture used to ask for at most one insight; its own note said showing both is defensible if the view says they always co-occur, and that is now exactly what it says."
+    },
+    {
+      "name": "the feeling came first",
+      "concern": "Reverse causation. The writer walks BECAUSE they feel low, and the insight reads as though walking makes them low.",
+      "source": "specs/research/diff-2-temporal-precedence.md",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Felt awful this morning so I made myself go for a walk.",
+          "feelings": [
+            "sad"
+          ]
+        },
+        {
+          "text": "Low again. Went out for a walk to try to shift it.",
+          "feelings": [
+            "sad"
+          ]
+        },
+        {
+          "text": "Rough day, forced myself out for a walk.",
+          "feelings": [
+            "sad"
+          ]
+        }
+      ],
+      "expect": {
+        "absentTopics": [
+          "walking"
+        ]
+      },
+      "note": "The advice points at reducing walking, which is the coping strategy, not the cause. This is the most actively harmful failure in the set."
+    },
+    {
+      "name": "medication",
+      "concern": "Safety. A negative feeling around medication produces advice pointed at changing it.",
+      "source": "reasoning about the curated topic list",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Started the new medication this week.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Second day on the medication, wiped out.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Medication again this morning. No energy at all.",
+          "feelings": [
+            "exhausted"
+          ]
+        }
+      ],
+      "expect": {
+        "notAdvisedToChange": [
+          "medication"
+        ]
+      },
+      "note": "The correlation is worth surfacing — it is worth telling a doctor. Advice to change it is not the app's to give."
+    },
+    {
+      "name": "menstrual cycle",
+      "concern": "Safety. A biological cycle is not a behaviour, and 'consider changing it' is not advice.",
+      "source": "reasoning about the curated topic list",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Got my period today, everything aches.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Second day of my period. Flat.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "On my period still. No energy.",
+          "feelings": [
+            "exhausted"
+          ]
+        }
+      ],
+      "expect": {
+        "notAdvisedToChange": [
+          "menstrual cycle"
+        ]
+      }
+    },
+    {
+      "name": "illness",
+      "concern": "Safety. Being ill is not a habit to reduce.",
+      "source": "reasoning about the curated topic list",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Came down with the flu.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Still sick, stayed in bed.",
+          "feelings": [
+            "exhausted"
+          ]
+        },
+        {
+          "text": "Third day ill. Wrecked.",
+          "feelings": [
+            "exhausted"
+          ]
+        }
+      ],
+      "expect": {
+        "notAdvisedToChange": [
+          "illness"
+        ]
+      }
+    },
+    {
+      "name": "a person, not a habit",
+      "concern": "Tone and safety. A relationship topic pointed at 'change' reads as advice to see less of someone.",
+      "source": "reasoning about the curated topic list",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Another argument with my partner.",
+          "feelings": [
+            "sad"
+          ]
+        },
+        {
+          "text": "Argued with my partner again this evening.",
+          "feelings": [
+            "sad"
+          ]
+        },
+        {
+          "text": "Disagreement with my partner over nothing.",
+          "feelings": [
+            "sad"
+          ]
+        }
+      ],
+      "expect": {
+        "notAdvisedToChange": [
+          "partner"
+        ]
+      },
+      "note": "'conflict' is the useful insight from these entries. 'partner' is the same data pointed at a person."
+    },
+    {
+      "name": "someone in crisis",
+      "concern": "Safety. Entries describing hopelessness and isolation get the same lifestyle-tweak treatment as coffee.",
+      "source": "reasoning about tone",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Spent the whole weekend alone again. Cannot see the point.",
+          "feelings": [
+            "hopeless"
+          ]
+        },
+        {
+          "text": "Alone all day. Nothing is going to change.",
+          "feelings": [
+            "hopeless"
+          ]
+        },
+        {
+          "text": "By myself again. It does not get better.",
+          "feelings": [
+            "hopeless"
+          ]
+        }
+      ],
+      "expect": {
+        "notAdvisedToChange": [
+          "time alone"
+        ]
+      },
+      "note": "'Consider reducing time alone' to someone writing this is glib at best. The app has no notion of severity and no crisis path."
+    },
+    {
+      "name": "one entry, four feelings, two topics",
+      "concern": "Multiple comparisons. Every extra feeling multiplies the pairs a single entry contributes.",
+      "source": "reasoning about the multi-feeling change",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Coffee and a walk before work.",
+          "feelings": [
+            "energised",
+            "hopeful",
+            "restless",
+            "anxious"
+          ]
+        },
+        {
+          "text": "Walk first, then coffee at the desk.",
+          "feelings": [
+            "energised",
+            "hopeful",
+            "restless",
+            "anxious"
+          ]
+        },
+        {
+          "text": "Morning coffee, quick walk.",
+          "feelings": [
+            "energised",
+            "hopeful",
+            "restless",
+            "anxious"
+          ]
+        }
+      ],
+      "expect": {
+        "maxPatterns": 4
+      },
+      "note": "Three entries produce eight insights, four of them contradicting the other four, and the view cannot rank them."
+    },
+    {
+      "name": "the same topic pointing both ways",
+      "concern": "Contradiction. Two insights about one topic, one saying keep and one saying change.",
+      "source": "reasoning about the pattern key",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Morning coffee, felt great.",
+          "feelings": [
+            "happy"
+          ]
+        },
+        {
+          "text": "Coffee with breakfast, good start.",
+          "feelings": [
+            "happy"
+          ]
+        },
+        {
+          "text": "Coffee before the walk, lovely.",
+          "feelings": [
+            "happy"
+          ]
+        },
+        {
+          "text": "Coffee too late, wired all night.",
+          "feelings": [
+            "restless"
+          ]
+        },
+        {
+          "text": "Late coffee again, could not settle.",
+          "feelings": [
+            "restless"
+          ]
+        },
+        {
+          "text": "Evening coffee. Restless.",
+          "feelings": [
+            "restless"
+          ]
+        }
+      ],
+      "expect": {
+        "noContradictoryTopics": true
+      },
+      "note": "Both are true. The view sets them side by side with nothing to say that the difference is the time of day."
+    },
+    {
+      "name": "the same diary reads the same way twice",
+      "concern": "Stability. Re-reading Insights must not reshuffle the list under the reader.",
+      "source": "listPatterns ORDER BY",
+      "verdict": "holds",
+      "entries": [
+        {
+          "text": "Tea in the evening.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "Tea before bed.",
+          "feelings": [
+            "calm"
+          ]
+        },
+        {
+          "text": "Pot of tea, quiet night.",
+          "feelings": [
+            "calm"
+          ]
+        }
+      ],
+      "repeat": {
+        "times": 20,
+        "entry": {
+          "text": "Walked to the shops.",
+          "feelings": [
+            "energised"
+          ]
+        }
+      },
+      "expect": {
+        "stableAcrossReads": true
+      },
+      "note": "Ordering is by last_updated_at with the pattern id as tiebreaker, so a diary reads consistently. What it is NOT ordered by is strength: measured over 8 fresh diaries, 7 put a 3-occurrence insight above a 20-occurrence one. That gap is real but arbitrary rather than reliably wrong, so it is recorded in TESTING.md instead of as a test that would flake."
+    },
+    {
+      "name": "old entries described as recent",
+      "concern": "Recency. The sentence says 'recent' and the engine has no time window at all.",
+      "source": "reasoning about the narrative wording; fixed by roadmap I3",
+      "verdict": "holds",
+      "entries": [
+        {
+          "text": "Tea in the garden.",
+          "feelings": [
+            "calm"
+          ],
+          "daysAgo": 400
+        },
+        {
+          "text": "Tea on the balcony.",
+          "feelings": [
+            "calm"
+          ],
+          "daysAgo": 395
+        },
+        {
+          "text": "Pot of tea and a book.",
+          "feelings": [
+            "calm"
+          ],
+          "daysAgo": 390
+        }
+      ],
+      "expect": {
+        "historicalTopics": [
+          "tea"
+        ],
+        "neverSaysRecent": true
+      },
+      "note": "Fixed by I3. The count is now windowed, so a pattern last seen over a year ago is labelled historical rather than reported as recent — and it is still there, because silently dropping it would be its own defect (I3-09)."
+    },
+    {
+      "name": "a neutral feeling",
+      "concern": "Neutral has no positive signal, so the direction is 'change' — advice to alter something that was fine.",
+      "source": "directionForValence",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Tea and a quiet evening.",
+          "feelings": [
+            "neutral"
+          ]
+        },
+        {
+          "text": "Tea, nothing much happened.",
+          "feelings": [
+            "neutral"
+          ]
+        },
+        {
+          "text": "Quiet night in with tea.",
+          "feelings": [
+            "neutral"
+          ]
+        }
+      ],
+      "expect": {
+        "notAdvisedToChange": [
+          "tea"
+        ]
+      },
+      "note": "'You felt neutral 3 times around tea - consider changing it.' Nothing needs changing."
+    },
+    {
+      "name": "written in another language",
+      "concern": "The curated keyword list is English only, so a diary kept in another language yields nothing.",
+      "source": "reasoning about the curated topic list",
+      "verdict": "defect",
+      "entries": [
+        {
+          "text": "Sétáltam egyet ebédszünetben, sokkal jobb lett a délután.",
+          "feelings": [
+            "energised"
+          ]
+        },
+        {
+          "text": "Megint sétáltam munka után, feltöltődtem.",
+          "feelings": [
+            "energised"
+          ]
+        },
+        {
+          "text": "Rövid séta a ház körül, jólesett.",
+          "feelings": [
+            "energised"
+          ]
+        }
+      ],
+      "expect": {
+        "patterns": [
+          {
+            "topic": "walking",
+            "feeling": "energised",
+            "count": 3,
+            "direction": "keep"
+          }
+        ]
+      },
+      "note": "Three clear entries about walking produce nothing. The view says 'not enough data yet', which is not what happened."
+    }
+  ]
+}

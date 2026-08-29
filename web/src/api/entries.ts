@@ -1,4 +1,4 @@
-import type { Entry, EntryCreateInput, EntryUpdateInput } from '../domain/types';
+import type { Entry, EntryCreateInput, EntryUpdateInput, PatternEcho } from '../domain/types';
 import { api, type ApiResult } from './client';
 
 export async function listEntries(date: string): Promise<ApiResult<Entry[]>> {
@@ -26,4 +26,17 @@ export function updateEntry(id: string, input: EntryUpdateInput): Promise<ApiRes
 /** FR-021: deletes carry the version too — a stale-view delete is the most destructive case. */
 export function deleteEntry(id: string, version: number): Promise<ApiResult<void>> {
   return api.delete<void>(`/entries/${encodeURIComponent(id)}?version=${version}`);
+}
+
+/**
+ * What the diary already says about the topics in an entry that has just been saved (I4).
+ *
+ * Called *after* a save and never before one. The echo is an observation about entries already
+ * written; putting it in front of someone mid-sentence would shape the evidence it then counts.
+ */
+export async function fetchEntryEcho(id: string): Promise<ApiResult<PatternEcho[]>> {
+  const result = await api.get<{ echoes: PatternEcho[] }>(
+    `/entries/${encodeURIComponent(id)}/echo`,
+  );
+  return result.ok ? { ok: true, value: result.value.echoes } : result;
 }

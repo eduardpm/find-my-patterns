@@ -29,7 +29,9 @@ try {
   await page.screenshot({ path: '/tmp/diary-today.png', fullPage: true });
 
   console.log('2/7 create and verify unsaved guard');
-  await page.getByRole('link', { name: 'Write an entry' }).click();
+  // Scoped to the page header: on a day with nothing written yet the empty state offers the same
+  // link, and an unscoped lookup is ambiguous on exactly the diaries a fresh test run creates.
+  await page.locator('header').getByRole('link', { name: 'Write an entry' }).click();
   await page.waitForURL(/\/app\/new$/);
   await page.getByRole('button', { name: 'Skip the questions and just write' }).click();
   const editor = page.getByLabel('Your diary entry');
@@ -44,7 +46,40 @@ try {
 
   await page.getByRole('button', { name: 'Save' }).click();
   await page.getByRole('heading', { name: 'How did that feel?' }).waitFor();
-  await page.locator('label[data-feeling="happy"]').click();
+
+  /*
+   * The picker is group-first: the vocabulary is past thirty words, so the page shows the four
+   * groups and opens one group's feelings in a dialog on demand. Picking a feeling is therefore
+   * three acts — open the group, check the feeling, close the dialog — not one click on a chip.
+   */
+  await page.getByRole('button', { name: 'Uplifted' }).click();
+  const groupDialog = page.getByRole('dialog', { name: 'Uplifted' });
+  await groupDialog.waitFor();
+  /*
+   * Clicked through the wrapping label, not by driving the input.
+   *
+   * The real checkbox is `visually-hidden` — clipped to a pixel with the chip's own dot painted
+   * over it — so `.check()` cannot reach it and would need `force`, which would assert that a
+   * control nobody can see responds to a synthetic click. The label is what a pointer, a tap and
+   * the keyboard all actually land on.
+   *
+   * `/^Happy/` rather than an exact string: a feeling the local analysis suggested carries a
+   * "suggested" hint inside the same label, and whether it does is not this journey's business.
+   */
+  const happyChip = groupDialog.locator('label.chip').filter({ hasText: /^Happy/ });
+  await happyChip.click();
+  assert.equal(
+    await happyChip.getByRole('checkbox').isChecked(),
+    true,
+    'Happy should be checked after clicking its chip',
+  );
+  await groupDialog.getByRole('button', { name: 'Close Uplifted' }).click();
+  await groupDialog.waitFor({ state: 'hidden' });
+
+  // The chosen row is the only place the answer stays visible once the dialog is gone, so it is
+  // what proves the pick registered rather than merely that a box was ticked.
+  await page.getByRole('button', { name: /^Remove Happy/ }).waitFor();
+
   await page.getByRole('button', { name: 'Done' }).click();
   await page.getByText(originalEntry).waitFor();
 

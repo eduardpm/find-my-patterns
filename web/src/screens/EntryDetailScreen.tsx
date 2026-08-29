@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { ApiFailure } from '../api/client';
-import { deleteEntry, getEntry, updateEntry } from '../api/entries';
+import { deleteEntry, fetchEntryEcho, getEntry, updateEntry } from '../api/entries';
 import { ConflictView } from './ConflictScreen';
 import { fetchFeelings } from '../api/feelings';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { FeelingChips } from '../components/FeelingChips';
 import { Icon } from '../components/Icon';
-import type { Entry, Feeling } from '../domain/types';
+import { IntensityDials } from '../components/IntensityDial';
+import { PatternEchoPanel } from '../components/PatternEchoPanel';
+import { fetchInsights } from '../api/insights';
+import type { EngineConstants, Entry, FeelingVocabulary, PatternEcho } from '../domain/types';
 import { useRefreshable } from '../hooks/useRefreshable';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 
@@ -19,15 +22,37 @@ import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
  * [ConflictView], which keeps the user's text on screen beside the stored version (FR-023) — the
  * text is never thrown away on their behalf.
  */
+/**
+ * Whether two rating maps say the same thing.
+ *
+ * Compared by content rather than by reference: the editor rebuilds the map on every keystroke of
+ * a rating, and a reference check would report the entry as edited the moment anything was touched
+ * and never report it as clean again.
+ */
+function sameIntensities(a: Record<string, number>, b: Record<string, number>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
 export function EntryDetailScreen() {
   const { entryId = '' } = useParams();
   const navigate = useNavigate();
 
   const loaded = useRefreshable<Entry>(useCallback(() => getEntry(entryId), [entryId]));
-  const { data: feelings } = useRefreshable<Feeling[]>(useCallback(() => fetchFeelings(), []));
+  const { data: feelings } = useRefreshable<FeelingVocabulary>(
+    useCallback(() => fetchFeelings(), []),
+  );
 
   const [text, setText] = useState('');
-  const [feelingKey, setFeelingKey] = useState<string | null>(null);
+  const [feelingKeys, setFeelingKeys] = useState<string[]>([]);
+  // Keyed by feeling, so unpicking a word takes its rating with it rather than leaving a number
+  // behind for whichever word lands in that position next.
+  const [intensities, setIntensities] = useState<Record<string, number>>({});
+  const [echoes, setEchoes] = useState<PatternEcho[]>([]);
+  // The intensity scale is the backend's, like every other threshold this client renders. It is
+  // read from the insights payload rather than assumed, so a change to the scale reaches both
+  // clients at once (C-01).
+  const [constants, setConstants] = useState<EngineConstants | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const [saving, setSaving] = useState(false);
   /** Set when a save/delete was rejected as stale. `current: null` = deleted elsewhere. */
@@ -38,11 +63,25 @@ export function EntryDetailScreen() {
   useEffect(() => {
     if (entry) {
       setText(entry.raw_text);
-      setFeelingKey(entry.feeling_key);
+      setFeelingKeys(entry.feeling_keys);
+      setIntensities(entry.feeling_intensities);
     }
   }, [entry]);
 
-  const dirty = entry !== null && (text !== entry.raw_text || feelingKey !== entry.feeling_key);
+  useEffect(() => {
+    void fetchInsights().then((result) => {
+      if (result.ok) setConstants(result.value.constants);
+    });
+  }, []);
+
+  // Compared as an ordered list, because the order is stored: moving a feeling to the front makes
+  // it the entry's primary one, which is a real edit even though the set is unchanged.
+  const dirty =
+    entry !== null &&
+    (text !== entry.raw_text ||
+      !sameIntensities(intensities, entry.feeling_intensities) ||
+      feelingKeys.length !== entry.feeling_keys.length ||
+      feelingKeys.some((key, index) => key !== entry.feeling_keys[index]));
   const { confirmDiscard } = useUnsavedGuard(dirty);
 
   async function save(body: string, version: number) {
@@ -51,12 +90,21 @@ export function EntryDetailScreen() {
 
     const result = await updateEntry(entryId, {
       raw_text: body,
-      feeling_key: feelingKey ?? undefined,
+      feeling_keys: feelingKeys,
+      feeling_intensities: intensities,
       version,
     });
     setSaving(false);
 
     if (result.ok) {
+      // I4-02: the echo is asked for only once the entry is stored, and the user stays on the
+      // screen to read it rather than being bounced away from their own observation.
+      const echo = await fetchEntryEcho(entryId);
+      if (echo.ok && echo.value.length > 0) {
+        setEchoes(echo.value);
+        loaded.refresh();
+        return;
+      }
       navigate('/app/today');
       return;
     }
@@ -146,6 +194,8 @@ export function EntryDetailScreen() {
 
       <ErrorBanner failure={failure} />
 
+      <PatternEchoPanel echoes={echoes} onDismiss={() => setEchoes([])} />
+
       <label htmlFor="edit-text" className="visually-hidden">
         Entry text
       </label>
@@ -157,11 +207,32 @@ export function EntryDetailScreen() {
       />
 
       <FeelingChips
-        legend="Feeling"
-        feelings={feelings ?? []}
-        selected={feelingKey}
-        onSelect={setFeelingKey}
+        legend="Feelings"
+        vocabulary={feelings}
+        selected={feelingKeys}
+        onChange={(keys) => {
+          setFeelingKeys(keys);
+          // A rating belongs to its feeling, so dropping a word drops its number too.
+          setIntensities((current) =>
+            Object.fromEntries(Object.entries(current).filter(([key]) => keys.includes(key))),
+          );
+        }}
+        suggestedKeys={entry.suggested_feelings.map((suggestion) => suggestion.key)}
       />
+
+      {/* I6-07: optional, after the feelings are chosen — never a step in front of them. */}
+      {constants && (
+        <IntensityDials
+          // In the order the entry stores them, so the rows read in the same order as the chips.
+          feelings={feelingKeys.flatMap(
+            (key) => feelings?.feelings.filter((feeling) => feeling.key === key) ?? [],
+          )}
+          values={intensities}
+          onChange={setIntensities}
+          min={constants.min_intensity}
+          max={constants.max_intensity}
+        />
+      )}
 
       {/*
         Delete is pushed to the opposite end of the row rather than sat third in a line of three.

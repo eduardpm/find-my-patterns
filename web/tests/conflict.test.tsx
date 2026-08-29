@@ -20,8 +20,13 @@ const stored: Entry = {
   mode: 'freeform',
   raw_text: 'Saved from the phone.',
   feeling_key: 'happy',
+  feeling_keys: ['happy'],
   feeling_source: 'confirmed',
+  feeling_intensity: null,
+  feeling_intensities: {},
+  guided_answers: [],
   suggested_feeling: null,
+  suggested_feelings: [],
   version: 4,
 };
 

@@ -1,0 +1,43 @@
+# Static analysis for this app, inherited from the bootstrap base.
+#
+# Three things are deliberately stricter than the Flutter default:
+#   * the `language:` block rejects implicit `dynamic` and implicit downcasts,
+#     which is what keeps the typed API client honest at every call site;
+#   * `comment_references` makes a broken [Link] in a doc comment a diagnostic
+#     instead of silent rot;
+#   * `unawaited_futures` catches the class of bug where a Future is created
+#     and dropped, so a failure disappears instead of surfacing.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # A dropped Future is a bug, not a style preference.
+    unawaited_futures: error
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+
+linter:
+  rules:
+    always_declare_return_types: true
+    avoid_catches_without_on_clauses: true
+    comment_references: true
+    directives_ordering: true
+    prefer_single_quotes: true
+    require_trailing_commas: true
+    sort_pub_dependencies: true
+    unawaited_futures: true
+    unnecessary_parenthesis: true
+    use_super_parameters: true
+
+formatter:
+  trailing_commas: preserve

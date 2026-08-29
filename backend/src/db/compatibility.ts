@@ -1,5 +1,9 @@
 import type { DiaryDatabase } from './database';
 import { decodeDate, decodeDateTime, decodeJson } from './codecs';
+import { MAX_INTENSITY, MIN_INTENSITY } from '../insights/constants';
+
+/** Every value `diary_entries.feeling_source` is allowed to hold. */
+const FEELING_SOURCES = ['unset', 'suggested', 'confirmed', 'overridden'];
 
 /**
  * FR-018 — refuse to run against a diary this backend cannot fully interpret.
@@ -11,7 +15,25 @@ import { decodeDate, decodeDateTime, decodeJson } from './codecs';
  */
 
 const REQUIRED: Record<string, Record<string, string>> = {
-  feelings: { key: 'VARCHAR(32)', label: 'VARCHAR(64)', valence: 'VARCHAR(16)' },
+  feeling_groups: {
+    key: 'VARCHAR(32)',
+    label: 'VARCHAR(64)',
+    valence: 'VARCHAR(16)',
+    sort_order: 'INTEGER',
+  },
+  feelings: {
+    key: 'VARCHAR(32)',
+    label: 'VARCHAR(64)',
+    valence: 'VARCHAR(16)',
+    group_key: 'VARCHAR(32)',
+    sort_order: 'INTEGER',
+  },
+  entry_feelings: {
+    entry_id: 'VARCHAR(36)',
+    feeling_key: 'VARCHAR(32)',
+    position: 'INTEGER',
+    intensity: 'INTEGER',
+  },
   guiding_questions: {
     key: 'VARCHAR(64)',
     category: 'VARCHAR(32)',
@@ -36,6 +58,7 @@ const REQUIRED: Record<string, Record<string, string>> = {
     feeling_key: 'VARCHAR(32)',
     feeling_source: 'VARCHAR(16)',
     version: 'INTEGER',
+    feeling_intensity: 'INTEGER',
   },
   guiding_question_answers: {
     id: 'VARCHAR(36)',
@@ -56,8 +79,36 @@ const REQUIRED: Record<string, Record<string, string>> = {
     direction: 'VARCHAR(16)',
     first_detected_at: 'DATETIME',
     last_updated_at: 'DATETIME',
+    kind: 'VARCHAR(16)',
+    lifetime_count: 'INTEGER',
+    status: 'VARCHAR(16)',
+    last_occurrence_date: 'DATE',
+    present_count: 'INTEGER',
+    present_total: 'INTEGER',
+    absent_count: 'INTEGER',
+    absent_total: 'INTEGER',
+    lift: 'REAL',
+    comparison_reason: 'VARCHAR(32)',
+    base_rate: 'REAL',
+    is_strong: 'BOOLEAN',
+    confounders: 'JSON',
   },
   pattern_entries: { pattern_id: 'VARCHAR(36)', entry_id: 'VARCHAR(36)' },
+  pattern_withdrawals: {
+    id: 'VARCHAR(36)',
+    pattern_key: 'VARCHAR(160)',
+    topic_id: 'VARCHAR(36)',
+    topic_name: 'VARCHAR(128)',
+    feeling_key: 'VARCHAR(32)',
+    kind: 'VARCHAR(16)',
+    previous_count: 'INTEGER',
+    new_count: 'INTEGER',
+    reason: 'VARCHAR(32)',
+    detail_text: 'VARCHAR(512)',
+    withdrawn_at: 'DATETIME',
+    superseded_at: 'DATETIME',
+  },
+  diary_meta: { key: 'VARCHAR(64)', value: 'TEXT' },
   inference_jobs: {
     id: 'VARCHAR(36)',
     kind: 'VARCHAR(32)',
@@ -77,8 +128,10 @@ export class IncompatibleDiaryError extends Error {
     super(
       `This diary cannot be fully interpreted, so the backend will not start (FR-018).\n` +
         problems.map((p) => `  - ${p}`).join('\n') +
-        `\n\nNothing was modified. If this is meant to be a fresh start, create a new diary ` +
-        `with \`npm run init-db\` — it will not overwrite an existing file.`,
+        `\n\nNothing was modified. If this diary predates the grouped feeling vocabulary, run ` +
+        `\`npm run migrate-db\` — it only adds reference data and never touches an entry. If this ` +
+        `is meant to be a fresh start, create a new diary with \`npm run init-db\` — it will not ` +
+        `overwrite an existing file.`,
     );
   }
 }
@@ -123,9 +176,17 @@ export function assertCompatible(db: DiaryDatabase): void {
 }
 
 function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
-  const feelings = db.prepare('SELECT "key", valence FROM feelings').all() as Array<{
+  const groupKeys = new Set(
+    (db.prepare('SELECT "key" FROM feeling_groups').all() as Array<{ key: string }>).map(
+      (row) => row.key,
+    ),
+  );
+  if (groupKeys.size === 0) problems.push('feeling_groups contains no reference rows');
+
+  const feelings = db.prepare('SELECT "key", valence, group_key FROM feelings').all() as Array<{
     key: string;
     valence: string;
+    group_key: string;
   }>;
   const feelingKeys = new Set(feelings.map((row) => row.key));
   if (feelings.length === 0) problems.push('feelings contains no reference rows');
@@ -133,13 +194,33 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
     if (!['positive', 'neutral', 'negative'].includes(row.valence)) {
       problems.push(`feelings contains an unsupported valence for key "${row.key}"`);
     }
+    // A feeling outside every group would be unreachable in both clients, which show the
+    // vocabulary group-first.
+    if (!groupKeys.has(row.group_key)) {
+      problems.push(`feelings key "${row.key}" belongs to unknown group "${row.group_key}"`);
+    }
   }
+
+  validateRows(
+    'entry_feelings',
+    db.prepare('SELECT entry_id AS id, feeling_key, position FROM entry_feelings').all() as Array<
+      Record<string, unknown>
+    >,
+    problems,
+    (row) => {
+      if (!feelingKeys.has(String(row.feeling_key))) throw new Error('unknown feeling key');
+      if (!Number.isInteger(Number(row.position)) || Number(row.position) < 0) {
+        throw new Error('invalid feeling position');
+      }
+    },
+  );
 
   validateRows(
     'diary_entries',
     db
       .prepare(
-        'SELECT id, created_at, updated_at, entry_date, mode, feeling_key, feeling_source, version FROM diary_entries',
+        `SELECT id, created_at, updated_at, entry_date, mode, feeling_key, feeling_source, version,
+                feeling_intensity FROM diary_entries`,
       )
       .all() as Array<Record<string, unknown>>,
     problems,
@@ -148,8 +229,18 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
       decodeDateTime(String(row.updated_at));
       decodeDate(String(row.entry_date));
       if (!['guided', 'freeform'].includes(String(row.mode))) throw new Error('unsupported mode');
-      if (!['unset', 'suggested', 'confirmed', 'overridden'].includes(String(row.feeling_source))) {
+      if (!FEELING_SOURCES.includes(String(row.feeling_source))) {
         throw new Error('unsupported feeling source');
+      }
+      if (row.feeling_intensity !== null && row.feeling_intensity !== undefined) {
+        const intensity = Number(row.feeling_intensity);
+        if (
+          !Number.isInteger(intensity) ||
+          intensity < MIN_INTENSITY ||
+          intensity > MAX_INTENSITY
+        ) {
+          throw new Error('invalid feeling intensity');
+        }
       }
       if (row.feeling_key !== null && !feelingKeys.has(String(row.feeling_key))) {
         throw new Error('unknown feeling key');
@@ -195,14 +286,23 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
     'patterns',
     db
       .prepare(
-        'SELECT id, feeling_key, occurrence_count, direction, first_detected_at, last_updated_at FROM patterns',
+        `SELECT id, feeling_key, occurrence_count, direction, first_detected_at, last_updated_at,
+                kind, status FROM patterns`,
       )
       .all() as Array<Record<string, unknown>>,
     problems,
     (row) => {
       if (!feelingKeys.has(String(row.feeling_key))) throw new Error('unknown feeling key');
-      if (!Number.isInteger(Number(row.occurrence_count)) || Number(row.occurrence_count) < 1) {
+      // Zero is valid and meaningful: a **historical** pattern is one whose windowed count has
+      // fallen to nothing while its lifetime evidence stands (I3-03/I3-05). Rejecting zero here
+      // would make the engine's own output unreadable to the next start-up.
+      if (!Number.isInteger(Number(row.occurrence_count)) || Number(row.occurrence_count) < 0) {
         throw new Error('invalid occurrence count');
+      }
+      if (!['forward', 'inverse'].includes(String(row.kind)))
+        throw new Error('invalid pattern kind');
+      if (!['active', 'historical'].includes(String(row.status))) {
+        throw new Error('invalid pattern status');
       }
       if (!['keep', 'change'].includes(String(row.direction))) throw new Error('invalid direction');
       decodeDateTime(String(row.first_detected_at));

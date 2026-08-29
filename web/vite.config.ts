@@ -17,6 +17,9 @@ const API_PATHS = [
   '/guiding-questions',
   '/insights',
   '/monthly-summary',
+  // The topic list and its alias editor (A4-04) are a top-level path for the same reason the
+  // others are: the API keeps its shape so the shipped Android client keeps working (FR-018).
+  '/topics',
   '/transcriptions',
   '/auth',
   '/login',

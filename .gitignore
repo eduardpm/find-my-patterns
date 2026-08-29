@@ -12,3 +12,9 @@ db-data/
 # Locally built speech-to-text runtime and downloaded model (large, reproducible artifacts)
 models/*.bin
 tools/whisper/
+
+# DB snapshots taken before migrations (personal diary data)
+data/diary.db.pre-*
+
+# Local tool state
+.freebuff/

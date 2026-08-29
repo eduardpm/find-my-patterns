@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!--
-  No diary content is ever stored on-device (FR-018: the backend on the user's own machine is
-  the only persistent store) — this app only backs up trivial local prefs (Settings-screen
-  host/port), so the default "back up everything in app-private storage" behavior is fine as-is.
--->
-<full-backup-content>
-</full-backup-content>

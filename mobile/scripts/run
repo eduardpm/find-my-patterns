@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#
+# Runs the app.
+#
+#   ./scripts/run                  use the connected device
+#   ./scripts/run emulator-5554    run on a named device (needed if several are up)
+#   ./scripts/run --release        pass any other flag straight to flutter run
+#   ./scripts/run --devices        just list what is available
+#
+# The backend address is set inside the app, on the Settings screen. From the
+# Android emulator, this machine is 10.0.2.2 — not localhost.
+usage() { awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; }
+
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+if [ "${1:-}" = "--devices" ]; then
+  exec flutter devices
+fi
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  usage
+  exit 0
+fi
+
+# Apple targets need a full Xcode, not just the Command Line Tools. Checking up
+# front turns a raw ProcessException from deep inside the build into something
+# that says what to do.
+needs_xcode() {
+  case "$1" in
+    macos|ios|iphone*|ipad*|*-*-*-*-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+check_xcode() {
+  local developer_dir
+  developer_dir=$(xcode-select -p 2>/dev/null || true)
+  if [ "${developer_dir}" = "${developer_dir%Xcode.app*}" ]; then
+    cat >&2 <<'MESSAGE'
+This target needs a full Xcode install; only the Command Line Tools are present.
+
+  1. Install Xcode from the App Store (or https://developer.apple.com/xcode/)
+  2. sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+  3. sudo xcodebuild -runFirstLaunch
+  4. sudo gem install cocoapods        # plugins need it on macOS and iOS
+
+Until then, use an Android device:
+
+  ./scripts/run --devices
+MESSAGE
+    exit 1
+  fi
+}
+
+# A bare first argument that is not a flag is taken as the device id.
+device_id=""
+if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
+  device_id="$1"
+  shift
+fi
+
+if [ -z "$device_id" ]; then
+  # `grep -c` exits 1 when it counts nothing, which `set -e` would treat as
+  # fatal, hence the `|| true`.
+  count=$(flutter devices --machine 2>/dev/null | grep -c '"id"' || true)
+  if [ "$count" -eq 0 ]; then
+    echo "No devices found. Start one, then try again:" >&2
+    echo "  open -a Simulator                    # iOS" >&2
+    echo "  flutter emulators --launch <id>      # Android" >&2
+    exit 1
+  fi
+  # ${@+"$@"} rather than "$@": bash 3.2, which macOS ships, treats an empty
+  # "$@" as an unbound variable under `set -u`.
+  exec flutter run ${@+"$@"}
+fi
+
+if needs_xcode "$device_id"; then check_xcode; fi
+
+exec flutter run -d "$device_id" ${@+"$@"}

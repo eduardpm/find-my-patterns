@@ -13,7 +13,9 @@ import {
 import { EntriesService } from './entries/entries.service';
 import { GuidedDraftsController } from './entries/guided-drafts.controller';
 import { InsightsController } from './insights/insights.controller';
+import { EchoService } from './insights/echo.service';
 import { PatternsService } from './insights/patterns.service';
+import { WhenInsightsService } from './insights/when.service';
 import {
   ENTRY_INFERENCE,
   ImmediateTestInference,
@@ -24,6 +26,7 @@ import {
 } from './inference/inference';
 import { MonthlySummaryController } from './monthly-summary/monthly-summary.controller';
 import { MonthlySummaryService } from './monthly-summary/monthly-summary.service';
+import { TopicsController } from './topics/topics.controller';
 import { TopicsService } from './topics/topics.service';
 import { HealthController } from './health.controller';
 import { TranscriptionController } from './transcription/transcription.controller';
@@ -46,6 +49,7 @@ export class AppModule {
         FeelingsController,
         GuidingQuestionsController,
         InsightsController,
+        TopicsController,
         MonthlySummaryController,
         TranscriptionController,
         GuidedDraftsController,
@@ -72,6 +76,8 @@ export class AppModule {
         EntriesService,
         TopicsService,
         PatternsService,
+        WhenInsightsService,
+        EchoService,
         MonthlySummaryService,
         TranscriptionService,
         TranscriptionJobsService,

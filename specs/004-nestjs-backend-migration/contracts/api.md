@@ -19,12 +19,12 @@ patched in step with the backend, so anything it parses is effectively immutable
 
 | Method | Path | Success | Notes |
 |---|---|---|---|
-| GET | `/feelings` | 200 | 8 seeded feelings, seed order, `key`/`label`/`valence` only |
+| GET | `/feelings` | 200 | the vocabulary twice over: `groups` (nested) and `feelings` (flat), both in `sort_order` |
 | GET | `/guiding-questions` | 200 | full library including `trigger_keywords` |
 | POST | `/entries` | **201** | returns `suggested_feeling`, `version: 1` |
 | GET | `/entries?date=YYYY-MM-DD` | 200 | ordered by `created_at` |
 | GET | `/entries/{id}` | 200 / 404 | |
-| PATCH | `/entries/{id}` | 200 / 404 / **409** / **422** | `version` required in body |
+| PATCH | `/entries/{id}` | 200 / 404 / **409** / **422** | `version` required in body; `feeling_keys` (or legacy `feeling_key`) sets the whole set |
 | DELETE | `/entries/{id}?version=N` | **204** / 404 / **409** / **422** | `version` required as query param |
 | GET | `/insights` | 200 | recomputes patterns before reading |
 | GET | `/monthly-summary?month=YYYY-MM` | 200 | |
@@ -102,16 +102,32 @@ compare against. Both clients treat this as its own case.
 
 ## Response field shapes
 
-**Entry object** — every field present on every entry response, `suggested_feeling` only non-null on
-create:
+**Entry object** — every field present on every entry response:
 
 ```json
 { "id", "created_at", "entry_date", "mode", "raw_text",
-  "feeling_key", "feeling_source", "suggested_feeling", "version" }
+  "feeling_key", "feeling_keys", "feeling_source",
+  "suggested_feeling", "suggested_feelings", "analysis_pending", "version" }
 ```
 
 `feeling_key` and `suggested_feeling` are nullable; the keys are always present. Omitting a null key
 rather than emitting `null` is a real difference to a statically-typed Kotlin parser.
+
+**An entry carries a set of feelings, not one.** `feeling_keys` is that set in the order it was
+chosen, capped at **4**. `feeling_key` is `feeling_keys[0]` — the *primary* feeling, which is what
+the calendar dot, the entry card's rail and every `patterns` row are keyed on. It is a
+denormalisation, written only alongside the set; nothing may set one without the other. Both fields
+stay on the wire so a client built before the vocabulary grew keeps working.
+
+`suggested_feelings` is the analyser's whole proposal, strongest first; `suggested_feeling` is its
+first element. Both are served on **every** entry read, not only on create, and are non-empty/
+non-null **only when the analyser's proposal differs from the entry's current `feeling_keys`** —
+there is nothing to propose when the two already agree. Order does not count as a difference.
+
+`analysis_pending` is `true` while an `entry_analysis` job for that entry is queued or running.
+Editing an entry's `raw_text` drops its `entry_topics` links and re-queues analysis, so a client that
+has just saved an edit can poll the entry until `analysis_pending` turns `false` and then offer
+`suggested_feeling` if one appeared. A feeling-only edit does not re-queue anything.
 
 **Insights** — `{ "patterns": [...], "insufficient_data": bool }`. When no pattern qualifies,
 `patterns` is `[]` **and** `insufficient_data` is `true`; the web client branches on the flag, not on
@@ -119,9 +135,24 @@ array length. Patterns are ordered by `last_updated_at` descending, **with `id` 
 without it, patterns written in the same recompute come back in arbitrary order and the two clients
 display different orders (fixed in feature 003).
 
+**Feeling vocabulary** — `GET /feelings` serves the same words twice:
+
+```json
+{ "groups": [ { "key", "label", "valence", "feelings": [ ... ] } ],
+  "feelings": [ { "key", "label", "valence", "group_key" } ] }
+```
+
+`groups` is what both clients render — a short row of group chips that open onto that group's
+feelings — and `feelings` is what a stored `feeling_key` is looked up in. Serving only the nested
+shape would make every client flatten it for itself; serving only the flat one would make every
+client rebuild the grouping. **Every feeling in a group carries that group's `valence`**, which is
+what lets a client tint a whole group with one accent without asserting a rule of its own. Emoji and
+accent colours are still absent: presentation belongs to each client (Principle VII).
+
 **Monthly summary** — `days` contains an entry for **every day of the month**, including days with no
 entries (`"feelings": []`), not just days with data. `feelings` within a day is the sorted distinct
-set.
+set. `totals_by_feeling` counts **entry–feeling pairs**: an entry tagged with three feelings adds one
+to each of their totals, so the totals no longer sum to the entry count.
 
 ## Headers
 
