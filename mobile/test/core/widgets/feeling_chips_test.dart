@@ -1,4 +1,5 @@
 import 'package:find_my_patterns/core/diary/feeling.dart';
+import 'package:find_my_patterns/core/theme/journal_metrics.dart';
 import 'package:find_my_patterns/core/widgets/feeling_chips.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -633,4 +634,126 @@ void main() {
       );
     },
   );
+
+  group(
+    'FeelingChips — group chip layout wraps at 360dp, not one per row '
+    '(#117)',
+    () {
+      // #117: `_GroupChip`'s pill had the identical `Container(alignment:
+      // Alignment.center)` defect #111 fixed on `FeelingChip` in this same
+      // file -- expanding to the full bound of a bounded axis rather than
+      // shrink-wrapping, so every group chip claimed a whole `Wrap` row on
+      // its own. As with #111, `find.byType(Wrap)` passed throughout (#11,
+      // #15, #111 all left this one in place), so these compare rendered
+      // row position and pill width instead.
+      testWidgets(
+        'at least two group chips share a row at 360dp',
+        (tester) async {
+          tester.view.physicalSize = const Size(360, 900);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          await tester.pumpWidget(const _Harness());
+
+          final upliftedTop = tester.getTopLeft(find.text('Uplifted'));
+          final steadyTop = tester.getTopLeft(find.text('Steady'));
+          expect(
+            steadyTop.dy,
+            upliftedTop.dy,
+            reason:
+                'Uplifted and Steady are both short group labels and must '
+                'share the first Wrap row at 360dp; one full-width chip '
+                'per row (the #117 defect) would put Steady on a row of '
+                'its own below',
+          );
+          expect(steadyTop.dx, greaterThan(upliftedTop.dx));
+        },
+      );
+
+      testWidgets(
+        "a group chip's rendered width is well under a 360dp line",
+        (tester) async {
+          tester.view.physicalSize = const Size(360, 900);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          await tester.pumpWidget(const _Harness());
+
+          final pillWidth = tester.getSize(_groupChipPill('Uplifted')).width;
+          expect(
+            pillWidth,
+            lessThan(180),
+            reason:
+                'a short group label plus its dot should not need anywhere '
+                'near half a 360dp line; $pillWidth suggests the chip is '
+                'still expanding to fill its container',
+          );
+        },
+      );
+
+      testWidgets(
+        'an active group chip (count badge showing) keeps its 44pt-plus tap '
+        'target without expanding past its own content width',
+        (tester) async {
+          tester.view.physicalSize = const Size(360, 900);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          await tester.pumpWidget(_Harness(initial: const [happy, excited]));
+
+          final pill = _groupChipPill('Uplifted');
+          final pillSize = tester.getSize(pill);
+          // >= JournalSpacing.x7 (48dp): the same tap-target floor #111 kept
+          // for FeelingChip, satisfying the platform's >=44pt minimum with
+          // room to spare.
+          expect(pillSize.height, greaterThanOrEqualTo(JournalSpacing.x7));
+          expect(pillSize.width, greaterThanOrEqualTo(JournalSpacing.x7));
+          // And still nowhere near the 360dp line, even with the count
+          // badge eating into the label's line share -- the minimum-box
+          // centring must not have brought back the full-width expansion
+          // it replaces.
+          expect(pillSize.width, lessThan(220));
+        },
+      );
+
+      testWidgets(
+        'no overflow at 360dp and 2x text scale with a count badge visible',
+        (tester) async {
+          tester.view.physicalSize = const Size(360, 1200);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          // The count badge eats horizontal space the label would
+          // otherwise have, so this exercises the worst case: 2x text
+          // scale (the same accessibility ceiling #111's own overflow
+          // check used) with every group active and its badge showing.
+          await tester.pumpWidget(
+            MediaQuery(
+              data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+              child: const _Harness(
+                initial: [happy, excited, grateful, calm, overwhelmed, sad],
+              ),
+            ),
+          );
+
+          expect(tester.takeException(), isNull);
+        },
+      );
+    },
+  );
 }
+
+/// A group chip's own pill -- the [Container] that carries the border,
+/// tint and shape, as a descendant of the [InkWell] for the group named
+/// [label]. Not the only [Container] in that subtree -- `FeelingDot` and
+/// the count badge each build one too -- so this picks the one with a
+/// [BorderRadius] set, the way `feeling_chip_test.dart`'s own `_pillFinder`
+/// picks `FeelingChip`'s pill out of the same kind of subtree.
+Finder _groupChipPill(String label) => find.descendant(
+  of: find.ancestor(of: find.text(label), matching: find.byType(InkWell)),
+  matching: find.byWidgetPredicate(
+    (widget) =>
+        widget is Container &&
+        (widget.decoration as BoxDecoration?)?.borderRadius != null,
+  ),
+);

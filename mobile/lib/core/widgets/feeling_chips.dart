@@ -559,6 +559,48 @@ class _GroupChip extends StatelessWidget {
     final theme = Theme.of(context);
     final accent = group.accent(journal);
     final active = chosenCount > 0;
+
+    final content = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FeelingDot(color: accent),
+        const SizedBox(width: JournalSpacing.x2),
+        // `Flexible` rather than a bare `Text`, for the same reason as
+        // `FeelingChip` (#111): two group chips sharing a `Wrap` row can be
+        // offered less width than a label needs at a high text scale, and
+        // the count badge below eats into that width further whenever the
+        // group is active. Group labels are short ("Uplifted" is the
+        // longest), so this is a defensive match with `FeelingChip` rather
+        // than a fix for an observed overflow here.
+        Flexible(
+          child: Text(
+            group.label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontWeight: active ? FontWeight.bold : FontWeight.w500,
+            ),
+          ),
+        ),
+        if (active) ...[
+          const SizedBox(width: JournalSpacing.x2),
+          Container(
+            width: 20,
+            height: 20,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: accent),
+            // Already spoken as the chip's own `value`; left in the tree it
+            // would be read a second time.
+            child: Text(
+              '$chosenCount',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.surface,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+
     return Semantics(
       container: true,
       button: true,
@@ -584,7 +626,22 @@ class _GroupChip extends StatelessWidget {
                 horizontal: JournalSpacing.x4,
                 vertical: JournalSpacing.x2,
               ),
-              alignment: Alignment.center,
+              // No `alignment` here -- this is the same defect #111 fixed on
+              // `FeelingChip`, and this `Container` sits inside the very
+              // same kind of `Wrap` (`_GroupChips`, above). A non-null
+              // `alignment` inserts an `Align` that expands to the full
+              // ambient bound on any axis with a finite max rather than
+              // shrink-wrapping its child, so every group chip claimed a
+              // whole row and the `Wrap` never got a second chip to place
+              // beside it. Centring the content inside the `minWidth`/
+              // `minHeight` tap target below is instead done with an inner
+              // `Center` pinned to `widthFactor`/`heightFactor: 1`, which
+              // shrink-wraps regardless of the ambient constraints'
+              // boundedness and only grows past the content's natural size
+              // to satisfy that minimum -- never to fill whatever width the
+              // `Wrap` happens to offer. See `FeelingChip.build`'s own
+              // comment on this same `Container` field for the full
+              // `RenderPositionedBox` mechanics.
               decoration: BoxDecoration(
                 color: active
                     ? accent.withValues(alpha: 0.12)
@@ -595,40 +652,7 @@ class _GroupChip extends StatelessWidget {
                   width: active ? 2 : 1,
                 ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  FeelingDot(color: accent),
-                  const SizedBox(width: JournalSpacing.x2),
-                  Text(
-                    group.label,
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      fontWeight: active ? FontWeight.bold : FontWeight.w500,
-                    ),
-                  ),
-                  if (active) ...[
-                    const SizedBox(width: JournalSpacing.x2),
-                    Container(
-                      width: 20,
-                      height: 20,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: accent,
-                      ),
-                      // Already spoken as the chip's own `value`; left in
-                      // the tree it would be read a second time.
-                      child: Text(
-                        '$chosenCount',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.surface,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+              child: Center(widthFactor: 1, heightFactor: 1, child: content),
             ),
           ),
         ),
