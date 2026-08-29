@@ -8,11 +8,13 @@
  * as `insight-scenarios.test.ts` does for the same reason.
  *
  * The guided-question *prompt* text is itself part of an entry's `raw_text` (createEntry composes
- * "prompt\nanswer" blocks), and some prompts — `mind_body`, `small_influences`, `morning_start` —
- * contain curated keywords in their own wording (e.g. mind_body's prompt says "hunger" and "pain").
- * That would make every guided entry using those questions "yield" a topic regardless of what was
- * actually answered. `general_feeling` and `evening_close` are used here because their prompt text
- * contains no curated keyword, which keeps the scenario a fact about the answers, not the prompts.
+ * "prompt\nanswer" blocks), and some prompts — `small_influences` ("sleep") and `morning_start` —
+ * contain curated keywords in their own wording. That would make every guided entry using those
+ * questions "yield" a topic regardless of what was actually answered. `general_feeling` and
+ * `evening_close` are used here because their prompt text contains no curated keyword, which keeps
+ * the scenario a fact about the answers, not the prompts. (`mind_body`'s prompt used to say
+ * "hunger" and "pain" too, before its copy was shortened by #14 — it is curated-keyword-free now,
+ * but is still left out of this scenario since nothing here depends on it.)
  */
 
 import Database from 'better-sqlite3';
@@ -23,9 +25,7 @@ import { bootOnFresh, teardown, type Harness } from '../helpers/app';
 let h: Harness;
 const server = () => h.app.getHttpServer();
 
-const GENERAL_FEELING_PROMPT =
-  'Since your last entry—or in the last few hours—what happened? What were you doing, where ' +
-  'were you, and who was around?';
+const GENERAL_FEELING_PROMPT = 'What happened since your last entry — and who was around?';
 const EVENING_CLOSE_PROMPT =
   'How is the day ending? Think what changed since this afternoon, what you did to wind down, ' +
   'and what you are carrying into tonight.';

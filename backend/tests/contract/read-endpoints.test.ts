@@ -103,10 +103,11 @@ describe('GET /feelings', () => {
 describe('GET /guiding-questions', () => {
   it('serves the library with decoded trigger keywords', async () => {
     const res = await request(server()).get('/guiding-questions').expect(200);
-    // A6-01/A6-02: the library grew by three optional time-slot prompts and the questions that
-    // were already there are unchanged — same keys, same wording, same mandatory flags. Entries
-    // already store a snapshot of the wording they were answered under, so rewording one of these
-    // would make those snapshots misquote the user.
+    // A6-01/A6-02: the library grew by three optional time-slot prompts, and the three mandatory
+    // questions that were already there keep the same keys and mandatory flags — only their
+    // wording was shortened (#14). Entries already store a snapshot of the wording they were
+    // answered under, so that snapshot (not this endpoint) is what has to keep quoting the user
+    // accurately; this endpoint is free to serve whatever the current copy is.
     expect(res.body.questions).toHaveLength(7);
     const core = res.body.questions.filter((q: { is_mandatory: boolean }) => q.is_mandatory);
     expect(core.map((q: { key: string }) => q.key)).toEqual([

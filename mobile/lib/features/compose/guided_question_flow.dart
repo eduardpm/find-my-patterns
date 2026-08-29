@@ -20,6 +20,20 @@ import 'voice_answer_recorder.dart';
 /// controlled component: [answers] and [stepIndex] work the same way a
 /// [TextField]'s `controller` does, and this widget only ever proposes a
 /// next value through [onAnswerChange]/[onStepChange].
+///
+/// Every step's answer field autofocuses (#14) — including the first, so
+/// the composer opens with the keyboard already up — because each step is a
+/// freshly-keyed [_QuestionStep] rather than one field being re-purposed,
+/// so `autofocus: true` fires again on every `Next`/`Skip`/`Back`.
+///
+/// Every step also carries a "Skip" action (#14): unlike `Next`/`Save
+/// entry`, it is never gated on the current field being answered — it
+/// explicitly clears whatever is in it and moves on, so "skipped" and
+/// "answered blank" are the same on-wire state. The one thing it refuses is
+/// leaving the whole flow with nothing to save: skipping the last question
+/// is disabled exactly when every other one is blank too, the same
+/// condition that disables `Save entry` and shows the "Write at least one
+/// answer." hint.
 class GuidedQuestionFlow extends StatefulWidget {
   /// Builds the guided flow over [library], reading answers from [answers]
   /// and the current position from [stepIndex].
@@ -82,6 +96,7 @@ class _GuidedQuestionFlowState extends State<GuidedQuestionFlow> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final mandatoryQuestions = [
       for (final question in widget.library)
         if (question.isMandatory) question,
@@ -105,11 +120,55 @@ class _GuidedQuestionFlowState extends State<GuidedQuestionFlow> {
     final answerKey = question?.key ?? 'fallback';
     final answerText = widget.answers[answerKey] ?? '';
     final isLastStep = currentStep == totalSteps - 1;
+
+    // Whether *some* question in the flow -- not necessarily the one on
+    // screen -- has a non-blank answer. Drives `Save entry` on the last
+    // step (#14): a blank current field no longer disqualifies it on its
+    // own, since Skip exists precisely to leave one blank.
+    final hasAnyAnswer = questions.any(
+      (q) => (widget.answers[q.key] ?? '').trim().isNotEmpty,
+    );
+    // The same, excluding the question on screen -- what would be left if
+    // Skip discarded it right now.
+    final hasOtherAnswer = questions.any(
+      (q) =>
+          q.key != answerKey && (widget.answers[q.key] ?? '').trim().isNotEmpty,
+    );
+
     final canAdvance =
         !_voiceBusy &&
-        (question == null ||
-            !question.isMandatory ||
-            answerText.trim().isNotEmpty);
+        (isLastStep
+            ? hasAnyAnswer
+            : (question == null ||
+                  !question.isMandatory ||
+                  answerText.trim().isNotEmpty));
+
+    // Skip is never blocked by mandatory-ness (#14) -- only by a recording
+    // in progress, and by the same floor `Save entry` is held to: skipping
+    // the last question must never be the tap that empties the whole flow.
+    final canSkip =
+        question != null && !_voiceBusy && (!isLastStep || hasOtherAnswer);
+
+    void finishOrAdvance(Map<String, String> answersForSubmit) {
+      if (isLastStep) {
+        widget.onComplete([
+          for (final q in questions)
+            if ((answersForSubmit[q.key] ?? '').trim().isNotEmpty)
+              GuidingQuestionAnswer(q.key, answersForSubmit[q.key]!.trim()),
+        ]);
+      } else {
+        widget.onStepChange(currentStep + 1);
+      }
+    }
+
+    // Explicitly clears this question's answer before advancing/finishing,
+    // rather than trusting the next build to see it cleared -- `onComplete`
+    // reads its list from the map handed to [finishOrAdvance] right here,
+    // not from [widget.answers] after a rebuild that has not happened yet.
+    void skip() {
+      widget.onAnswerChange(answerKey, '');
+      finishOrAdvance({...widget.answers, answerKey: ''});
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -127,6 +186,29 @@ class _GuidedQuestionFlowState extends State<GuidedQuestionFlow> {
             transcriptionDelay: widget.transcriptionDelay,
           ),
         ),
+        if (question != null) ...[
+          const SizedBox(height: JournalSpacing.x1),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: canSkip ? skip : null,
+              style: TextButton.styleFrom(
+                minimumSize: const Size(44, 44),
+              ),
+              child: const Text('Skip'),
+            ),
+          ),
+        ],
+        if (isLastStep && !hasAnyAnswer) ...[
+          Text(
+            'Write at least one answer.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: JournalSpacing.x2),
+        ],
         const SizedBox(height: JournalSpacing.x4),
         // The two actions are not peers: one advances the flow, the other
         // abandons it. Separated rather than sat side by side, so "write
@@ -148,22 +230,7 @@ class _GuidedQuestionFlowState extends State<GuidedQuestionFlow> {
               const SizedBox(width: 1),
             PillButton(
               onPressed: canAdvance
-                  ? () {
-                      if (isLastStep) {
-                        widget.onComplete([
-                          for (final question in questions)
-                            if ((widget.answers[question.key] ?? '')
-                                .trim()
-                                .isNotEmpty)
-                              GuidingQuestionAnswer(
-                                question.key,
-                                widget.answers[question.key]!.trim(),
-                              ),
-                        ]);
-                      } else {
-                        widget.onStepChange(currentStep + 1);
-                      }
-                    }
+                  ? () => finishOrAdvance(widget.answers)
                   : null,
               child: Text(isLastStep ? 'Save entry' : 'Next'),
             ),
@@ -236,6 +303,12 @@ class _QuestionStepState extends State<_QuestionStep> {
         const SizedBox(height: JournalSpacing.x5),
         TextFormField(
           controller: _controller,
+          // This whole widget is freshly built (a new key, a new state) on
+          // every step change (#14) -- see this file's class-level doc
+          // comment -- which is what makes `autofocus: true` fire again on
+          // every `Next`/`Skip`/`Back` instead of only on the very first
+          // step.
+          autofocus: true,
           onChanged: widget.onValueChange,
           minLines: 4,
           maxLines: null,

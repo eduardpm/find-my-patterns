@@ -234,6 +234,24 @@ void main() {
         expect(find.text('Writing about Wednesday, August 26'), findsOneWidget);
       },
     );
+
+    testWidgets(
+      'the guided answer field still autofocuses on the backdated path '
+      '(#14)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestable(
+            replies: bootReplies(),
+            targetDate: const CalendarDate(2026, 8, 26),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Writing about Wednesday, August 26'), findsOneWidget);
+        expect(find.text("What's on your mind?"), findsOneWidget);
+        expect(tester.testTextInput.hasAnyClients, isTrue);
+      },
+    );
   });
 
   group('switching to freeform', () {
@@ -912,6 +930,137 @@ void main() {
           find.textContaining('Continuing your draft from'),
           findsOneWidget,
         );
+      },
+    );
+
+    testWidgets(
+      'a skipped question round-trips through a killed and reopened '
+      'composer without becoming an answer that blocks Save (#14)',
+      (tester) async {
+        // A two-mandatory-question library, mirroring the real backend's
+        // guided flow -- unlike `bootReplies()`'s single-mandatory-prompt
+        // fixture, this is what it takes to have one question skipped and
+        // a second one still open to answer and save from.
+        final questions = FakeReply(
+          200,
+          body: {
+            'questions': [
+              {
+                'key': 'general',
+                'category': 'general',
+                'prompt_text': "What's on your mind?",
+                'trigger_keywords': <String>[],
+                'is_mandatory': true,
+              },
+              {
+                'key': 'mind_body',
+                'category': 'mind_body',
+                'prompt_text': 'How did you feel physically?',
+                'trigger_keywords': <String>[],
+                'is_mandatory': true,
+              },
+            ],
+          },
+        );
+        final harness = Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter([
+            FakeReply(200, body: feelingsCatalogJson()),
+            questions,
+            FakeReply(200, body: insightsJson()),
+          ]),
+        );
+        Widget composer() => harness.scope(
+          MaterialApp(
+            home: EntryComposerScreen(
+              recorder: DiaryAudioRecorder(
+                plugin: FakeAudioRecorderPlugin(),
+                cacheDirectory: () async => Directory.systemTemp,
+              ),
+              transcriptionDelay: (_) async {},
+            ),
+          ),
+        );
+
+        await tester.pumpWidget(composer());
+        await tester.pumpAndSettle();
+
+        // Step 1 ('general'): skip it, with nothing typed.
+        expect(find.text("What's on your mind?"), findsOneWidget);
+        await tester.tap(find.widgetWithText(TextButton, 'Skip'));
+        await tester.pump();
+
+        // Step 2 ('mind_body'), the last step: answer it for real.
+        expect(find.text('How did you feel physically?'), findsOneWidget);
+        await tester.enterText(find.byType(TextFormField), 'Sore feet.');
+        await tester.pump();
+        // Lets the (unstubbed, default-duration) debounced autosave land.
+        await tester.pump(const Duration(milliseconds: 600));
+
+        final savedDraft = await harness.draftStore.load();
+        expect(savedDraft, isNotNull);
+        expect(savedDraft!.guidedStepIndex, 1);
+        // The skipped question stored no answer -- present as an empty
+        // string (explicitly cleared) rather than a real one.
+        expect(savedDraft.guidedAnswers['general'], '');
+        expect(savedDraft.guidedAnswers['mind_body'], 'Sore feet.');
+
+        // Tears the first composer down completely -- see the comment on
+        // the equivalent assertion in the test above for why this is
+        // needed.
+        await tester.pumpWidget(const SizedBox());
+
+        // "Reopen": a fresh composer instance, seeded with the draft the
+        // first one's autosave wrote, standing in for the app having been
+        // force-stopped and relaunched.
+        final reopenHarness = Harness(
+          settings: const AppSettings(
+            backend: BackendAddress(host: '10.0.2.2'),
+          ),
+          adapter: FakeHttpAdapter([
+            FakeReply(200, body: feelingsCatalogJson()),
+            questions,
+            FakeReply(200, body: insightsJson()),
+            FakeReply(201, body: entryJson()),
+          ]),
+          initialDraft: savedDraft,
+        );
+        await tester.pumpWidget(
+          reopenHarness.scope(
+            MaterialApp(
+              home: EntryComposerScreen(
+                recorder: DiaryAudioRecorder(
+                  plugin: FakeAudioRecorderPlugin(),
+                  cacheDirectory: () async => Directory.systemTemp,
+                ),
+                transcriptionDelay: (_) async {},
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Restored onto the last step, with the skipped question's field
+        // blank and Save already enabled off the one real answer -- the
+        // empty stored answer never counts as an answer that blocks Save.
+        expect(find.text('Sore feet.'), findsOneWidget);
+        expect(find.textContaining('Continuing your draft'), findsOneWidget);
+        final saveButton = tester.widget<ElevatedButton>(
+          find.widgetWithText(ElevatedButton, 'Save entry'),
+        );
+        expect(saveButton.onPressed, isNotNull);
+
+        await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('How did that feel?'), findsOneWidget);
+        final sentBody =
+            reopenHarness.adapter.requests.last.data as Map<String, Object?>;
+        expect(sentBody['guided_answers'], [
+          {'question_key': 'mind_body', 'answer_text': 'Sore feet.'},
+        ]);
       },
     );
 

@@ -37,6 +37,27 @@ const sleep = GuidingQuestion(
   false,
 );
 
+// Three all-mandatory questions, mirroring the real backend's three-question guided flow
+// (`backend/src/db/seed.ts`) -- unlike [work]/[sleep] above, none carries a trigger keyword, so
+// [matchingOptionalQuestions] never adds or drops a step regardless of what is typed or skipped.
+// That is what makes this trio the right fixture for the Skip tests below: a skip on
+// [mindBody] must never remove [smallInfluences] from the flow the way clearing an optional
+// question's trigger word would.
+const mindBody = GuidingQuestion(
+  'mind_body',
+  QuestionCategory.mindBody,
+  'How did you feel physically?',
+  [],
+  true,
+);
+const smallInfluences = GuidingQuestion(
+  'small_influences',
+  QuestionCategory.smallInfluences,
+  'Anything small that influenced you?',
+  [],
+  true,
+);
+
 /// A controlled-component test harness, mirroring the real composer's
 /// ownership of the answers and step index: this widget owns nothing of its
 /// own, so a test drives it the way the real controller would.
@@ -354,6 +375,173 @@ void main() {
       await tester.pumpWidget(const _Harness(library: []));
       expect(find.text("What's been happening?"), findsOneWidget);
       expectStepLabel(tester, 'Step 1 of 1');
+    });
+  });
+
+  group('autofocus (#14)', () {
+    // `tester.testTextInput.hasAnyClients` is true exactly while a text
+    // field holds focus *and* the platform keyboard connection it opens is
+    // live -- the same signal `#14`'s "keyboard is up, cursor in the field"
+    // acceptance criterion is about, and a more reliable read of that than
+    // digging out `TextFormField`'s internal `FocusNode` (it does not
+    // expose one as a field the way `TextField` does).
+    testWidgets('the answer field is focused as soon as the first step '
+        'shows', (tester) async {
+      await tester.pumpWidget(const _Harness());
+      await tester.pump();
+
+      expect(tester.testTextInput.hasAnyClients, isTrue);
+    });
+
+    testWidgets('the next step\'s answer field is focused after Next', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _Harness(
+          library: const [general, mindBody],
+          initialAnswers: const {'general': 'Feeling okay.'},
+        ),
+      );
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Next'));
+      await tester.pump();
+
+      expect(find.text('How did you feel physically?'), findsOneWidget);
+      expect(tester.testTextInput.hasAnyClients, isTrue);
+    });
+
+    testWidgets('the previous step\'s answer field is focused after Back', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _Harness(
+          library: const [general, mindBody],
+          initialAnswers: const {'general': 'Feeling okay.'},
+          initialStep: 1,
+        ),
+      );
+      await tester.tap(find.text('Back'));
+      await tester.pump();
+
+      expect(find.text("What's on your mind?"), findsOneWidget);
+      expect(tester.testTextInput.hasAnyClients, isTrue);
+    });
+  });
+
+  group('skip (#14)', () {
+    testWidgets('shows a Skip button at least 44pt tall on every step', (
+      tester,
+    ) async {
+      await tester.pumpWidget(const _Harness());
+
+      final skipFinder = find.widgetWithText(TextButton, 'Skip');
+      expect(skipFinder, findsOneWidget);
+      expect(tester.getSize(skipFinder).height, greaterThanOrEqualTo(44));
+    });
+
+    testWidgets('Skip advances past a mandatory question with nothing '
+        'typed', (tester) async {
+      await tester.pumpWidget(
+        const _Harness(library: [general, mindBody, smallInfluences]),
+      );
+
+      await tester.tap(find.widgetWithText(TextButton, 'Skip'));
+      await tester.pump();
+
+      expect(find.text('How did you feel physically?'), findsOneWidget);
+      expectStepLabel(tester, 'Step 2 of 3');
+    });
+
+    testWidgets('a skipped question stores no answer in the submission', (
+      tester,
+    ) async {
+      List<GuidingQuestionAnswer>? submitted;
+      await tester.pumpWidget(
+        _Harness(
+          library: const [general, mindBody, smallInfluences],
+          onComplete: (answers) => submitted = answers,
+        ),
+      );
+
+      // Skip the first two questions, then answer only the last one.
+      await tester.tap(find.widgetWithText(TextButton, 'Skip'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(TextButton, 'Skip'));
+      await tester.pump();
+      await tester.enterText(
+        find.byType(TextFormField),
+        'Cold snap, bad sleep.',
+      );
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+
+      expectAnswers(submitted, [('small_influences', 'Cold snap, bad sleep.')]);
+    });
+
+    testWidgets('typing an answer and then skipping the same question '
+        'discards it', (tester) async {
+      List<GuidingQuestionAnswer>? submitted;
+      await tester.pumpWidget(
+        _Harness(
+          library: const [general, mindBody],
+          initialAnswers: const {'general': 'Never mind, actually'},
+          onComplete: (answers) => submitted = answers,
+        ),
+      );
+
+      // Skip is never blocked by having typed something -- it always
+      // discards the current field and moves on.
+      await tester.tap(find.widgetWithText(TextButton, 'Skip'));
+      await tester.pump();
+      await tester.enterText(find.byType(TextFormField), 'Tense shoulders.');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+
+      expectAnswers(submitted, [('mind_body', 'Tense shoulders.')]);
+    });
+
+    testWidgets('skipping every question leaves Save disabled with a hint, '
+        'and disables Skip on the last step too', (tester) async {
+      await tester.pumpWidget(
+        const _Harness(library: [general, mindBody, smallInfluences]),
+      );
+
+      await tester.tap(find.widgetWithText(TextButton, 'Skip'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(TextButton, 'Skip'));
+      await tester.pump();
+
+      expectStepLabel(tester, 'Step 3 of 3');
+      final saveButton = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Save entry'),
+      );
+      expect(saveButton.onPressed, isNull);
+      expect(find.text('Write at least one answer.'), findsOneWidget);
+
+      final skipButton = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, 'Skip'),
+      );
+      expect(skipButton.onPressed, isNull);
+    });
+
+    testWidgets('Skip on the last step is enabled once an earlier question '
+        'was answered', (tester) async {
+      await tester.pumpWidget(
+        _Harness(
+          library: const [general, mindBody],
+          initialAnswers: const {'general': 'Feeling okay.'},
+          initialStep: 1,
+        ),
+      );
+
+      final skipButton = tester.widget<TextButton>(
+        find.widgetWithText(TextButton, 'Skip'),
+      );
+      expect(skipButton.onPressed, isNotNull);
+
+      final saveButton = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Save entry'),
+      );
+      expect(saveButton.onPressed, isNotNull);
     });
   });
 }
