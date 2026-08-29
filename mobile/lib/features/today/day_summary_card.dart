@@ -4,12 +4,22 @@ import 'package:intl/intl.dart';
 import '../../core/diary/entry.dart';
 import '../../core/diary/feeling.dart';
 import '../../core/diary/monthly_summary.dart';
+import '../../core/diary/pattern.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/theme/journal_typography.dart';
 import '../../core/widgets/feeling_accent.dart';
 import '../../core/widgets/feeling_chips.dart';
 import '../../core/widgets/journal.dart';
+
+/// The strongest rating this card's own bar is drawn against.
+///
+/// Same reasoning as `calendar_screen.dart`'s `_barMaxIntensity` (#108):
+/// this card does not fetch Insights' own served constants just to size a
+/// 4-pixel-tall bar, so it reads the placeholder's `maxIntensity` instead
+/// of a bare `5` — at least naming where the number comes from, and
+/// tracking the day the backend's dial stops being 1-5.
+final int _barMaxIntensity = EngineConstants.placeholder.maxIntensity;
 
 /// What the day amounted to, above the entries it is made of.
 ///
@@ -147,7 +157,10 @@ class DaySummaryCard extends StatelessWidget {
                   children: [
                     const Eyebrow('Strongest'),
                     const SizedBox(width: JournalSpacing.x3),
-                    _IntensityBar(intensity: intensity!),
+                    _IntensityBar(
+                      key: const ValueKey('daySummaryIntensityBar'),
+                      intensity: intensity!,
+                    ),
                     const SizedBox(width: JournalSpacing.x2),
                     Flexible(
                       child: FeelingChip(
@@ -229,8 +242,25 @@ String? _timeSpan(int count, DateTime? first, DateTime? last) {
 
 /// The calendar cell's rating bar, at reading size, so the two screens
 /// agree on sight.
+///
+/// **Not a `Stack`.** A `Stack`'s non-positioned children get *loose*
+/// constraints by default (`StackFit.loose`): a bare [DecoratedBox] — no
+/// child of its own — then sizes to the smallest box the constraints
+/// allow, which is zero. That is exactly what made this bar (and the
+/// calendar's own copy of it) invisible from the day either shipped
+/// (#108, #115): the widget tree was correct, `widthFactor` was correct,
+/// and the painted bar was a zero-by-zero rectangle. A [DecoratedBox]
+/// track holding an [Align]ed, explicitly-sized [FractionallySizedBox]
+/// says directly what this is — a track with a proportional fill — and
+/// does not depend on which fit mode a future edit might change.
+/// `heightFactor: 1` is required despite the track already being 4px
+/// tall: [Align] always loosens the constraints it hands to its child
+/// (`constraints.loosen()` in `RenderPositionedBox`), so a null
+/// `heightFactor` would reintroduce the exact same zero-height trap this
+/// comment is warning about. See `calendar_screen.dart`'s `_VolumeBar` for
+/// the original writeup of this trap.
 class _IntensityBar extends StatelessWidget {
-  const _IntensityBar({required this.intensity});
+  const _IntensityBar({super.key, required this.intensity});
 
   final int intensity;
 
@@ -241,16 +271,16 @@ class _IntensityBar extends StatelessWidget {
     return SizedBox(
       width: 60,
       height: 4,
-      child: Stack(
-        children: [
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: journal.hairline,
-              borderRadius: JournalShapes.full,
-            ),
-          ),
-          FractionallySizedBox(
-            widthFactor: (intensity / 5).clamp(0, 1),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: journal.hairline,
+          borderRadius: JournalShapes.full,
+        ),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: FractionallySizedBox(
+            widthFactor: (intensity / _barMaxIntensity).clamp(0, 1),
+            heightFactor: 1,
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: theme.colorScheme.primary,
@@ -258,7 +288,7 @@ class _IntensityBar extends StatelessWidget {
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
