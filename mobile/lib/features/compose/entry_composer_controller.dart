@@ -271,6 +271,9 @@ class EntryComposerController extends Notifier<ComposerState> {
       switch (mutation) {
         case EntryUpdated(:final entry):
           state = state.copyWith(isSaving: false);
+          // The entry is stored for good at this point, whether or not an
+          // echo panel follows -- see diaryWriteSignalProvider.
+          ref.read(diaryWriteSignalProvider.notifier).bump();
           return await _loadEcho(entry.id);
         case EntryRemoved():
           state = state.copyWith(

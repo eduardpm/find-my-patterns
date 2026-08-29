@@ -1,5 +1,6 @@
 import 'package:find_my_patterns/core/config/config_providers.dart';
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
+import 'package:find_my_patterns/core/diary/diary_providers.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
@@ -280,6 +281,48 @@ void main() {
         isFalse,
       );
     });
+  });
+
+  group('diaryWriteSignalProvider', () {
+    test(
+      'bumping the signal refreshes today with the entry a write just added',
+      () async {
+        final env = buildEnv([
+          ...loadReplies(),
+          ...loadReplies(entries: [entryJson()]),
+        ]);
+        await env.controller.refresh();
+        expect(env.container.read(todayControllerProvider).entries, isEmpty);
+
+        env.container.read(diaryWriteSignalProvider.notifier).bump();
+        // The listener's refresh is async; let it run to completion.
+        await pumpEventQueue();
+
+        expect(
+          env.container.read(todayControllerProvider).entries,
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'a write while parked on a past day refreshes that day, not today',
+      () async {
+        final env = buildEnv([
+          ...loadReplies(),
+          ...loadReplies(entries: [entryJson()]),
+        ]);
+        await env.controller.showPreviousDay();
+        expect(env.container.read(todayControllerProvider).date, yesterday);
+
+        env.container.read(diaryWriteSignalProvider.notifier).bump();
+        await pumpEventQueue();
+
+        final state = env.container.read(todayControllerProvider);
+        expect(state.date, yesterday);
+        expect(state.entries, hasLength(1));
+      },
+    );
   });
 
   group('dismissError', () {

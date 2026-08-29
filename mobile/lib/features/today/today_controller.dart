@@ -125,7 +125,15 @@ class TodayController extends Notifier<TodayState> {
   bool get isToday => state.date == today;
 
   @override
-  TodayState build() => TodayState(today);
+  TodayState build() {
+    // A write elsewhere -- the composer finishing a new entry, or
+    // entry-detail saving an edit or a delete -- may have changed this
+    // day's entries or its summary. Refreshing here picks that up even
+    // while this screen sits off-screen in the shell's other tabs, so it is
+    // already current by the time the reader swipes back to it.
+    ref.listen(diaryWriteSignalProvider, (_, _) => refresh());
+    return TodayState(today);
+  }
 
   /// Shows [date], clamped so it never runs ahead of today.
   ///

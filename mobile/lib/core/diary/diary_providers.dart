@@ -65,3 +65,26 @@ final feelingCatalogProvider = FutureProvider<FeelingCatalog>(
 final guidingQuestionLibraryProvider = FutureProvider<List<GuidingQuestion>>(
   (ref) => ref.watch(guidingQuestionsApiProvider).library(),
 );
+
+/// A counter [DiaryWriteSignal] bumps whenever a write elsewhere in the app
+/// may have changed what a day's entries or its summary look like: the
+/// composer finishing a new entry, or entry-detail saving an edit or a
+/// delete.
+///
+/// A screen that reads a day's data listens for this instead of the writer
+/// calling back into that screen directly -- the composer and entry-detail
+/// don't need to know Today exists, and Calendar or the day view can start
+/// listening too without a second wiring on the writing side.
+class DiaryWriteSignal extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  /// Records that a write has happened.
+  void bump() => state++;
+}
+
+/// The signal Today (and, later, Calendar/day view) listens to for a write
+/// made anywhere else in the app.
+final diaryWriteSignalProvider = NotifierProvider<DiaryWriteSignal, int>(
+  DiaryWriteSignal.new,
+);
