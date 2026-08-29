@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/diary/calendar_date.dart';
 import '../../core/network/api_client.dart';
 
 /// Which flow a saved draft was written in.
@@ -61,6 +62,18 @@ class const ComposerDraft({
   final int guidedStepIndex = 0,
   final Map<String, String> guidedAnswers = const {},
   final String freeformText = '',
+
+  /// The calendar day this draft was being written for (#36) -- null for a
+  /// draft written before backdating existed, which was always for today.
+  ///
+  /// Carried alongside the rest of the composition on purpose: this store
+  /// holds exactly one draft regardless of how many days a diary spans, so
+  /// without this field a draft started for a past day would be
+  /// indistinguishable from one started for today, and restoring it into
+  /// whichever composer opened first would silently move it onto the wrong
+  /// day. `EntryComposerController._restoreDraft` reads this back and
+  /// restores a draft only into the composer session for the same day.
+  final CalendarDate? entryDate,
   required final DateTime savedAt,
 }) {
   /// Whether this draft is worth restoring -- see [composerDraftHasContent].
@@ -77,6 +90,7 @@ class const ComposerDraft({
     'guided_step_index': guidedStepIndex,
     'guided_answers': guidedAnswers,
     'freeform_text': freeformText,
+    if (entryDate != null) 'entry_date': entryDate.toString(),
     'saved_at': savedAt.toUtc().toIso8601String(),
   };
 
@@ -100,6 +114,7 @@ class const ComposerDraft({
             }
           : const {},
       freeformText: json['freeform_text'] as String? ?? '',
+      entryDate: CalendarDate.tryParse(json['entry_date'] as String?),
       savedAt: savedAt.toUtc(),
     );
   }

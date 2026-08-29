@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/diary/calendar_date.dart';
 import '../../core/diary/diary_providers.dart';
 import '../../core/diary/entries_api.dart';
 import '../../core/diary/entry.dart';
@@ -18,6 +19,15 @@ import 'composer_draft.dart';
 final composerDraftStoreProvider = Provider<ComposerDraftStore>(
   (ref) => const SharedPreferencesComposerDraftStore(),
 );
+
+/// The clock [EntryComposerController] treats as "now" when deciding
+/// whether its `targetDate` counts as backdated (#36) -- which drives both
+/// the header chip and whether an explicit `entry_date` is sent on save.
+///
+/// Null means the real clock. Overridden in tests so that decision is
+/// deterministic rather than following the real device clock, the same
+/// reason `dayEntriesNowProvider` exists in `day_entries_screen.dart`.
+final composerNowProvider = Provider<DateTime?>((ref) => null);
 
 /// Which step of the "new entry" flow is currently showing.
 sealed class const ComposerStage();
@@ -51,6 +61,19 @@ final class const EchoStage(final List<PatternEcho> echoes)
 /// resetting the guided flow to its first step. Half a written entry is not
 /// something a mode toggle is allowed to throw away.
 class const ComposerState({
+  /// The calendar day this entry will be filed under (#36) -- the day the
+  /// composer was opened "for". Set once, from `EntryComposerController
+  /// .targetDate`, and never changes for the life of a composer session.
+  required final CalendarDate targetDate,
+
+  /// Whether [targetDate] is a day other than today, as read from
+  /// `composerNowProvider` when this state was built.
+  ///
+  /// Drives the quiet "Writing about…" header chip and whether [targetDate]
+  /// is sent to the backend as an explicit `entry_date` on save -- the
+  /// ordinary "write for today" path always omits it, so the server's own
+  /// idea of today decides, exactly as before this feature existed.
+  required final bool isBackdated,
   final ComposerStage stage = const GuidedStage(),
   final List<GuidingQuestion> guidingQuestions = const [],
   final List<FeelingGroup> feelingGroups = const [],
@@ -129,6 +152,8 @@ class const ComposerState({
     Object? errorMessage = _unset,
     Object? restoredDraftAt = _unset,
   }) => ComposerState(
+    targetDate: targetDate,
+    isBackdated: isBackdated,
     stage: stage ?? this.stage,
     guidingQuestions: guidingQuestions ?? this.guidingQuestions,
     feelingGroups: feelingGroups ?? this.feelingGroups,
@@ -155,6 +180,20 @@ class const ComposerState({
 /// feelings-catalog lookup almost always reuses the cache the feelings load
 /// just primed, instead of racing it for a second request.
 class EntryComposerController extends Notifier<ComposerState> {
+  /// Creates the controller for a composer session writing for [targetDate]
+  /// (#36) -- the family key `entryComposerControllerProvider` is read
+  /// through.
+  EntryComposerController(this.targetDate);
+
+  /// The calendar day this composer session writes for. See
+  /// [ComposerState.targetDate].
+  final CalendarDate targetDate;
+
+  /// The day [build] read from [composerNowProvider] -- what "today" means
+  /// for [ComposerState.isBackdated] and for treating a dateless (pre-#36)
+  /// restored draft as having been for today. Set once, in [build].
+  late final CalendarDate _today;
+
   /// How long between one poll for the analyser's verdict and the next.
   static const Duration _suggestionPollInterval = Duration(seconds: 1);
 
@@ -227,8 +266,12 @@ class EntryComposerController extends Notifier<ComposerState> {
     // closed, or a test's container was disposed -- must not fire
     // afterwards: [ref.mounted] alone does not stop a `Timer` from ticking.
     ref.onDispose(() => _draftSaveTimer?.cancel());
+    _today = CalendarDate.today(now: ref.read(composerNowProvider));
     _ready = _loadAll();
-    return const ComposerState();
+    return ComposerState(
+      targetDate: targetDate,
+      isBackdated: targetDate != _today,
+    );
   }
 
   Future<void> _loadAll() async {
@@ -247,6 +290,13 @@ class EntryComposerController extends Notifier<ComposerState> {
   Future<void> _restoreDraft() async {
     final draft = await ref.read(composerDraftStoreProvider).load();
     if (!ref.mounted || draft == null || !draft.hasContent) return;
+    // A draft carries the day it was written for (#36; null means a draft
+    // written before backdating existed, which was always for today). One
+    // written for a different day belongs to whichever composer session
+    // opens that day -- applying it here would silently move a backdated
+    // composition onto today, or vice versa. Left on disk, untouched, for
+    // its actual day's session to restore.
+    if ((draft.entryDate ?? _today) != targetDate) return;
     state = state.copyWith(
       stage: draft.mode == ComposerDraftMode.guided
           ? const GuidedStage()
@@ -380,6 +430,7 @@ class EntryComposerController extends Notifier<ComposerState> {
         guidedStepIndex: state.guidedStepIndex,
         guidedAnswers: state.guidedAnswers,
         freeformText: state.freeformText,
+        entryDate: targetDate,
         savedAt: DateTime.now().toUtc(),
       ),
     );
@@ -414,11 +465,19 @@ class EntryComposerController extends Notifier<ComposerState> {
   /// The answers go up on their own with `raw_text` empty -- the backend
   /// composes the entry's prose from the prompts and answers, the same way
   /// it does for the web client, so this never joins them client-side.
+  /// [targetDate] rides along as an explicit `entry_date` only while
+  /// [ComposerState.isBackdated] -- see [EntriesApi.createFreeform] for why
+  /// the ordinary "write for today" save omits it.
   Future<void> saveGuided(List<GuidingQuestionAnswer> answers) async {
     if (answers.isEmpty) return;
     state = state.copyWith(isSaving: true, errorMessage: null);
     try {
-      final entry = await ref.read(entriesApiProvider).createGuided(answers);
+      final entry = await ref
+          .read(entriesApiProvider)
+          .createGuided(
+            answers,
+            entryDate: state.isBackdated ? targetDate : null,
+          );
       if (!ref.mounted) return;
       _enterConfirmStage(entry);
     } on ApiError catch (error) {
@@ -427,14 +486,18 @@ class EntryComposerController extends Notifier<ComposerState> {
     }
   }
 
-  /// Saves a freeform entry from [text]. A no-op for blank text.
+  /// Saves a freeform entry from [text]. A no-op for blank text. See
+  /// [saveGuided] for [targetDate].
   Future<void> saveFreeform(String text) async {
     if (text.trim().isEmpty) return;
     state = state.copyWith(isSaving: true, errorMessage: null);
     try {
       final entry = await ref
           .read(entriesApiProvider)
-          .createFreeform(text.trim());
+          .createFreeform(
+            text.trim(),
+            entryDate: state.isBackdated ? targetDate : null,
+          );
       if (!ref.mounted) return;
       _enterConfirmStage(entry);
     } on ApiError catch (error) {
@@ -594,8 +657,15 @@ class EntryComposerController extends Notifier<ComposerState> {
   void dismissError() => state = state.copyWith(errorMessage: null);
 }
 
-/// The state behind the entry composer.
+/// The state behind the entry composer, keyed by the day it writes for
+/// (#36) -- the same `.family` shape `dayEntriesControllerProvider` uses,
+/// for the same reason: the day is a parameter of the session, not a
+/// mutable field of a single global one.
 final entryComposerControllerProvider =
-    NotifierProvider<EntryComposerController, ComposerState>(
+    NotifierProvider.family<
+      EntryComposerController,
+      ComposerState,
+      CalendarDate
+    >(
       EntryComposerController.new,
     );

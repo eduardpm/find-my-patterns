@@ -27,10 +27,25 @@ export const guidedAnswerSchema = z.object({
   answer_text: z.string(),
 });
 
+/**
+ * A calendar date, `YYYY-MM-DD`. Only the shape is checked here; a value that is the right shape
+ * but not a real date (`2026-02-30`) is rejected downstream by `decodeDate`, the one place a date
+ * string is actually parsed (`db/codecs.ts`).
+ */
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+
+/**
+ * `entry_date` is optional and backdates the entry (#36): omitted, the entry is filed under the
+ * server's own `todayLocal()`, exactly as before. When sent, `EntriesService.createEntry` is the
+ * one place that checks it is not in the future and not more than `MAX_BACKDATE_DAYS` in the past
+ * — this schema only checks the shape, the same division of labour `dateSchema`'s doc comment
+ * describes for every other date field.
+ */
 export const entryCreateSchema = z.object({
   mode: z.enum(['guided', 'freeform']).default('freeform'),
   raw_text: z.string().default(''),
   guided_answers: z.array(guidedAnswerSchema).default([]),
+  entry_date: dateSchema.optional(),
 });
 
 /**
@@ -107,13 +122,6 @@ export const guidedDraftAnswerSchema = z.object({
 });
 
 export const orderIndexQuerySchema = z.coerce.number().int().min(0).max(100);
-
-/**
- * A calendar date, `YYYY-MM-DD`. Only the shape is checked here; a value that is the right shape
- * but not a real date (`2026-02-30`) is rejected downstream by `decodeDate`, the one place a date
- * string is actually parsed (`db/codecs.ts`).
- */
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
 /**
  * Starting an experiment from a qualifying pattern (R-3a). `pattern_topic` and `pattern_feeling`

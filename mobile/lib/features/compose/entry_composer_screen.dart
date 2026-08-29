@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/audio/diary_audio_recorder.dart';
+import '../../core/diary/calendar_date.dart';
 import '../../core/diary/entry.dart';
 import '../../core/diary/feeling.dart';
 import '../../core/diary/pattern.dart';
@@ -22,6 +23,10 @@ import 'voice_answer_recorder.dart';
 /// The time-of-day shown in the restored-draft notice, e.g. "11:32 PM".
 final DateFormat _draftTimeFormat = DateFormat.jm();
 
+/// The date shown in the "Writing about…" header chip, e.g. "Wednesday,
+/// August 26".
+final DateFormat _targetDateFormat = DateFormat('EEEE, MMMM d');
+
 /// The entry composer: a four-stage flow for writing a diary entry, from
 /// the first prompt to the confirmed feeling and any pattern the diary
 /// already has to say about it.
@@ -36,11 +41,19 @@ class EntryComposerScreen extends ConsumerWidget {
   /// depend on a real [Navigator] — passes its own.
   const EntryComposerScreen({
     super.key,
+    this.targetDate,
     this.onDone,
     this.onCancel,
     this.recorder,
     this.transcriptionDelay = Future.delayed,
   });
+
+  /// The calendar day this composer writes for (#36) -- null (the default)
+  /// means today. The two backdating entry points (the day view's empty
+  /// state, and the Today nudge) pass an explicit past date instead; the
+  /// app's router resolves this from the `/compose` route's own `date`
+  /// query parameter.
+  final CalendarDate? targetDate;
 
   /// Called once the entry is fully saved and there is nothing more to
   /// show — either straight from [ConfirmFeelingStage] (nothing to echo),
@@ -60,15 +73,16 @@ class EntryComposerScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(entryComposerControllerProvider);
-    final controller = ref.read(entryComposerControllerProvider.notifier);
+    final date = targetDate ?? CalendarDate.today();
+    final state = ref.watch(entryComposerControllerProvider(date));
+    final controller = ref.read(entryComposerControllerProvider(date).notifier);
     final done = onDone ?? () => Navigator.of(context).maybePop();
     // Not `maybePop` -- see [requestCancel]'s doc comment for why the
     // default has to be the unconditional `pop`.
     final cancel = onCancel ?? () => Navigator.of(context).pop();
 
     ref.listen(
-      entryComposerControllerProvider.select((s) => s.errorMessage),
+      entryComposerControllerProvider(date).select((s) => s.errorMessage),
       (previous, next) {
         if (next == null) return;
         ScaffoldMessenger.of(
@@ -98,7 +112,9 @@ class EntryComposerScreen extends ConsumerWidget {
     // `pop` bypasses `canPop` entirely, the same way Flutter's own PopScope
     // examples finish a confirmed pop, so this always actually leaves.
     Future<void> requestCancel() async {
-      if (!ref.read(entryComposerControllerProvider).hasUnsavedComposition) {
+      if (!ref
+          .read(entryComposerControllerProvider(date))
+          .hasUnsavedComposition) {
         cancel();
         return;
       }
@@ -145,6 +161,10 @@ class EntryComposerScreen extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (state.isBackdated) ...[
+                    _TargetDateChip(date: state.targetDate),
+                    const SizedBox(height: JournalSpacing.x4),
+                  ],
                   if (state.restoredDraftAt case final savedAt?) ...[
                     _RestoredDraftNotice(
                       savedAt: savedAt,
@@ -208,6 +228,55 @@ class EntryComposerScreen extends ConsumerWidget {
                 child: LinearProgressIndicator(),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "Writing about Wednesday, August 26" -- a quiet header chip shown only
+/// while [ComposerState.isBackdated], so a composer opened for a past date
+/// never lets which day it will land on go unstated (#36). Present through
+/// every stage of the flow, confirm and echo included, for the same reason:
+/// which day this entry lands on stays worth knowing until the entry is
+/// actually saved.
+class _TargetDateChip extends StatelessWidget {
+  const _TargetDateChip({required this.date});
+
+  final CalendarDate date;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: JournalShapes.full,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: JournalSpacing.x3,
+            vertical: JournalSpacing.x2,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.history,
+                size: 16,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: JournalSpacing.x2),
+              Text(
+                'Writing about ${_targetDateFormat.format(date.toDateTime())}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

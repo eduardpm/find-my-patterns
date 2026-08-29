@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'core/auth/auth_controller.dart';
 import 'core/config/app_config.dart';
 import 'core/config/config_providers.dart';
+import 'core/diary/calendar_date.dart';
 import 'core/network/network_providers.dart';
 import 'core/notifications/reminder_providers.dart';
 import 'core/notifications/reminder_schedule.dart';
@@ -101,8 +102,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       // and editing the topic list are all things you finish and leave, so they
       // cover the tab bar instead of offering a way out of the middle of them.
       GoRoute(
+        // `date` backdates the composer (#36) -- the day view's empty state
+        // and the Today nudge both push here with an explicit `YYYY-MM-DD`;
+        // an absent or unparseable value falls back to today, the same rule
+        // every date-shaped route parameter in this app follows.
         path: '/compose',
-        builder: (context, state) => const EntryComposerScreen(),
+        builder: (context, state) => EntryComposerScreen(
+          targetDate: CalendarDate.tryParse(state.uri.queryParameters['date']),
+        ),
       ),
       GoRoute(
         // Keyed on the date as well as the id: the evidence trail on a pattern
