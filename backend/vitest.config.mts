@@ -9,5 +9,8 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     pool: 'threads',
     poolOptions: { threads: { singleThread: true } },
+    // Builds tests/fixtures/golden.db once before any test file runs (#83) — it is no longer
+    // committed, so a clean checkout needs it built before `bootOnCopy` and friends can copy it.
+    globalSetup: ['tests/global-setup.ts'],
   },
 });

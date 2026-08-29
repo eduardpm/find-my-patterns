@@ -22,11 +22,26 @@ because real diaries have one and the backend must ignore it.
 
 ## Regenerating
 
-Start the backend against an empty diary, replay the cases above through the API, then call
-`GET /insights` once to materialise patterns.
+`golden.db` is not committed (#83) — a binary SQLite file is something git can only merge by
+picking one side wholesale, which silently dropped a schema change more than once when two
+branches each migrated it the same day. It is generated instead, on every `npm test` (a Vitest
+[`globalSetup`](../global-setup.ts) builds it once before the suite runs) and by the `browser` CI
+job, from two plain-text, git-mergeable ingredients:
 
-Regenerating changes every timestamp, so no test asserts a literal stamp *from this file* — the
-codec tests use their own hardcoded values, which are independent of it.
+- **Schema and reference vocabulary** (`feeling_groups`, `feelings`, `guiding_questions`) come from
+  `initDiary` — the same code path `npm run init-db` uses — so the fixture tracks future vocabulary
+  migrations automatically.
+- **This fixture's own content** — the rows in the table above — lives in
+  [`golden-seed.json`](golden-seed.json), including every id and timestamp verbatim. Nothing here
+  regenerates fresh on each build, so the file is byte-stable across rebuilds: `entry_date`
+  ('2026-07-28') and specific ids (`tests/e2e/pairing-insights-snapshot.test.ts`) are relied on
+  by name elsewhere in the suite. The codec tests still use their own hardcoded values,
+  independent of this file.
+
+Both are assembled by [`../../src/db/build-golden-db.ts`](../../src/db/build-golden-db.ts) — see
+its doc comment for the two things it has to do that `initDiary` alone cannot (the pre-#14 guiding
+question wording, and the inert `alembic_version` table). See `backend/docs/golden-fixture.md` for
+how to change the fixture's contents and regenerate it by hand.
 
 ## `insight-scenarios.json`
 

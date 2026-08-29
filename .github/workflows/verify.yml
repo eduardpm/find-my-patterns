@@ -63,6 +63,9 @@ jobs:
       - run: npm run build --prefix backend
       - run: npm run build --prefix web
       - run: npm exec --prefix web -- playwright install --with-deps chromium
+      # golden.db is no longer committed (#83) — build it from schema.ts + golden-seed.json instead
+      # of reading a binary that two branches could not both migrate without a merge conflict.
+      - run: npm run build-golden-db --prefix backend
       - run: cp backend/tests/fixtures/golden.db /tmp/diary-e2e.db
       - name: Start backend
         run: DATABASE_PATH=/tmp/diary-e2e.db PORT=18080 HOST=127.0.0.1 npm start --prefix backend &

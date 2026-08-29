@@ -1,0 +1,321 @@
+{
+  "alembicVersion": "a1c47f30b2e9",
+  "guidingQuestionOverrides": [
+    {
+      "key": "general_feeling",
+      "promptText": "Since your last entry—or in the last few hours—what happened? What were you doing, where were you, and who was around?"
+    },
+    {
+      "key": "mind_body",
+      "promptText": "What did you notice in your mind and body? Include thoughts, energy, tension, hunger, pain, or other sensations."
+    },
+    {
+      "key": "small_influences",
+      "promptText": "What small things might have influenced you—even if they seem unimportant? Think sleep, food or drink, caffeine or alcohol, medication, movement, work, social contact, screen time, weather, or a change in routine."
+    }
+  ],
+  "topics": [
+    {
+      "id": "4680a43c-c0c9-4a81-8710-377e5cbeca09",
+      "name": "coca cola",
+      "aliases": "[]",
+      "firstSeenAt": "2026-07-28 13:20:31.154730",
+      "lastSeenAt": "2026-07-28 13:20:31.204609"
+    },
+    {
+      "id": "fa3089e3-5331-4071-989d-94a80333fe61",
+      "name": "sleep",
+      "aliases": "[]",
+      "firstSeenAt": "2026-07-28 13:20:31.155415",
+      "lastSeenAt": "2026-07-28 13:20:31.204777"
+    }
+  ],
+  "diaryEntries": [
+    {
+      "id": "c88c8efa-15d7-4329-8c09-e925dc6d2fec",
+      "createdAt": "2026-07-28 13:20:31.004468",
+      "updatedAt": "2026-07-28 13:20:31.023198",
+      "entryDate": "2026-07-28",
+      "mode": "freeform",
+      "rawText": "Had a coca cola at 0 pm and felt sleepy",
+      "feelingKey": "sleepy",
+      "feelingSource": "overridden",
+      "version": 2,
+      "feelingIntensity": null,
+      "origin": "app"
+    },
+    {
+      "id": "a09db46a-ea92-4cca-85d8-6604b9ef93cd",
+      "createdAt": "2026-07-28 13:20:31.031988",
+      "updatedAt": "2026-07-28 13:20:31.046026",
+      "entryDate": "2026-07-28",
+      "mode": "freeform",
+      "rawText": "Had a coca cola at 1 pm and felt sleepy",
+      "feelingKey": "sleepy",
+      "feelingSource": "overridden",
+      "version": 2,
+      "feelingIntensity": null,
+      "origin": "app"
+    },
+    {
+      "id": "6fd3f393-704e-44ee-a41b-6a975d9a09c7",
+      "createdAt": "2026-07-28 13:20:31.054586",
+      "updatedAt": "2026-07-28 13:20:31.068877",
+      "entryDate": "2026-07-28",
+      "mode": "freeform",
+      "rawText": "Had a coca cola at 2 pm and felt sleepy",
+      "feelingKey": "sleepy",
+      "feelingSource": "overridden",
+      "version": 2,
+      "feelingIntensity": null,
+      "origin": "app"
+    },
+    {
+      "id": "edadbb04-784c-4336-9287-ce8c77cb7c78",
+      "createdAt": "2026-07-28 13:20:31.077383",
+      "updatedAt": "2026-07-28 13:20:31.091789",
+      "entryDate": "2026-07-28",
+      "mode": "freeform",
+      "rawText": "Went for a long walk in the sun",
+      "feelingKey": "happy",
+      "feelingSource": "overridden",
+      "version": 2,
+      "feelingIntensity": null,
+      "origin": "app"
+    },
+    {
+      "id": "f77ec6ba-fc6b-4ce0-bd87-6b973396d44c",
+      "createdAt": "2026-07-28 13:20:31.100236",
+      "updatedAt": "2026-07-28 13:20:31.105324",
+      "entryDate": "2026-07-28",
+      "mode": "freeform",
+      "rawText": "Just a quiet afternoon",
+      "feelingKey": "neutral",
+      "feelingSource": "suggested",
+      "version": 1,
+      "feelingIntensity": null,
+      "origin": "app"
+    },
+    {
+      "id": "07104ffa-ae34-4172-b683-c048045a97d1",
+      "createdAt": "2026-07-28 13:20:31.113280",
+      "updatedAt": "2026-07-28 13:20:31.114006",
+      "entryDate": "2026-07-28",
+      "mode": "freeform",
+      "rawText": "",
+      "feelingKey": null,
+      "feelingSource": "unset",
+      "version": 1,
+      "feelingIntensity": null,
+      "origin": "app"
+    },
+    {
+      "id": "d8e95a5d-b924-452b-8817-45580c02778a",
+      "createdAt": "2026-07-28 13:20:31.122683",
+      "updatedAt": "2026-07-28 13:20:31.128490",
+      "entryDate": "2026-07-28",
+      "mode": "guided",
+      "rawText": "What's going on, and how are you feeling? Sluggish after lunch What did you eat or drink? Had a coca cola",
+      "feelingKey": "neutral",
+      "feelingSource": "suggested",
+      "version": 1,
+      "feelingIntensity": null,
+      "origin": "app"
+    },
+    {
+      "id": "69fa9b66-0c5d-4aaa-8ea7-b966f70a6975",
+      "createdAt": "2026-07-28 13:20:31.136909",
+      "updatedAt": "2026-07-28 13:20:31.141621",
+      "entryDate": "2026-07-28",
+      "mode": "guided",
+      "rawText": "not_a_real_question fallback case",
+      "feelingKey": "neutral",
+      "feelingSource": "suggested",
+      "version": 1,
+      "feelingIntensity": null,
+      "origin": "app"
+    }
+  ],
+  "entryFeelings": [
+    {
+      "entryId": "c88c8efa-15d7-4329-8c09-e925dc6d2fec",
+      "feelingKey": "sleepy",
+      "position": 0,
+      "intensity": null
+    },
+    {
+      "entryId": "a09db46a-ea92-4cca-85d8-6604b9ef93cd",
+      "feelingKey": "sleepy",
+      "position": 0,
+      "intensity": null
+    },
+    {
+      "entryId": "6fd3f393-704e-44ee-a41b-6a975d9a09c7",
+      "feelingKey": "sleepy",
+      "position": 0,
+      "intensity": null
+    },
+    {
+      "entryId": "edadbb04-784c-4336-9287-ce8c77cb7c78",
+      "feelingKey": "happy",
+      "position": 0,
+      "intensity": null
+    },
+    {
+      "entryId": "f77ec6ba-fc6b-4ce0-bd87-6b973396d44c",
+      "feelingKey": "neutral",
+      "position": 0,
+      "intensity": null
+    },
+    {
+      "entryId": "d8e95a5d-b924-452b-8817-45580c02778a",
+      "feelingKey": "neutral",
+      "position": 0,
+      "intensity": null
+    },
+    {
+      "entryId": "69fa9b66-0c5d-4aaa-8ea7-b966f70a6975",
+      "feelingKey": "neutral",
+      "position": 0,
+      "intensity": null
+    }
+  ],
+  "entryTopics": [
+    {
+      "entryId": "c88c8efa-15d7-4329-8c09-e925dc6d2fec",
+      "topicId": "4680a43c-c0c9-4a81-8710-377e5cbeca09",
+      "extractedBy": "keyword"
+    },
+    {
+      "entryId": "c88c8efa-15d7-4329-8c09-e925dc6d2fec",
+      "topicId": "fa3089e3-5331-4071-989d-94a80333fe61",
+      "extractedBy": "keyword"
+    },
+    {
+      "entryId": "a09db46a-ea92-4cca-85d8-6604b9ef93cd",
+      "topicId": "4680a43c-c0c9-4a81-8710-377e5cbeca09",
+      "extractedBy": "keyword"
+    },
+    {
+      "entryId": "a09db46a-ea92-4cca-85d8-6604b9ef93cd",
+      "topicId": "fa3089e3-5331-4071-989d-94a80333fe61",
+      "extractedBy": "keyword"
+    },
+    {
+      "entryId": "6fd3f393-704e-44ee-a41b-6a975d9a09c7",
+      "topicId": "4680a43c-c0c9-4a81-8710-377e5cbeca09",
+      "extractedBy": "keyword"
+    },
+    {
+      "entryId": "6fd3f393-704e-44ee-a41b-6a975d9a09c7",
+      "topicId": "fa3089e3-5331-4071-989d-94a80333fe61",
+      "extractedBy": "keyword"
+    }
+  ],
+  "guidingQuestionAnswers": [
+    {
+      "id": "16ec99c5-2f8a-4caf-9f55-983ad1f5c8e8",
+      "entryId": "d8e95a5d-b924-452b-8817-45580c02778a",
+      "questionKey": "general_feeling",
+      "questionTextSnapshot": "What's going on, and how are you feeling?",
+      "answerText": "Sluggish after lunch",
+      "orderIndex": 0
+    },
+    {
+      "id": "b6f8f889-e347-44fd-bcae-cd049d6ee348",
+      "entryId": "d8e95a5d-b924-452b-8817-45580c02778a",
+      "questionKey": "food_drink",
+      "questionTextSnapshot": "What did you eat or drink?",
+      "answerText": "Had a coca cola",
+      "orderIndex": 1
+    },
+    {
+      "id": "50afe49c-60fa-456d-ab0b-de98c486aa83",
+      "entryId": "69fa9b66-0c5d-4aaa-8ea7-b966f70a6975",
+      "questionKey": "not_a_real_question",
+      "questionTextSnapshot": "not_a_real_question",
+      "answerText": "fallback case",
+      "orderIndex": 0
+    }
+  ],
+  "patterns": [
+    {
+      "id": "9af6588d-15f7-4200-8866-81d7086c1dcc",
+      "topicId": "4680a43c-c0c9-4a81-8710-377e5cbeca09",
+      "feelingKey": "sleepy",
+      "occurrenceCount": 3,
+      "narrativeText": "You felt sleepy in 3 recent entries mentioning coca cola.",
+      "suggestionText": "Pay attention to how coca cola affects your sleepy feeling.",
+      "direction": "change",
+      "firstDetectedAt": "2026-07-28 13:20:31.175589",
+      "lastUpdatedAt": "2026-07-28 13:20:31.175222",
+      "kind": "forward",
+      "lifetimeCount": 0,
+      "status": "active",
+      "lastOccurrenceDate": null,
+      "presentCount": 0,
+      "presentTotal": 0,
+      "absentCount": 0,
+      "absentTotal": 0,
+      "lift": null,
+      "comparisonReason": null,
+      "baseRate": 0,
+      "isStrong": 0,
+      "confounders": "[]",
+      "narrationAttempts": 0,
+      "narrationNextAttemptAt": null
+    },
+    {
+      "id": "ac87259d-27af-4e33-9e5a-8b16e4084eb0",
+      "topicId": "fa3089e3-5331-4071-989d-94a80333fe61",
+      "feelingKey": "sleepy",
+      "occurrenceCount": 3,
+      "narrativeText": "You felt sleepy in 3 recent entries mentioning sleep.",
+      "suggestionText": "Pay attention to how sleep affects your sleepy feeling.",
+      "direction": "change",
+      "firstDetectedAt": "2026-07-28 13:20:31.176850",
+      "lastUpdatedAt": "2026-07-28 13:20:31.176757",
+      "kind": "forward",
+      "lifetimeCount": 0,
+      "status": "active",
+      "lastOccurrenceDate": null,
+      "presentCount": 0,
+      "presentTotal": 0,
+      "absentCount": 0,
+      "absentTotal": 0,
+      "lift": null,
+      "comparisonReason": null,
+      "baseRate": 0,
+      "isStrong": 0,
+      "confounders": "[]",
+      "narrationAttempts": 0,
+      "narrationNextAttemptAt": null
+    }
+  ],
+  "patternEntries": [
+    {
+      "patternId": "9af6588d-15f7-4200-8866-81d7086c1dcc",
+      "entryId": "c88c8efa-15d7-4329-8c09-e925dc6d2fec"
+    },
+    {
+      "patternId": "9af6588d-15f7-4200-8866-81d7086c1dcc",
+      "entryId": "a09db46a-ea92-4cca-85d8-6604b9ef93cd"
+    },
+    {
+      "patternId": "9af6588d-15f7-4200-8866-81d7086c1dcc",
+      "entryId": "6fd3f393-704e-44ee-a41b-6a975d9a09c7"
+    },
+    {
+      "patternId": "ac87259d-27af-4e33-9e5a-8b16e4084eb0",
+      "entryId": "c88c8efa-15d7-4329-8c09-e925dc6d2fec"
+    },
+    {
+      "patternId": "ac87259d-27af-4e33-9e5a-8b16e4084eb0",
+      "entryId": "a09db46a-ea92-4cca-85d8-6604b9ef93cd"
+    },
+    {
+      "patternId": "ac87259d-27af-4e33-9e5a-8b16e4084eb0",
+      "entryId": "6fd3f393-704e-44ee-a41b-6a975d9a09c7"
+    }
+  ]
+}

@@ -468,3 +468,19 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
             )`,
   },
 ];
+
+/**
+ * The one DDL statement for `alembic_version` — the inert table an old migration tool leaves
+ * behind (see `tests/fixtures/README.md`). It is not part of this schema: real diaries may carry
+ * one from before this backend existed, `assertCompatible` (`compatibility.ts`) ignores it
+ * outright, and neither `SCHEMA_STATEMENTS` nor `MIGRATION_STATEMENTS` above create it — a diary
+ * this backend creates or migrates has no business inventing history for a tool it never ran.
+ *
+ * Kept here rather than inlined elsewhere so this file stays the *only* one with DDL text, per the
+ * comment at the top. The sole caller is `build-golden-db.ts`, which builds a disposable test
+ * fixture that must resemble a real diary down to this detail.
+ */
+export const ALEMBIC_VERSION_STATEMENT = `CREATE TABLE alembic_version (
+     version_num VARCHAR(32) NOT NULL,
+     PRIMARY KEY (version_num)
+   )`;
