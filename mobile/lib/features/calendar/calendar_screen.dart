@@ -400,6 +400,7 @@ class _DayCell extends StatelessWidget {
           if (intensity != null) ...[
             const SizedBox(height: 2),
             _IntensityBar(
+              key: ValueKey('calendarIntensityBar-$date'),
               intensity: intensity,
               hairline: journal.hairline,
               fill: theme.colorScheme.primary,
@@ -505,7 +506,30 @@ String _spokenLabel(
 /// 100%. A logged day still draws a bar at least 20% full even with a
 /// single entry — the bar's job is telling a 1-entry day from a 5-entry
 /// one, not telling a logged day from an empty one, which the dots above
-/// it already do.
+/// it already do. The 0.2 floor never actually bites: this widget is only
+/// built from inside `_DayCell`'s `if (logged)` branch (`logged =
+/// feelings.isNotEmpty`), so `count` is always at least 1 whenever this
+/// renders at all — kept as a floor rather than removed because it is the
+/// honest statement of the mapping's intent, not a workaround.
+///
+/// **Not a `Stack`.** A `Stack`'s non-positioned children get *loose*
+/// constraints by default (`StackFit.loose`): a bare `ColoredBox` — no
+/// child of its own — then sizes to the smallest box the constraints
+/// allow, which is zero. That is exactly what made this bar and
+/// [_IntensityBar] invisible from the day either shipped (#108): the
+/// widget tree was correct, `widthFactor` was correct, and the painted
+/// bar was a zero-by-zero rectangle. `Stack(fit: StackFit.expand)` would
+/// have fixed it too — it forces tight constraints onto every
+/// non-positioned child — but that fix works by an incidental side effect
+/// of Stack's constraint-propagation mode, not because the track/fill
+/// relationship demands a Stack at all. A [DecoratedBox] track holding an
+/// [Align]ed, explicitly-sized [FractionallySizedBox] says directly what
+/// this is — a track with a proportional fill — and does not depend on
+/// which fit mode a future edit might change. `heightFactor: 1` is
+/// required despite the track already being 2px tall: [Align] always
+/// loosens the constraints it hands to its child (`constraints.loosen()`
+/// in `RenderPositionedBox`), so a null `heightFactor` would reintroduce
+/// the exact same zero-height trap this comment is warning about.
 class _VolumeBar extends StatelessWidget {
   const _VolumeBar({
     super.key,
@@ -524,14 +548,16 @@ class _VolumeBar extends StatelessWidget {
     child: SizedBox(
       width: 24,
       height: 2,
-      child: Stack(
-        children: [
-          ColoredBox(color: hairline),
-          FractionallySizedBox(
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: hairline),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: FractionallySizedBox(
             widthFactor: (count / _volumeBarMaxCount).clamp(0.2, 1),
+            heightFactor: 1,
             child: ColoredBox(color: fill),
           ),
-        ],
+        ),
       ),
     ),
   );
@@ -543,8 +569,14 @@ class _VolumeBar extends StatelessWidget {
 /// reads as a count of entries rather than a rating. A day with no rating
 /// shows nothing at all — see the caller — so a diary where nobody uses the
 /// intensity dial looks exactly as it did before that feature existed.
+///
+/// Same track/fill shape as [_VolumeBar], and the same reason it is a
+/// [DecoratedBox] + [Align] + [FractionallySizedBox] rather than a `Stack`
+/// — see that class's doc for the loose-constraint trap (#108) this
+/// avoids.
 class _IntensityBar extends StatelessWidget {
   const _IntensityBar({
+    super.key,
     required this.intensity,
     required this.hairline,
     required this.fill,
@@ -560,14 +592,16 @@ class _IntensityBar extends StatelessWidget {
     child: SizedBox(
       width: 24,
       height: 2,
-      child: Stack(
-        children: [
-          ColoredBox(color: hairline),
-          FractionallySizedBox(
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: hairline),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: FractionallySizedBox(
             widthFactor: (intensity / _barMaxIntensity).clamp(0, 1),
+            heightFactor: 1,
             child: ColoredBox(color: fill),
           ),
-        ],
+        ),
       ),
     ),
   );

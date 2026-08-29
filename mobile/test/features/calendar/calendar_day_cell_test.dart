@@ -109,16 +109,61 @@ void main() {
     ),
   );
 
-  /// The rendered width factor of the day cell keyed `calendarVolumeBar-
-  /// <date>`'s fill.
-  double volumeWidthFactor(WidgetTester tester, String date) => tester
+  /// The rendered width factor of the fill inside the bar keyed [barKey].
+  ///
+  /// This is the property #108's bug left untouched: both bars painted
+  /// zero pixels while `widthFactor` stayed exactly right, which is why a
+  /// test built only on this helper cannot, on its own, prove a bar is
+  /// visible. See [barSizes] below for the assertion that can.
+  double barWidthFactor(WidgetTester tester, Key barKey) => tester
       .widget<FractionallySizedBox>(
         find.descendant(
-          of: find.byKey(ValueKey('calendarVolumeBar-$date')),
+          of: find.byKey(barKey),
           matching: find.byType(FractionallySizedBox),
         ),
       )
       .widthFactor!;
+
+  /// The rendered [Size] of the bar keyed [barKey] — its whole 24x2 track,
+  /// and its coloured fill — read with `tester.getSize`, which measures
+  /// what was actually laid out and painted rather than a widget's
+  /// requested `widthFactor`. #108: a `Stack`'s loose constraints let the
+  /// fill's `FractionallySizedBox` request the right `widthFactor` and
+  /// still collapse to a literal `Size(_, 0.0)`, so a track or fill with
+  /// zero height here is exactly the regression this ticket closes.
+  ({Size track, Size fill}) barSizes(WidgetTester tester, Key barKey) {
+    final barFinder = find.byKey(barKey);
+    final fillFinder = find.descendant(
+      of: barFinder,
+      matching: find.byType(FractionallySizedBox),
+    );
+    return (
+      track: tester.getSize(barFinder),
+      fill: tester.getSize(fillFinder),
+    );
+  }
+
+  /// The rendered width factor of the day cell keyed `calendarVolumeBar-
+  /// <date>`'s fill.
+  double volumeWidthFactor(WidgetTester tester, String date) =>
+      barWidthFactor(tester, ValueKey('calendarVolumeBar-$date'));
+
+  /// The rendered track and fill sizes of the day cell keyed
+  /// `calendarVolumeBar-<date>`.
+  ({Size track, Size fill}) volumeBarSizes(WidgetTester tester, String date) =>
+      barSizes(tester, ValueKey('calendarVolumeBar-$date'));
+
+  /// The rendered width factor of the day cell keyed `calendarIntensityBar-
+  /// <date>`'s fill.
+  double intensityWidthFactor(WidgetTester tester, String date) =>
+      barWidthFactor(tester, ValueKey('calendarIntensityBar-$date'));
+
+  /// The rendered track and fill sizes of the day cell keyed
+  /// `calendarIntensityBar-<date>`.
+  ({Size track, Size fill}) intensityBarSizes(
+    WidgetTester tester,
+    String date,
+  ) => barSizes(tester, ValueKey('calendarIntensityBar-$date'));
 
   group('empty days', () {
     testWidgets(
@@ -217,6 +262,30 @@ void main() {
         expect(volumeWidthFactor(tester, '2026-08-05'), closeTo(1.0, 1e-6));
         // Six entries still reads as "full", not overflowing.
         expect(volumeWidthFactor(tester, '2026-08-06'), closeTo(1.0, 1e-6));
+
+        // The rendered pixels, not just the requested factor (#108: these
+        // two collapsed to zero height while every widthFactor above
+        // stayed correct). The 24x2 track is fixed regardless of count;
+        // the fill's height must match it exactly — any height mismatch
+        // here means the bar is invisible again — and its width must be
+        // the track's width times that same fifth.
+        for (final MapEntry(key: day, value: factor) in const {
+          '2026-08-01': 0.2,
+          '2026-08-02': 0.4,
+          '2026-08-03': 0.6,
+          '2026-08-04': 0.8,
+          '2026-08-05': 1.0,
+          '2026-08-06': 1.0,
+        }.entries) {
+          final sizes = volumeBarSizes(tester, day);
+          expect(sizes.track, const Size(24, 2), reason: '$day track');
+          expect(sizes.fill.height, 2, reason: '$day fill height');
+          expect(
+            sizes.fill.width,
+            closeTo(24 * factor, 1e-6),
+            reason: '$day fill width',
+          );
+        }
       },
     );
 
@@ -254,6 +323,17 @@ void main() {
           volumeWidthFactor(tester, '2026-08-02'),
           greaterThan(volumeWidthFactor(tester, '2026-08-01')),
         );
+
+        // The same comparison on rendered pixels, not just the requested
+        // factor — and a floor on the 1-entry day's fill: it must draw a
+        // *visible* bar (non-zero area), not the zero-by-zero rectangle
+        // #108 shipped. Without this, "visibly different widths" above
+        // would still pass if both fills painted nothing.
+        final oneEntry = volumeBarSizes(tester, '2026-08-01').fill;
+        final fiveEntries = volumeBarSizes(tester, '2026-08-02').fill;
+        expect(oneEntry.height, greaterThan(0));
+        expect(oneEntry.width, greaterThan(0));
+        expect(fiveEntries.width, greaterThan(oneEntry.width));
       },
     );
 
@@ -286,6 +366,98 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(volumeWidthFactor(tester, '2026-08-01'), closeTo(1.0, 1e-6));
+        final sizes = volumeBarSizes(tester, '2026-08-01');
+        expect(sizes.track, const Size(24, 2));
+        expect(sizes.fill, const Size(24, 2));
+      },
+    );
+  });
+
+  group('the intensity bar', () {
+    // No suite exercised this bar at all before #108 — it shares
+    // `_VolumeBar`'s exact bug (a bare `ColoredBox` in a loose `Stack`)
+    // and, having no test of its own, is exactly how "no one has looked
+    // at it" stayed true through #17 and I6.
+    testWidgets(
+      'widens with intensity, one fifth per point, 1 through 5',
+      (tester) async {
+        useTallScreen(tester);
+        final harness = configuredHarness(
+          FakeHttpAdapter([
+            FakeReply(200, body: feelingsCatalogJson()),
+            FakeReply(
+              200,
+              body: monthlySummaryJson(
+                month: '2026-08',
+                days: [
+                  for (var n = 1; n <= 5; n++)
+                    daySummaryJson(
+                      date: '2026-08-0$n',
+                      feelings: const ['happy'],
+                      intensity: n,
+                    ),
+                ],
+              ),
+            ),
+          ]),
+        );
+        await tester.pumpWidget(app(harness));
+        await tester.pumpAndSettle();
+
+        for (final MapEntry(key: day, value: factor) in const {
+          '2026-08-01': 0.2,
+          '2026-08-02': 0.4,
+          '2026-08-03': 0.6,
+          '2026-08-04': 0.8,
+          '2026-08-05': 1.0,
+        }.entries) {
+          expect(
+            intensityWidthFactor(tester, day),
+            closeTo(factor, 1e-6),
+            reason: day,
+          );
+          final sizes = intensityBarSizes(tester, day);
+          expect(sizes.track, const Size(24, 2), reason: '$day track');
+          expect(sizes.fill.height, 2, reason: '$day fill height');
+          expect(
+            sizes.fill.width,
+            closeTo(24 * factor, 1e-6),
+            reason: '$day fill width',
+          );
+        }
+      },
+    );
+
+    testWidgets(
+      'a day with no logged intensity draws no intensity bar at all',
+      (tester) async {
+        useTallScreen(tester);
+        final harness = configuredHarness(
+          FakeHttpAdapter([
+            FakeReply(200, body: feelingsCatalogJson()),
+            FakeReply(
+              200,
+              body: monthlySummaryJson(
+                month: '2026-08',
+                days: [
+                  daySummaryJson(
+                    date: '2026-08-01',
+                    feelings: const [
+                      'happy',
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ]),
+        );
+        await tester.pumpWidget(app(harness));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('calendarIntensityBar-2026-08-01')),
+          findsNothing,
+        );
       },
     );
   });
@@ -322,6 +494,44 @@ void main() {
         find.descendant(of: loggedCell, matching: find.byType(FeelingDot)),
         findsNWidgets(3),
       );
+    });
+
+    testWidgets('render at their requested 6x6 size, not zero (#108 check)', (
+      tester,
+    ) async {
+      // FeelingDot sizes itself with a plain Container(width:, height:),
+      // not a FractionallySizedBox-in-a-Stack — a different shape from the
+      // bars' — but #108 was found by not trusting a "renders fine" guess
+      // about painted-but-thin elements in this cell, so this confirms it
+      // rather than assuming it from the widget tree alone.
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter([
+          FakeReply(200, body: _richCatalogJson()),
+          FakeReply(
+            200,
+            body: monthlySummaryJson(
+              month: '2026-08',
+              days: [
+                daySummaryJson(date: '2026-08-05', feelings: _sixFeelingKeys),
+              ],
+            ),
+          ),
+        ]),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      final loggedCell = find.byKey(
+        const ValueKey('calendarDayCell-2026-08-05'),
+      );
+      final dots = find.descendant(
+        of: loggedCell,
+        matching: find.byType(FeelingDot),
+      );
+      for (var i = 0; i < 3; i++) {
+        expect(tester.getSize(dots.at(i)), const Size(6, 6), reason: '$i');
+      }
     });
   });
 
@@ -508,6 +718,13 @@ void main() {
               volumeWidthFactor(tester, '2026-08-05'),
               closeTo(0.4, 1e-6),
             );
+            // Rendered pixels in every palette/theme combination, not just
+            // this one factor — #108's bug did not depend on which colours
+            // were in play, so neither does its regression check.
+            final sizes = volumeBarSizes(tester, '2026-08-05');
+            expect(sizes.track, const Size(24, 2));
+            expect(sizes.fill.height, 2);
+            expect(sizes.fill.width, closeTo(24 * 0.4, 1e-6));
             final volumeFill = tester.widgetList<ColoredBox>(
               find.descendant(
                 of: find.byKey(
