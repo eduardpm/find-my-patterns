@@ -14,6 +14,7 @@ import 'package:find_my_patterns/features/compose/entry_composer_controller.dart
 import 'package:find_my_patterns/features/compose/entry_composer_screen.dart';
 import 'package:find_my_patterns/features/compose/first_pattern_card.dart';
 import 'package:find_my_patterns/features/compose/first_pattern_copy.dart';
+import 'package:find_my_patterns/features/compose/insight_progress_panel.dart';
 import 'package:find_my_patterns/features/compose/pairing_step.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -391,6 +392,42 @@ void main() {
       await tester.tap(find.widgetWithText(ElevatedButton, 'Done'));
       expect(done, isTrue);
     });
+
+    testWidgets(
+      'with near-threshold progress, shows the insight progress panel '
+      'under the echo panel (#37, L-2)',
+      (tester) async {
+        final replies = [
+          ...bootReplies(),
+          FakeReply(200, body: entryJson()),
+          FakeReply(200, body: entryJson(version: 2)),
+          FakeReply(
+            200,
+            body: echoJson(count: 0, progress: progressJson()),
+          ),
+        ];
+        await tester.pumpWidget(buildTestable(replies: replies));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Write freely instead'));
+        await tester.pump();
+        await tester.enterText(find.byType(TextFormField), 'A long day.');
+        await tester.pump();
+        await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+        await tester.pumpAndSettle();
+        final confirmButton = find.widgetWithText(ElevatedButton, 'Confirm');
+        await tester.ensureVisible(confirmButton);
+        await tester.tap(confirmButton);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Entry saved'), findsOneWidget);
+        expect(find.byType(InsightProgressPanel), findsOneWidget);
+        expect(
+          find.text('Tracking 7 topics across 12 entries.'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Closest to a pattern'), findsOneWidget);
+      },
+    );
   });
 
   group('the pairing step (E-1c)', () {

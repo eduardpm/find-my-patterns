@@ -287,6 +287,30 @@ export function isMixedValence(
   return hasPositive && hasNegative;
 }
 
+/**
+ * Rule 2/3 of the pairing rule above, as a standalone predicate (#37, L-2).
+ *
+ * `PatternsService#buildCandidates` had this as a private closure over its own per-entry maps —
+ * correct, but not callable from anywhere counting occurrences for less than the whole diary. The
+ * insight progress surface (`progress.service.ts`) needs the exact same yes/no for one entry at a
+ * time — a near-threshold count that disagreed with what a future recompute would actually count
+ * would be the dishonesty this product's whole "counts only" premise exists to rule out — so the
+ * predicate is extracted here, pure and entry-shape-agnostic, and both call sites now share it
+ * rather than keeping two hand-written copies of one rule in sync by hand.
+ *
+ * An entry is excluded from one specific `(topicId, feelingKey)` pair's count exactly when it is
+ * mixed-valence *and* that exact pair is not among its own confirmed pairings. Single-valence
+ * entries (`isMixed === false`) are never excluded from anything, whatever `confirmedPairs` holds.
+ */
+export function isPairExcluded(
+  isMixed: boolean,
+  confirmedPairs: ReadonlySet<string>,
+  topicId: string,
+  feelingKey: string,
+): boolean {
+  return isMixed && !confirmedPairs.has(`${topicId} ${feelingKey}`);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Sentences
 // ---------------------------------------------------------------------------------------------

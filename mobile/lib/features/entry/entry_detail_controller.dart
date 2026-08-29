@@ -211,7 +211,7 @@ class EntryDetailController extends Notifier<EntryDetailState> {
     try {
       final matches = await ref.read(entriesApiProvider).echo(entry.id);
       if (!ref.mounted) return;
-      state = state.copyWith(supportingPatterns: matches);
+      state = state.copyWith(supportingPatterns: matches.echoes);
     } on ApiError {
       // Silent -- see above.
     }
@@ -360,9 +360,9 @@ class EntryDetailController extends Notifier<EntryDetailState> {
     // shaping the evidence it then counts. A failure here is silent: the
     // edit itself already saved, which is what the user was doing.
     try {
-      final echoes = await ref.read(entriesApiProvider).echo(entryId);
+      final result = await ref.read(entriesApiProvider).echo(entryId);
       if (!ref.mounted) return;
-      state = state.copyWith(echoes: echoes);
+      state = state.copyWith(echoes: result.echoes);
     } on ApiError {
       // Silent -- see above.
     }

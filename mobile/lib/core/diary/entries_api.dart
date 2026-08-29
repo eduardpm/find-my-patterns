@@ -176,17 +176,11 @@ class EntriesApi {
     );
   }
 
-  /// What the diary already says about the topics in the entry [id] —
-  /// asked only after the entry is stored.
-  Future<List<PatternEcho>> echo(String id) => _client.getObject(
-    AppConfig.entryEchoPath(id),
-    (json) => [
-      for (final dto
-          in (json['echoes'] as List<Object?>?)?.cast<JsonObject>() ??
-              const <JsonObject>[])
-        patternEchoFromJson(dto),
-    ],
-  );
+  /// What the diary already says about the topics in the entry [id] --
+  /// asked only after the entry is stored -- alongside the near-threshold
+  /// [InsightProgress] the same save produced (#37, L-2).
+  Future<EchoResult> echo(String id) =>
+      _client.getObject(AppConfig.entryEchoPath(id), echoResultFromJson);
 
   /// General edit: either [text] or [feelings] may be omitted to leave it
   /// unchanged.

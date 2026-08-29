@@ -20,6 +20,8 @@ import {
   hourBlockKey,
   invert,
   inverseNarrative,
+  isMixedValence,
+  isPairExcluded,
   isStrong,
   percent,
   recommendationHeadlineFor,
@@ -355,5 +357,40 @@ describe('"Worth trying" recommendation sentences (R-1)', () => {
   it('gives each kind its own headline — not re-derivable from `action_topic` alone', () => {
     expect(recommendationHeadlineFor('inverse', 'exercise')).toBe('More exercise days');
     expect(recommendationHeadlineFor('forward', 'reading')).toBe('Keep doing reading');
+  });
+});
+
+describe('mixed-valence pairing (E-1b, #26)', () => {
+  const valenceOf = (key: string): string | undefined =>
+    ({ happy: 'positive', disappointed: 'negative', calm: 'neutral' })[key];
+
+  it('is mixed only when a positive and a negative feeling both appear', () => {
+    expect(isMixedValence(['happy', 'disappointed'], valenceOf)).toBe(true);
+    expect(isMixedValence(['happy'], valenceOf)).toBe(false);
+    expect(isMixedValence(['disappointed'], valenceOf)).toBe(false);
+    expect(isMixedValence(['happy', 'calm'], valenceOf)).toBe(false);
+    expect(isMixedValence(['disappointed', 'calm'], valenceOf)).toBe(false);
+    expect(isMixedValence(['calm', 'calm'], valenceOf)).toBe(false);
+    expect(isMixedValence([], valenceOf)).toBe(false);
+  });
+
+  it('skips a feeling key it has no valence for, rather than guessing', () => {
+    expect(isMixedValence(['happy', 'unknown-key'], valenceOf)).toBe(false);
+  });
+
+  describe('isPairExcluded (#37, L-2): the predicate extracted for reuse by ProgressService', () => {
+    it('never excludes a single-valence entry, whatever confirmedPairs holds', () => {
+      expect(isPairExcluded(false, new Set(), 'topic-a', 'happy')).toBe(false);
+      expect(isPairExcluded(false, new Set(['topic-a happy']), 'topic-a', 'sad')).toBe(false);
+    });
+
+    it('excludes a mixed-valence entry from a pair it never confirmed', () => {
+      expect(isPairExcluded(true, new Set(), 'topic-a', 'happy')).toBe(true);
+      expect(isPairExcluded(true, new Set(['topic-b happy']), 'topic-a', 'happy')).toBe(true);
+    });
+
+    it('does not exclude a mixed-valence entry from the exact pair it confirmed', () => {
+      expect(isPairExcluded(true, new Set(['topic-a happy']), 'topic-a', 'happy')).toBe(false);
+    });
   });
 });

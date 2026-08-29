@@ -94,6 +94,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubEntriesRepo() as never,
       service,
       undefined as never,
+      undefined as never,
       stubTopicsService() as never,
     );
 
@@ -116,6 +117,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubEntriesRepo() as never,
       service,
       undefined as never,
+      undefined as never,
       stubTopicsService() as never,
     );
 
@@ -136,6 +138,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
     const controller = new EntriesController(
       stubEntriesRepo() as never,
       service,
+      undefined as never,
       undefined as never,
       stubTopicsService() as never,
     );

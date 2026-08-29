@@ -20,6 +20,7 @@ import '../../core/widgets/pattern_echo_panel.dart';
 import 'entry_composer_controller.dart';
 import 'first_pattern_card.dart';
 import 'guided_question_flow.dart';
+import 'insight_progress_panel.dart';
 import 'pairing_step.dart';
 import 'voice_answer_recorder.dart';
 
@@ -233,10 +234,15 @@ class EntryComposerScreen extends ConsumerWidget {
                           if (finished) done();
                         },
                       ),
-                      EchoStage(:final echoes, :final celebratedPattern) =>
+                      EchoStage(
+                        :final echoes,
+                        :final celebratedPattern,
+                        :final progress,
+                      ) =>
                         _EchoStep(
                           echoes: echoes,
                           celebratedPattern: celebratedPattern,
+                          progress: progress,
                           onDone: done,
                           onCelebrationTap: () {
                             // Same destination a tap on the first-pattern
@@ -752,6 +758,7 @@ class _EchoStep extends StatelessWidget {
     required this.onDone,
     this.celebratedPattern,
     this.onCelebrationTap,
+    this.progress,
   });
 
   final List<PatternEcho> echoes;
@@ -767,6 +774,12 @@ class _EchoStep extends StatelessWidget {
   /// renders a dead tap target if a caller ever supplies one without the
   /// other.
   final VoidCallback? onCelebrationTap;
+
+  /// The cold-start counting surface (#37, L-2) -- see
+  /// `EntryComposerController._loadEcho` for why this is already `null`
+  /// whenever [InsightProgress.hasContent] would be false, so
+  /// [InsightProgressPanel] never has to repeat that check.
+  final InsightProgress? progress;
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
@@ -789,6 +802,10 @@ class _EchoStep extends StatelessWidget {
           const SizedBox(height: JournalSpacing.x5),
         ],
         PatternEchoPanel(echoes: echoes, onDismiss: onDone),
+        if (progress != null) ...[
+          const SizedBox(height: JournalSpacing.x5),
+          InsightProgressPanel(progress: progress!),
+        ],
         const SizedBox(height: JournalSpacing.x5),
         PillButton(onPressed: onDone, child: const Text('Done')),
       ],
