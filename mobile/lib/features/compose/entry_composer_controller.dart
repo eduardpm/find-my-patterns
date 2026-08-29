@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/diary/diary_providers.dart';
@@ -7,6 +9,15 @@ import '../../core/diary/feeling.dart';
 import '../../core/diary/guiding_question.dart';
 import '../../core/diary/pattern.dart';
 import '../../core/network/api_error.dart';
+import 'composer_draft.dart';
+
+/// The store the composer reads and writes its in-progress draft through.
+///
+/// Overridable so tests can substitute an in-memory fake, the same way
+/// `settingsStoreProvider` works.
+final composerDraftStoreProvider = Provider<ComposerDraftStore>(
+  (ref) => const SharedPreferencesComposerDraftStore(),
+);
 
 /// Which step of the "new entry" flow is currently showing.
 sealed class const ComposerStage();
@@ -65,16 +76,46 @@ class const ComposerState({
   /// out, so the manual picker is never gated on it.
   final bool isPollingSuggestions = false,
   final String? errorMessage,
+
+  /// When a draft was restored on this composer session, the moment it was
+  /// last autosaved -- shown in the dismissible "Continuing your draft
+  /// from…" notice. Null once there is nothing to restore, or once the
+  /// notice has been dismissed.
+  final DateTime? restoredDraftAt,
 }) {
   /// A sentinel distinguishing "leave [errorMessage] alone" from "clear
   /// it" in [copyWith] — a plain `errorMessage ?? this.errorMessage` can
   /// never null the field back out once set.
   static const Object _unset = Object();
 
+  /// Whether dismissing the composer right now would lose something —
+  /// drives both the dismiss guard and whether the autosave has anything
+  /// worth persisting.
+  ///
+  /// Deliberately false outside [GuidedStage] and [FreeformStage]: once the
+  /// flow reaches [ConfirmFeelingStage] the entry is already stored, so
+  /// leaving it with no confirmed feelings is an intentional allowed state,
+  /// not something to warn about.
+  bool get hasUnsavedComposition {
+    final mode = switch (stage) {
+      GuidedStage() => ComposerDraftMode.guided,
+      FreeformStage() => ComposerDraftMode.freeform,
+      ConfirmFeelingStage() || EchoStage() => null,
+    };
+    if (mode == null) return false;
+    return composerDraftHasContent(
+      mode: mode,
+      guidedStepIndex: guidedStepIndex,
+      guidedAnswers: guidedAnswers,
+      freeformText: freeformText,
+    );
+  }
+
   /// A copy of this state with the given fields replaced.
   ///
   /// Pass `errorMessage: null` to explicitly clear it; omit it to leave the
-  /// current value alone.
+  /// current value alone. [restoredDraftAt] works the same way, through its
+  /// own sentinel.
   ComposerState copyWith({
     ComposerStage? stage,
     List<GuidingQuestion>? guidingQuestions,
@@ -86,6 +127,7 @@ class const ComposerState({
     bool? isSaving,
     bool? isPollingSuggestions,
     Object? errorMessage = _unset,
+    Object? restoredDraftAt = _unset,
   }) => ComposerState(
     stage: stage ?? this.stage,
     guidingQuestions: guidingQuestions ?? this.guidingQuestions,
@@ -99,6 +141,9 @@ class const ComposerState({
     errorMessage: identical(errorMessage, _unset)
         ? this.errorMessage
         : errorMessage as String?,
+    restoredDraftAt: identical(restoredDraftAt, _unset)
+        ? this.restoredDraftAt
+        : restoredDraftAt as DateTime?,
   );
 }
 
@@ -122,6 +167,18 @@ class EntryComposerController extends Notifier<ComposerState> {
   late Future<void> _ready;
   Future<void>? _suggestionPoll;
 
+  /// The pending debounced draft save/clear, if any -- a real `Timer`
+  /// rather than a bare injected delay (contrast [pollDelay]): firing it
+  /// never changes [ComposerState], so unlike the suggestion poll's timer,
+  /// nothing about it would ever prompt a rebuild that lets `pumpAndSettle`
+  /// notice there is still something to wait out. Explicit cancellation on
+  /// every reschedule, on [discardDraft], on [_enterConfirmStage] and on
+  /// disposal (see [build]) is what keeps a stale write from landing later
+  /// and what keeps a test's widget tree free of a timer still ticking
+  /// after teardown.
+  Timer? _draftSaveTimer;
+  Completer<void>? _draftSaveCompleter;
+
   /// Resolves once the three background loads in [build] have all settled
   /// (each swallows its own [ApiError], so this never throws).
   ///
@@ -141,22 +198,64 @@ class EntryComposerController extends Notifier<ComposerState> {
   /// awaits this. Resolves immediately when no poll is running.
   Future<void> get suggestionPollSettled => _suggestionPoll ?? Future.value();
 
+  /// Resolves once the most recently scheduled debounced draft save (or
+  /// clear) has settled. Exposed as a test seam the same way
+  /// [suggestionPollSettled] is; production code never awaits this.
+  /// Resolves immediately when no save is pending.
+  Future<void> get draftSaveSettled =>
+      _draftSaveCompleter?.future ?? Future.value();
+
   /// Injected into the suggestion poll loop below, so a test never waits on
   /// a real clock -- mirrors `TranscriptionsApi.transcribe`'s `delay` seam.
   /// Mutable purely as a test seam; production code never touches this
   /// after construction.
   Future<void> Function(Duration) pollDelay = Future.delayed;
 
+  /// How long [_scheduleDraftSave] waits after the last edit (a keystroke
+  /// or a step transition) before writing the draft to disk. Long enough
+  /// that a fast typist does not trigger a write per keystroke, short
+  /// enough that killing the app a moment later still loses at most this
+  /// much. Mutable purely as a test seam, the same way [pollDelay] is --
+  /// shrinking it (typically to [Duration.zero]) lets a test drive the
+  /// debounce with a plain `tester.pump` instead of waiting out the real
+  /// interval.
+  Duration draftSaveDebounce = const Duration(milliseconds: 500);
+
   @override
   ComposerState build() {
+    // Whatever is pending when this notifier goes away -- the composer was
+    // closed, or a test's container was disposed -- must not fire
+    // afterwards: [ref.mounted] alone does not stop a `Timer` from ticking.
+    ref.onDispose(() => _draftSaveTimer?.cancel());
     _ready = _loadAll();
     return const ComposerState();
   }
 
   Future<void> _loadAll() async {
+    await _restoreDraft();
     await _loadFeelingGroups();
     await _loadGuidingQuestions();
     await _loadConstants();
+  }
+
+  /// Offers back whatever was saved by [_scheduleDraftSave] on a previous
+  /// run of the app, if it still has anything in it.
+  ///
+  /// Read once, on [build] -- a draft written to disk after the composer
+  /// has already opened is this same session's own autosave, not a second
+  /// device's, so there is nothing to reconcile mid-session.
+  Future<void> _restoreDraft() async {
+    final draft = await ref.read(composerDraftStoreProvider).load();
+    if (!ref.mounted || draft == null || !draft.hasContent) return;
+    state = state.copyWith(
+      stage: draft.mode == ComposerDraftMode.guided
+          ? const GuidedStage()
+          : const FreeformStage(),
+      guidedStepIndex: draft.guidedStepIndex,
+      guidedAnswers: draft.guidedAnswers,
+      freeformText: draft.freeformText,
+      restoredDraftAt: draft.savedAt,
+    );
   }
 
   Future<void> _loadGuidingQuestions() async {
@@ -220,25 +319,95 @@ class EntryComposerController extends Notifier<ComposerState> {
         ? state.freeformText
         : carried;
     state = state.copyWith(stage: const FreeformStage(), freeformText: seeded);
+    _scheduleDraftSave();
   }
 
   /// Switches back to the guided flow, at whatever step it was left on.
-  void switchToGuided() => state = state.copyWith(stage: const GuidedStage());
+  void switchToGuided() {
+    state = state.copyWith(stage: const GuidedStage());
+    _scheduleDraftSave();
+  }
 
   /// Records the answer to [questionKey].
   void updateGuidedAnswer(String questionKey, String text) {
     state = state.copyWith(
       guidedAnswers: {...state.guidedAnswers, questionKey: text},
     );
+    _scheduleDraftSave();
   }
 
   /// Moves the guided flow to [index].
-  void updateGuidedStep(int index) =>
-      state = state.copyWith(guidedStepIndex: index);
+  void updateGuidedStep(int index) {
+    state = state.copyWith(guidedStepIndex: index);
+    _scheduleDraftSave();
+  }
 
   /// Records the freeform draft.
-  void updateFreeformText(String text) =>
-      state = state.copyWith(freeformText: text);
+  void updateFreeformText(String text) {
+    state = state.copyWith(freeformText: text);
+    _scheduleDraftSave();
+  }
+
+  /// (Re)starts the debounce timer that writes the current composition to
+  /// [composerDraftStoreProvider] -- called on every text change and every
+  /// step transition, per the mutating methods above.
+  ///
+  /// Cancelling and replacing [_draftSaveTimer] on every call is the
+  /// debounce itself: only the last edit inside any [draftSaveDebounce]
+  /// window ever reaches disk, exactly the way a search box's "wait for
+  /// typing to pause" debounce works.
+  void _scheduleDraftSave() {
+    _draftSaveTimer?.cancel();
+    final completer = Completer<void>();
+    _draftSaveCompleter = completer;
+    _draftSaveTimer = Timer(draftSaveDebounce, () {
+      unawaited(_writeDraft().whenComplete(completer.complete));
+    });
+  }
+
+  Future<void> _writeDraft() async {
+    if (!ref.mounted) return;
+    final store = ref.read(composerDraftStoreProvider);
+    if (!state.hasUnsavedComposition) {
+      await store.clear();
+      return;
+    }
+    await store.save(
+      ComposerDraft(
+        mode: state.stage is FreeformStage
+            ? ComposerDraftMode.freeform
+            : ComposerDraftMode.guided,
+        guidedStepIndex: state.guidedStepIndex,
+        guidedAnswers: state.guidedAnswers,
+        freeformText: state.freeformText,
+        savedAt: DateTime.now().toUtc(),
+      ),
+    );
+  }
+
+  /// Hides the "Continuing your draft…" notice without discarding
+  /// anything -- the restored answers and step position are left exactly
+  /// as they are.
+  void dismissDraftNotice() => state = state.copyWith(restoredDraftAt: null);
+
+  /// Discards the current composition and its persisted draft, returning
+  /// every guided and freeform field to its default.
+  ///
+  /// Shared by "Discard" on the dismiss-guard sheet and "Start fresh" on
+  /// the restored-draft notice -- both mean the same thing: forget what is
+  /// on screen and start blank. Cancels any debounced save already in
+  /// flight first, so an edit from moments before this was tapped cannot
+  /// land afterwards and resurrect what was just discarded.
+  Future<void> discardDraft() async {
+    _draftSaveTimer?.cancel();
+    state = state.copyWith(
+      guidedAnswers: const {},
+      guidedStepIndex: 0,
+      freeformText: '',
+      restoredDraftAt: null,
+    );
+    await ref.read(composerDraftStoreProvider).clear();
+  }
 
   /// Saves a guided entry from [answers]. A no-op for an empty list.
   ///
@@ -284,15 +453,25 @@ class EntryComposerController extends Notifier<ComposerState> {
   /// by the time the entry was saved -- often it has barely started. Rather
   /// than the step reading a stale, empty `entry.suggestedFeelings` forever,
   /// this polls `GET /entries/{id}` for a fresh copy until one arrives.
+  ///
+  /// The entry is safely stored server-side from this point on, so the
+  /// draft that was standing in for it on this device is no longer needed
+  /// -- cleared immediately (not debounced) and any debounced save still in
+  /// flight from an edit made moments before saving is cancelled the same
+  /// way [discardDraft] cancels one, so it cannot write a stale draft back
+  /// after this clears it.
   void _enterConfirmStage(Entry entry) {
+    _draftSaveTimer?.cancel();
     state = state.copyWith(
       isSaving: false,
       stage: ConfirmFeelingStage(entry),
       isPollingSuggestions: entry.analysisPending,
+      restoredDraftAt: null,
     );
     _suggestionPoll = entry.analysisPending
         ? _pollForSuggestions(entry.id)
         : null;
+    unawaited(ref.read(composerDraftStoreProvider).clear());
   }
 
   /// Whether [ConfirmFeelingStage] is still showing the entry [entryId] --

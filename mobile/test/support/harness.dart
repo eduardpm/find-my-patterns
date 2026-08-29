@@ -4,20 +4,31 @@ import 'package:find_my_patterns/core/network/api_client.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
+import 'package:find_my_patterns/features/compose/composer_draft.dart';
+import 'package:find_my_patterns/features/compose/entry_composer_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'fake_composer_draft_store.dart';
 import 'fake_http.dart';
 import 'fake_settings_store.dart';
 
 /// The pieces a widget test needs to drive the app entirely offline.
 class Harness {
-  /// Wires a fake settings store and a fake HTTP adapter into a provider scope.
+  /// Wires a fake settings store, a fake composer-draft store and a fake
+  /// HTTP adapter into a provider scope.
+  ///
+  /// [initialDraft] seeds [draftStore] the way a previous run of the app
+  /// having already written a draft to disk would -- so a test can open the
+  /// composer straight into "there is a draft to restore" without first
+  /// driving a save through the real controller.
   Harness({
     AppSettings settings = const AppSettings(),
     FakeHttpAdapter? adapter,
     this.requireAuth = false,
+    ComposerDraft? initialDraft,
   }) : store = FakeSettingsStore(settings),
+       draftStore = FakeComposerDraftStore(initialDraft),
        adapter =
            adapter ?? FakeHttpAdapter.always(const FakeReply(200, body: {})) {
     client = ApiClient(dio: Dio()..httpClientAdapter = this.adapter)
@@ -26,6 +37,9 @@ class Harness {
 
   /// The in-memory settings store the app reads and writes.
   final FakeSettingsStore store;
+
+  /// The in-memory composer-draft store the app reads and writes.
+  final FakeComposerDraftStore draftStore;
 
   /// The scripted HTTP adapter behind [client].
   final FakeHttpAdapter adapter;
@@ -65,6 +79,7 @@ class Harness {
     requireAuthProvider.overrideWithValue(requireAuth),
     settingsStoreProvider.overrideWithValue(store),
     apiClientProvider.overrideWithValue(client),
+    composerDraftStoreProvider.overrideWithValue(draftStore),
   ];
 
   /// The retry policy every test uses: none.
