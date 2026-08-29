@@ -864,7 +864,11 @@ export class PatternsService {
         status,
         // #21's explicit instruction: go through the one function the badge is decided by, not a
         // fork of it. `kind: 'context'` falls through its `!== 'inverse'` branch, unchanged.
-        direction: badgeDirectionFor(kind, valences.get(candidate.feelingKey) ?? 'neutral'),
+        direction: badgeDirectionFor(
+          kind,
+          valences.get(candidate.feelingKey) ?? 'neutral',
+          assoc.lift,
+        ),
         narrative_text: contextNarrative(candidate.feelingKey, info.phrase, assoc),
         present_count: assoc.presentCount,
         present_total: assoc.presentTotal,
