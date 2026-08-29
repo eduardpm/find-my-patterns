@@ -90,12 +90,23 @@ export class EntriesController {
     private readonly echoes: EchoService,
   ) {}
 
+  /**
+   * `createEntry` returns a suggestion synchronously only when inference ran inline (the test
+   * double, or a future in-process analyser) — in production `enqueueEntry` only queues the job
+   * and `suggestion` is always null here, because the worker is a separate process that has not
+   * had a chance to run yet. That null used to be read as "nothing to suggest" and reported as
+   * `analysis_pending: false`, which is simply wrong: the job was just queued. Falling back to
+   * `analysisFor` reads the real state of that job — pending right after creation, and later
+   * whatever the worker actually produced — so a poller has an honest signal to poll on.
+   */
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(@Body() body: unknown): Record<string, unknown> {
     const input = parseOrThrow(entryCreateSchema, body ?? {});
     const { entry, suggestion } = this.service.createEntry(input);
-    return toEntryOut(entry, suggestion, false, suggestion ? [suggestion] : []);
+    if (suggestion) return toEntryOut(entry, suggestion, false, [suggestion]);
+    const analysis = this.service.analysisFor(entry.id);
+    return toEntryOut(entry, analysis.suggested, analysis.pending, analysis.suggestedAll);
   }
 
   @Patch(':entryId')

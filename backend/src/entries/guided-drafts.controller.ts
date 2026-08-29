@@ -97,11 +97,18 @@ export class GuidedDraftsController {
     }
   }
 
+  /**
+   * See `EntriesController.create`'s doc comment for why `suggestion` being null does not mean
+   * "nothing to suggest": in production it means the job was just queued, and `analysisFor` is
+   * what reports that honestly instead of a hardcoded `analysis_pending: false`.
+   */
   @Post(':draftKey/finalize')
   finalize(@Param('draftKey') draftKey: string): Record<string, unknown> {
     try {
       const { entry, suggestion } = this.entries.finalizeGuidedDraft(draftKey);
-      return toEntryOut(entry, suggestion);
+      if (suggestion) return toEntryOut(entry, suggestion);
+      const analysis = this.entries.analysisFor(entry.id);
+      return toEntryOut(entry, analysis.suggested, analysis.pending, analysis.suggestedAll);
     } catch (error) {
       if (error instanceof EmptyGuidedDraftError) {
         throw new HttpException('The draft has no answers.', HttpStatus.UNPROCESSABLE_ENTITY);

@@ -227,6 +227,122 @@ void main() {
     });
   });
 
+  group('suggestion polling', () {
+    test(
+      'does not poll when the saved entry is not analysisPending',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(201, body: entryJson()), // analysisPending defaults false
+        ]);
+
+        await env.controller.saveFreeform('A long day.');
+        await env.controller.suggestionPollSettled;
+
+        expect(
+          env.container
+              .read(entryComposerControllerProvider)
+              .isPollingSuggestions,
+          isFalse,
+        );
+        // Nothing beyond the boot calls and the create itself: no GET
+        // /entries/{id} was ever issued.
+        expect(env.adapter.requests, hasLength(4));
+      },
+    );
+
+    test(
+      'polls GET /entries/{id} until a suggestion arrives, then pre-fills it',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(201, body: entryJson(analysisPending: true)),
+          FakeReply(
+            200,
+            body: entryJson(analysisPending: true),
+          ), // still working
+          FakeReply(
+            200,
+            body: entryJson(
+              analysisPending: false,
+              suggestedFeelings: [suggestedFeelingJson(key: 'happy')],
+            ),
+          ),
+        ]);
+        env.controller.pollDelay = (_) async {};
+
+        await env.controller.saveFreeform('A long day.');
+        expect(
+          env.container
+              .read(entryComposerControllerProvider)
+              .isPollingSuggestions,
+          isTrue,
+        );
+
+        await env.controller.suggestionPollSettled;
+
+        final state = env.container.read(entryComposerControllerProvider);
+        expect(state.isPollingSuggestions, isFalse);
+        final entry = (state.stage as ConfirmFeelingStage).entry;
+        expect(entry.suggestedFeelings, hasLength(1));
+        expect(entry.suggestedFeelings.single.feeling.key, 'happy');
+      },
+    );
+
+    test(
+      'gives up after enough attempts and degrades to manual picking, '
+      'without setting an error',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(201, body: entryJson(analysisPending: true)),
+          // 12 more "still working" polls -- one per attempt in
+          // EntryComposerController's poll loop -- and never a settled one.
+          for (var i = 0; i < 12; i++)
+            FakeReply(200, body: entryJson(analysisPending: true)),
+        ]);
+        env.controller.pollDelay = (_) async {};
+
+        await env.controller.saveFreeform('A long day.');
+        await env.controller.suggestionPollSettled;
+
+        final state = env.container.read(entryComposerControllerProvider);
+        expect(state.isPollingSuggestions, isFalse);
+        expect(state.errorMessage, isNull);
+        final entry = (state.stage as ConfirmFeelingStage).entry;
+        expect(entry.suggestedFeelings, isEmpty);
+      },
+    );
+
+    test(
+      'a transient poll failure is retried rather than surfaced as an error',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(201, body: entryJson(analysisPending: true)),
+          FakeReply(500, body: {'error': 'boom'}),
+          FakeReply(
+            200,
+            body: entryJson(
+              analysisPending: false,
+              suggestedFeelings: [suggestedFeelingJson(key: 'sad')],
+            ),
+          ),
+        ]);
+        env.controller.pollDelay = (_) async {};
+
+        await env.controller.saveFreeform('A long day.');
+        await env.controller.suggestionPollSettled;
+
+        final state = env.container.read(entryComposerControllerProvider);
+        expect(state.errorMessage, isNull);
+        expect(state.isPollingSuggestions, isFalse);
+        final entry = (state.stage as ConfirmFeelingStage).entry;
+        expect(entry.suggestedFeelings.single.feeling.key, 'sad');
+      },
+    );
+  });
+
   group('confirmFeelings', () {
     test(
       'returns true and stays off EchoStage when there is nothing to echo',
