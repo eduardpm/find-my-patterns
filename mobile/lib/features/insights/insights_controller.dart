@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/diary/diary_providers.dart';
+import '../../core/diary/experiment.dart';
 import '../../core/diary/insights_api.dart';
 import '../../core/diary/pattern.dart';
 import '../../core/network/api_error.dart';
@@ -20,6 +21,12 @@ class const InsightsPageState({
   final bool insufficientData = false,
   final EngineConstants constants = EngineConstants.placeholder,
   final WhenInsights? whenInsights,
+
+  /// The experiment currently running (R-3b), or `null` when none is.
+  /// Fetched alongside `GET /insights`, the same "own independent fetch,
+  /// swallowed on failure" shape [whenInsights] already has -- see
+  /// [InsightsController._fetchActiveExperiment].
+  final Experiment? activeExperiment,
 }) {
   /// The patterns still holding within the recency window.
   List<Pattern> get active => [
@@ -59,12 +66,26 @@ class InsightsController extends AsyncNotifier<InsightsPageState> {
       insufficientData: result.insufficientData,
       constants: result.constants,
       whenInsights: await _fetchWhenInsights(api),
+      activeExperiment: await _fetchActiveExperiment(),
     );
   }
 
   Future<WhenInsights?> _fetchWhenInsights(InsightsApi api) async {
     try {
       return await api.whenInsights();
+    } on ApiError {
+      return null;
+    }
+  }
+
+  /// The currently active experiment (R-3b), swallowed to `null` on any
+  /// failure -- the same shape [_fetchWhenInsights] already has. A pattern
+  /// card's "Test this pattern"/"Experiment running" state is worth
+  /// getting wrong for a moment over losing the patterns list to an
+  /// unrelated fetch failing.
+  Future<Experiment?> _fetchActiveExperiment() async {
+    try {
+      return await ref.watch(experimentsApiProvider).active();
     } on ApiError {
       return null;
     }

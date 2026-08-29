@@ -18,6 +18,8 @@ import 'package:intl/intl.dart';
 import '../../support/fake_backdate_nudge_store.dart';
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
+import '../experiments/json_fixtures.dart'
+    show experimentJson, noActiveExperimentErrorJson;
 import 'json_fixtures.dart';
 
 void main() {
@@ -25,19 +27,27 @@ void main() {
   final today = CalendarDate.today(now: fixedNow);
   final feelingsReply = FakeReply(200, body: feelingsCatalogJson());
 
+  /// `GET /experiments/active`'s reply when nothing is running (R-3b) --
+  /// the common case every test in this file that is not itself about the
+  /// experiment banner scripts as [loadReplies]' fourth reply.
+  FakeReply noActiveExperimentReply() =>
+      FakeReply(404, body: noActiveExperimentErrorJson());
+
   /// One `refresh`'s worth of replies while showing *today*, once the
-  /// feelings catalog is cached: entries, the monthly summary, then the
-  /// writing-streak series (#40) -- see `today_controller_test.dart`'s
-  /// identically-named helper for why a load of a past day needs
-  /// [pastDayReplies] instead.
+  /// feelings catalog is cached: entries, the monthly summary, the
+  /// writing-streak series (#40), then the active experiment (R-3b) -- see
+  /// `today_controller_test.dart`'s identically-named helper for why a
+  /// load of a past day needs [pastDayReplies] instead.
   List<FakeReply> loadReplies({
     List<Map<String, Object?>> entries = const [],
     List<Map<String, Object?>> days = const [],
     List<CalendarDate> streakDays = const [],
+    FakeReply? activeExperimentReply,
   }) => [
     FakeReply(200, body: entriesJson(entries)),
     FakeReply(200, body: monthlySummaryJson(days: days)),
     FakeReply(200, body: seriesJson(days: streakDays)),
+    activeExperimentReply ?? noActiveExperimentReply(),
   ];
 
   /// One `refresh`'s worth of replies while showing a day other than today:
@@ -54,6 +64,7 @@ void main() {
     required List<FakeReply> replies,
     VoidCallback? onNewEntry,
     ValueChanged<Entry>? onOpenEntry,
+    ValueChanged<String>? onOpenExperiment,
     FakeBackdateNudgeStore? nudgeStore,
   }) {
     final harness = Harness(
@@ -79,7 +90,11 @@ void main() {
         ),
       ],
       child: MaterialApp(
-        home: TodayScreen(onNewEntry: onNewEntry, onOpenEntry: onOpenEntry),
+        home: TodayScreen(
+          onNewEntry: onNewEntry,
+          onOpenEntry: onOpenEntry,
+          onOpenExperiment: onOpenExperiment,
+        ),
       ),
     );
   }
@@ -198,6 +213,70 @@ void main() {
       // again, since it only appears when it would do something.
       expect(find.text('Yesterday'), findsNothing);
       expect(find.widgetWithText(OutlinedButton, 'Today'), findsNothing);
+    });
+  });
+
+  group('active experiment banner (R-3b)', () {
+    testWidgets('shows once an experiment is active, and opens it on tap', (
+      tester,
+    ) async {
+      String? openedId;
+      await tester.pumpWidget(
+        buildTestable(
+          replies: loadReplies(
+            activeExperimentReply: FakeReply(
+              200,
+              body: experimentJson(
+                id: 'experiment-9',
+                patternTopic: 'walking',
+                startDate: today.toString(),
+                endDate: today.addDays(6).toString(),
+              ),
+            ),
+          ),
+          onOpenExperiment: (id) => openedId = id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Experiment: more walking · day 1 of 7'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Experiment: more walking · day 1 of 7'));
+
+      expect(openedId, 'experiment-9');
+    });
+
+    testWidgets('is absent while nothing is running', (tester) async {
+      await tester.pumpWidget(buildTestable(replies: loadReplies()));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Experiment:'), findsNothing);
+    });
+
+    testWidgets('is absent while paging through a past day', (tester) async {
+      await tester.pumpWidget(
+        buildTestable(
+          replies: [
+            ...loadReplies(
+              activeExperimentReply: FakeReply(
+                200,
+                body: experimentJson(patternTopic: 'walking'),
+              ),
+            ),
+            ...pastDayReplies(),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Experiment:'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.chevron_left));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Experiment:'), findsNothing);
     });
   });
 
@@ -624,6 +703,7 @@ void main() {
             FakeReply(500, body: {'error': 'server exploded'}),
             FakeReply(200, body: monthlySummaryJson(days: const [])),
             FakeReply(200, body: seriesJson()),
+            noActiveExperimentReply(),
           ],
         ),
       );

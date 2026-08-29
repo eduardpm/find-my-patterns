@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../network/network_providers.dart';
 import 'entries_api.dart';
+import 'experiments_api.dart';
 import 'feeling.dart';
 import 'feelings_api.dart';
 import 'guiding_question.dart';
@@ -49,6 +50,11 @@ final topicsApiProvider = Provider<TopicsApi>(
 /// Uploading a recording and polling for its transcript.
 final transcriptionsApiProvider = Provider<TranscriptionsApi>(
   (ref) => TranscriptionsApi(ref.watch(apiClientProvider)),
+);
+
+/// Starting, reading, and abandoning N-of-1 experiments (R-3a/R-3b).
+final experimentsApiProvider = Provider<ExperimentsApi>(
+  (ref) => ExperimentsApi(ref.watch(apiClientProvider)),
 );
 
 /// The feeling vocabulary, loaded once and shared by every screen that needs

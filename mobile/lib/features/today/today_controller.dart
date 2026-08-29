@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/diary/calendar_date.dart';
 import '../../core/diary/diary_providers.dart';
 import '../../core/diary/entry.dart';
+import '../../core/diary/experiment.dart';
 import '../../core/diary/monthly_summary.dart';
 import '../../core/diary/writing_streak.dart';
 import '../../core/network/api_error.dart';
@@ -66,6 +67,13 @@ class const TodayState(
   /// is read back.
   final bool nudgeDismissed = true,
 
+  /// The experiment currently running (R-3b), or `null` when none is.
+  /// Fetched alongside the writing streak -- see [streakDays]'s doc
+  /// comment for why that fetch, and this one, only happen while [date] is
+  /// today: an experiment is a fact about the app, not about whichever day
+  /// is on screen, and the banner it feeds only ever shows on Today.
+  final Experiment? activeExperiment,
+
   /// A reload is in flight over content that is already on screen.
   final bool isRefreshing = false,
 
@@ -95,6 +103,7 @@ class const TodayState(
     int? streakDays,
     int? totalEntries,
     bool? nudgeDismissed,
+    Object? activeExperiment = _unset,
     bool? isRefreshing,
     bool? hasLoaded,
     Object? errorMessage = _unset,
@@ -107,6 +116,9 @@ class const TodayState(
     streakDays: streakDays ?? this.streakDays,
     totalEntries: totalEntries ?? this.totalEntries,
     nudgeDismissed: nudgeDismissed ?? this.nudgeDismissed,
+    activeExperiment: identical(activeExperiment, _unset)
+        ? this.activeExperiment
+        : activeExperiment as Experiment?,
     isRefreshing: isRefreshing ?? this.isRefreshing,
     hasLoaded: hasLoaded ?? this.hasLoaded,
     errorMessage: identical(errorMessage, _unset)
@@ -283,6 +295,30 @@ class TodayController extends Notifier<TodayState> {
     }
 
     await _loadStreak(date, generation);
+    await _loadActiveExperiment(date, generation);
+  }
+
+  /// Refreshes [TodayState.activeExperiment] (R-3b).
+  ///
+  /// Gated on `date == today` for the same reason [_loadStreak] is: an
+  /// active experiment is a fact about the app, not about whichever day is
+  /// on screen, so browsing history costs no extra request for a banner
+  /// that never shows there. A failed fetch is silent, matching every
+  /// other best-effort load in this method -- the banner simply does not
+  /// appear until the next successful refresh.
+  Future<void> _loadActiveExperiment(CalendarDate date, int generation) async {
+    if (date != today) {
+      state = state.copyWith(activeExperiment: null);
+      return;
+    }
+    try {
+      final experiment = await ref.read(experimentsApiProvider).active();
+      if (generation != _generation) return;
+      state = state.copyWith(activeExperiment: experiment);
+    } on ApiError {
+      if (generation != _generation) return;
+      state = state.copyWith(activeExperiment: null);
+    }
   }
 
   /// Refreshes [TodayState.streakDays] (#40) and [TodayState.totalEntries]
