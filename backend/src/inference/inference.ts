@@ -13,6 +13,19 @@ import type { SuggestedFeeling } from '../domain/types';
  */
 export { FEELING_KEYS, FEELING_GROUP_KEYS } from '../db/feeling-vocabulary';
 
+/**
+ * One topic↔feeling pairing the analyser proposed for an entry (E-1a), before it is resolved to a
+ * stored topic id. `topic` names an entry of {@link EntryAnalysis.topics} exactly — the caller
+ * that applies the analysis is what maps a proposed topic phrase onto its canonical, persisted
+ * topic row. `feelingKeys` is always a subset of the entry's own proposed feelings: the whole
+ * point of aspect-based extraction is *which of the feelings already found* a topic goes with, not
+ * a second, independent guess.
+ */
+export interface ProposedPairing {
+  topic: string;
+  feelingKeys: string[];
+}
+
 export interface EntryAnalysis {
   /**
    * Every feeling the analyser found in the text, strongest first — an entry about a hard day
@@ -21,6 +34,12 @@ export interface EntryAnalysis {
    */
   feelings: SuggestedFeeling[];
   topics: string[];
+  /**
+   * For each topic above that the text clearly ties to one or more of `feelings`, that pairing
+   * (E-1a). A topic with no clear feeling association is simply absent here — "no pairing" is a
+   * normal, common answer, not a gap to fill in.
+   */
+  pairings: ProposedPairing[];
 }
 
 export interface EntryInference {
@@ -108,7 +127,7 @@ export class QueuedTranscriptFormatting implements TranscriptFormatting {
 /** Test-only contract double: production always uses the durable queue above. */
 export class ImmediateTestInference implements EntryInference {
   enqueueEntry(): EntryAnalysis {
-    return { feelings: [{ key: 'neutral', confidence: 0 }], topics: [] };
+    return { feelings: [{ key: 'neutral', confidence: 0 }], topics: [], pairings: [] };
   }
 }
 

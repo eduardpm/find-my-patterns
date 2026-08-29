@@ -5,6 +5,11 @@ import { MAX_INTENSITY, MIN_INTENSITY } from '../insights/constants';
 /** Every value `diary_entries.feeling_source` is allowed to hold. */
 const FEELING_SOURCES = ['unset', 'suggested', 'confirmed', 'overridden'];
 
+/** Every value `entry_topic_feelings.source` is allowed to hold (E-1a) — no `'unset'`: a pairing
+ * that was never proposed or chosen simply has no row, the same way a topic no entry mentions has
+ * no `entry_topics` row. */
+const PAIRING_SOURCES = ['suggested', 'confirmed', 'overridden'];
+
 /**
  * FR-018 — refuse to run against a diary this backend cannot fully interpret.
  *
@@ -130,6 +135,12 @@ const REQUIRED: Record<string, Record<string, string>> = {
     created_at: 'DATETIME',
     started_at: 'DATETIME',
     completed_at: 'DATETIME',
+  },
+  entry_topic_feelings: {
+    entry_id: 'VARCHAR(36)',
+    topic_id: 'VARCHAR(36)',
+    feeling_key: 'VARCHAR(32)',
+    source: 'VARCHAR(16)',
   },
 };
 
@@ -340,6 +351,19 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
       decodeDate(String(row.start_date));
       decodeDate(String(row.end_date));
       decodeDateTime(String(row.created_at));
+    },
+  );
+
+  validateRows(
+    'entry_topic_feelings',
+    db
+      .prepare('SELECT entry_id AS id, topic_id, feeling_key, source FROM entry_topic_feelings')
+      .all() as Array<Record<string, unknown>>,
+    problems,
+    (row) => {
+      if (!feelingKeys.has(String(row.feeling_key))) throw new Error('unknown feeling key');
+      if (!PAIRING_SOURCES.includes(String(row.source)))
+        throw new Error('unsupported pairing source');
     },
   );
 

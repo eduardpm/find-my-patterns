@@ -14,7 +14,7 @@ import {
   GROUP_BY_FEELING_KEY,
   MAX_FEELINGS_PER_ENTRY,
 } from '../../src/db/feeling-vocabulary';
-import { reconcileFeelings } from '../../src/inference/worker';
+import { reconcileFeelings, reconcilePairings } from '../../src/inference/worker';
 
 describe('the feeling vocabulary', () => {
   it('keeps every key the original eight-feeling diary used', () => {
@@ -123,5 +123,78 @@ describe('reconcileFeelings', () => {
 
   it('returns nothing when the model proposed nothing', () => {
     expect(reconcileFeelings([])).toEqual([]);
+  });
+});
+
+describe('reconcilePairings (E-1a)', () => {
+  const topics = ['exercise', 'family'];
+  const feelings = [
+    { key: 'disappointed', confidence: 0.9 },
+    { key: 'grateful', confidence: 0.8 },
+  ];
+
+  it('keeps a pairing naming a topic and a feeling this analysis actually kept', () => {
+    expect(
+      reconcilePairings([{ topic: 'exercise', feeling_keys: ['disappointed'] }], topics, feelings),
+    ).toEqual([{ topic: 'exercise', feelingKeys: ['disappointed'] }]);
+  });
+
+  it('drops a pairing for a topic this analysis did not extract', () => {
+    expect(
+      reconcilePairings([{ topic: 'travel', feeling_keys: ['grateful'] }], topics, feelings),
+    ).toEqual([]);
+  });
+
+  it('drops a feeling this analysis did not itself propose, rather than trusting the model', () => {
+    // `lonely` is not in `feelings` — aspect-based extraction is "which of the feelings already
+    // found", never a second, independent guess (Principle III).
+    expect(
+      reconcilePairings([{ topic: 'exercise', feeling_keys: ['lonely'] }], topics, feelings),
+    ).toEqual([]);
+  });
+
+  it('keeps the feelings that survive even when a sibling in the same pairing is dropped', () => {
+    expect(
+      reconcilePairings(
+        [{ topic: 'exercise', feeling_keys: ['lonely', 'disappointed'] }],
+        topics,
+        feelings,
+      ),
+    ).toEqual([{ topic: 'exercise', feelingKeys: ['disappointed'] }]);
+  });
+
+  it('drops a topic entirely once every one of its feelings is filtered out', () => {
+    // Task 1: "topics with no clear feeling association return an empty list (that is fine and
+    // common)" — the model saying so explicitly and everything being filtered out both land here.
+    expect(reconcilePairings([{ topic: 'exercise', feeling_keys: [] }], topics, feelings)).toEqual(
+      [],
+    );
+  });
+
+  it('normalises a proposed topic before matching it against the extracted list', () => {
+    expect(
+      reconcilePairings(
+        [{ topic: '  Exercise!  ', feeling_keys: ['disappointed'] }],
+        topics,
+        feelings,
+      ),
+    ).toEqual([{ topic: 'exercise', feelingKeys: ['disappointed'] }]);
+  });
+
+  it('unions feeling keys when the model pairs the same topic twice', () => {
+    expect(
+      reconcilePairings(
+        [
+          { topic: 'exercise', feeling_keys: ['disappointed'] },
+          { topic: 'exercise', feeling_keys: ['grateful'] },
+        ],
+        topics,
+        feelings,
+      ),
+    ).toEqual([{ topic: 'exercise', feelingKeys: ['disappointed', 'grateful'] }]);
+  });
+
+  it('returns nothing when the model proposed no pairings', () => {
+    expect(reconcilePairings([], topics, feelings)).toEqual([]);
   });
 });

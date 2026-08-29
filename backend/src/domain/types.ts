@@ -101,3 +101,24 @@ export interface SuggestedFeeling {
   key: string;
   confidence: number;
 }
+
+/**
+ * How a topic↔feeling pairing came to be stored — the same three-state provenance
+ * `FeelingSource` carries, minus `'unset'`: a pairing nobody proposed or chose simply has no row
+ * (E-1a), the same way a topic no entry mentions has no `entry_topics` row.
+ */
+export type PairingSource = 'suggested' | 'confirmed' | 'overridden';
+
+/**
+ * One topic↔feeling link on an entry (E-1a) — the sub-entry attribution that keeps a mixed-valence
+ * entry ("missed my workout, disappointing — but a lovely call with my family") from feeding false
+ * pairs into the pattern engine (workout×grateful, family×disappointed). `topic` is carried
+ * alongside `topicId` because, unlike `entry_topics`, this is the only place a client can learn
+ * which topics an entry's pairings are even about — entries do not otherwise serve their topics.
+ */
+export interface TopicFeelingPairing {
+  topicId: string;
+  topic: string;
+  feelingKey: string;
+  source: PairingSource;
+}

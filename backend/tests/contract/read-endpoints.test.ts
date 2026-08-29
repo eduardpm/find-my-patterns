@@ -177,6 +177,7 @@ describe('GET /entries?date=', () => {
         'raw_text',
         'suggested_feeling',
         'suggested_feelings',
+        'topic_feelings',
         'version',
       ]);
     }

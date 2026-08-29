@@ -73,6 +73,29 @@ export const entryUpdateSchema = z.object({
 
 export const versionQuerySchema = z.coerce.number().int();
 
+/**
+ * One user-confirmed or user-overridden topic↔feeling pairing (E-1a).
+ *
+ * `source` is deliberately absent — it is derived server-side, from comparison against what the
+ * worker last suggested, the same way `feeling_source` is derived from `feeling_keys` rather than
+ * sent by the client. `feeling_key` is checked against the whole vocabulary here; whether it is
+ * actually a feeling *on this entry* is a per-entry fact only `EntriesService` can check.
+ */
+export const topicFeelingPairingInputSchema = z.object({
+  topic_id: z.string().trim().min(1),
+  feeling_key: z.enum(FEELING_KEYS),
+});
+
+/**
+ * The whole set replaces whatever pairings were stored for the entry (E-1a) — the same
+ * overwrite-the-set contract `feeling_keys` already has on `PATCH /entries/{id}`, not a
+ * per-pairing patch. An empty array is a legitimate answer: "none of these topics pair with a
+ * feeling" is exactly what task 1 calls "fine and common".
+ */
+export const topicFeelingsUpdateSchema = z.object({
+  pairings: z.array(topicFeelingPairingInputSchema).max(40),
+});
+
 /** One user-added spelling of a topic (A4-04). Length matches the `topics.name` column. */
 export const topicAliasSchema = z.object({
   alias: z.string().trim().min(1).max(128),

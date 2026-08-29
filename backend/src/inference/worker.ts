@@ -15,7 +15,7 @@ import {
   GROUP_BY_FEELING_KEY,
   MAX_FEELINGS_PER_ENTRY,
 } from '../db/feeling-vocabulary';
-import { type EntryAnalysis } from './inference';
+import { type EntryAnalysis, type ProposedPairing } from './inference';
 
 interface Job {
   id: string;
@@ -57,6 +57,19 @@ const modelOutputSchema = z.object({
     .min(1)
     .max(MAX_FEELINGS_PER_ENTRY),
   topics: z.array(z.string()).max(10),
+  // E-1a: aspect-based extraction. For each topic the model just proposed above, which of the
+  // feelings it *also* just proposed (if any) the text ties that topic to — never a free-standing
+  // feeling of its own, which is what `reconcilePairings` enforces regardless of what the model
+  // actually returns here. An empty `feeling_keys` list is a normal, common answer: most topics on
+  // a single-valence entry have nothing ambiguous to pair.
+  topic_feelings: z
+    .array(
+      z.object({
+        topic: z.string(),
+        feeling_keys: z.array(z.enum(FEELING_KEYS)).max(MAX_FEELINGS_PER_ENTRY),
+      }),
+    )
+    .max(10),
 });
 
 const suggestionSchema = z.object({ suggestion: z.string() });
@@ -98,8 +111,25 @@ const MODEL_FORMAT = {
       maxItems: 10,
       items: { type: 'string', minLength: 2, maxLength: 40 },
     },
+    topic_feelings: {
+      type: 'array',
+      maxItems: 10,
+      items: {
+        type: 'object',
+        properties: {
+          topic: { type: 'string', minLength: 2, maxLength: 40 },
+          feeling_keys: {
+            type: 'array',
+            maxItems: MAX_FEELINGS_PER_ENTRY,
+            items: { type: 'string', enum: FEELING_KEYS },
+          },
+        },
+        required: ['topic', 'feeling_keys'],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ['feelings', 'topics'],
+  required: ['feelings', 'topics', 'topic_feelings'],
   additionalProperties: false,
 } as const;
 
@@ -187,6 +217,47 @@ export function reconcileFeelings(
     .slice(0, MAX_FEELINGS_PER_ENTRY);
 }
 
+/**
+ * Turn the model's proposed topic↔feeling pairings into something the app is willing to store
+ * (E-1a), the same discipline `reconcileFeelings` applies to the feeling list: the model proposes,
+ * and every rule that decides what survives is arithmetic on its answer, not trust in it
+ * (Principle III).
+ *
+ *  - **A pairing may only name a topic this analysis actually kept**, compared after the same
+ *    normalisation `normalizeTopics` applies — a model that pairs a feeling with a topic it did
+ *    not itself propose (or proposed and then got filtered, e.g. too short) has nothing to pair.
+ *  - **A pairing may only name a feeling this analysis actually kept**, after `reconcileFeelings`
+ *    — aspect-based extraction is "which of the feelings *already found*", never a second,
+ *    independent guess at a feeling nothing else corroborates.
+ *  - **Topics collapse**, the same way `normalizeTopics` already de-duplicates: two entries for the
+ *    same topic union their feeling keys rather than one silently overwriting the other.
+ *  - **A topic with nothing left after filtering is simply absent from the result** — "no pairing"
+ *    is task 1's explicitly normal, common answer, not an error.
+ */
+export function reconcilePairings(
+  proposed: Array<{ topic: string; feeling_keys: string[] }>,
+  topics: string[],
+  feelings: Array<{ key: string; confidence: number }>,
+): ProposedPairing[] {
+  const knownTopics = new Set(topics);
+  const knownFeelings = new Set(feelings.map((feeling) => feeling.key));
+  const byTopic = new Map<string, Set<string>>();
+
+  for (const item of proposed) {
+    const topic = normalizeTopicName(item.topic);
+    if (!knownTopics.has(topic)) continue;
+    const keys = item.feeling_keys.filter((key) => knownFeelings.has(key));
+    if (keys.length === 0) continue;
+    const existing = byTopic.get(topic) ?? new Set<string>();
+    keys.forEach((key) => existing.add(key));
+    byTopic.set(topic, existing);
+  }
+
+  return [...byTopic]
+    .map(([topic, keys]) => ({ topic, feelingKeys: [...keys].sort() }))
+    .sort((a, b) => a.topic.localeCompare(b.topic));
+}
+
 async function ollamaAnalysis(text: string): Promise<EntryAnalysis> {
   const config = loadConfig();
   const controller = new AbortController();
@@ -209,9 +280,9 @@ async function ollamaAnalysis(text: string): Promise<EntryAnalysis> {
         think: false,
         keep_alive: 0,
         format: MODEL_FORMAT,
-        // Raised from 220: the response now carries up to four feeling objects alongside the
-        // topics, and a truncated response is a parse failure, not a shorter answer.
-        options: { temperature: 0, num_predict: 400 },
+        // Raised from 400 (originally 220): the response now also carries a topic_feelings entry
+        // per topic, and a truncated response is a parse failure, not a shorter answer.
+        options: { temperature: 0, num_predict: 600 },
         messages: [
           {
             role: 'system',
@@ -228,7 +299,15 @@ async function ollamaAnalysis(text: string): Promise<EntryAnalysis> {
               'activities, food or drink, sleep, people or social setting, work, health or body ' +
               'state, environment, routines, and coping actions. Do not return emotions as topics. ' +
               `Prefer these canonical topic names when applicable: ${canonicalTopics}. ` +
-              'For anything else use a short, lowercase, stable noun phrase. Return only the schema.',
+              'For anything else use a short, lowercase, stable noun phrase. ' +
+              'Then, for each topic, decide which of the feelings you reported above (if any) the ' +
+              'entry text itself ties that topic to — this is about what the words say, not a ' +
+              'guess. A day can be mixed: missing a workout might read as disappointing while a ' +
+              'call with family the same day reads as warm, and those are two separate pairings, ' +
+              'not one feeling shared across both topics. Leave a topic’s feeling_keys empty ' +
+              'when the text does not clearly tie it to a particular feeling — that is the normal, ' +
+              'expected answer for a single-mood entry, not something to avoid. Never invent a ' +
+              'feeling here that is not already in your feelings list above. Return only the schema.',
           },
           { role: 'user', content: text },
         ],
@@ -237,9 +316,12 @@ async function ollamaAnalysis(text: string): Promise<EntryAnalysis> {
     if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
     const body = (await response.json()) as OllamaChatResponse;
     const parsed = modelOutputSchema.parse(JSON.parse(body.message?.content ?? ''));
+    const feelings = reconcileFeelings(parsed.feelings);
+    const topics = normalizeTopics(parsed.topics);
     return {
-      feelings: reconcileFeelings(parsed.feelings),
-      topics: normalizeTopics(parsed.topics),
+      feelings,
+      topics,
+      pairings: reconcilePairings(parsed.topic_feelings, topics, feelings),
     };
   } finally {
     clearTimeout(timeout);
@@ -735,11 +817,19 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
     ).map((row) => ({ name: row.name, aliases: decodeJson<string[]>(row.aliases ?? '[]') }));
 
     const canonical = new Set<string>();
+    // Which canonical topic a *proposed* phrase resolved to — kept so the pairings below (which
+    // name a proposed phrase, per `EntryAnalysis.pairings`) can be resolved to the same topic id
+    // this loop is about to create or reuse, without re-running canonicalization a second time.
+    const canonicalByProposed = new Map<string, string>();
     for (const proposed of analysis.topics) {
       const resolved = canonicalTopicName(proposed, known);
-      if (resolved) canonical.add(resolved);
+      if (resolved) {
+        canonical.add(resolved);
+        canonicalByProposed.set(proposed, resolved);
+      }
     }
 
+    const topicIdByName = new Map<string, string>();
     for (const name of canonical) {
       const existing = findTopic.get(name) as { id: string } | undefined;
       const topicId = existing?.id ?? randomUUID();
@@ -749,6 +839,39 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
         known.push({ name, aliases: [] });
       }
       linkTopic.run(job.entryId, topicId);
+      topicIdByName.set(name, topicId);
+    }
+
+    // E-1a: store each surviving pairing as a *suggestion* — never a silent overwrite. The guard
+    // mirrors the feelings guard above: a pairing the user has already confirmed or overridden
+    // stays exactly as the user left it, because `applyAnalysis` runs once against an entry whose
+    // `entry_topic_feelings` rows started this pass empty (a fresh entry, or one whose text just
+    // changed and had every prior row cleared with it) — the guard exists for the rarer case of a
+    // second analysis job somehow landing on the same rows, not for the common path.
+    if (analysis.pairings.length > 0) {
+      const alreadyDecided = new Set(
+        (
+          db
+            .prepare(
+              `SELECT topic_id, feeling_key FROM entry_topic_feelings
+               WHERE entry_id = ? AND source != 'suggested'`,
+            )
+            .all(job.entryId) as Array<{ topic_id: string; feeling_key: string }>
+        ).map((row) => `${row.topic_id} ${row.feeling_key}`),
+      );
+      const insertPairing = db.prepare(
+        `INSERT OR IGNORE INTO entry_topic_feelings (entry_id, topic_id, feeling_key, source)
+         VALUES (?, ?, ?, 'suggested')`,
+      );
+      for (const pairing of analysis.pairings) {
+        const canonicalName = canonicalByProposed.get(pairing.topic);
+        const topicId = canonicalName ? topicIdByName.get(canonicalName) : undefined;
+        if (!topicId) continue;
+        for (const feelingKey of pairing.feelingKeys) {
+          if (alreadyDecided.has(`${topicId} ${feelingKey}`)) continue;
+          insertPairing.run(job.entryId, topicId, feelingKey);
+        }
+      }
     }
 
     // The completed row is kept rather than deleted, because it is the only place the *suggested*

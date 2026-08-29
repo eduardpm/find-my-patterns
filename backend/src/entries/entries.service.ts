@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { encodeDate, encodeDateTime, nowUtc, todayLocal } from '../db/codecs';
 import { DIARY_DB } from '../db/database.provider';
 import type { DiaryDatabase } from '../db/database';
-import type { DiaryEntry, SuggestedFeeling } from '../domain/types';
+import type { DiaryEntry, SuggestedFeeling, TopicFeelingPairing } from '../domain/types';
 import { ENTRY_INFERENCE, type EntryInference } from '../inference/inference';
 import { StaleEntryError } from '../common/stale-entry';
 import { CONFIRMED_FEELING_SOURCES } from '../insights/constants';
@@ -13,6 +13,13 @@ import { GUIDED_DRAFT_SENTINEL } from './guided-draft';
 export class EntryNotFoundError extends Error {}
 export class GuidedDraftNotFoundError extends Error {}
 export class EmptyGuidedDraftError extends Error {}
+/** A pairing write named a topic or feeling that is not on this entry — 422 (E-1a). */
+export class InvalidPairingError extends Error {}
+
+export interface TopicFeelingPairingInput {
+  topicId: string;
+  feelingKey: string;
+}
 
 export interface GuidedAnswerInput {
   question_key: string;
@@ -445,6 +452,10 @@ export class EntriesService {
       // pipeline. A feeling-only edit changes nothing the analyser reads, so it is left alone.
       if (textChanged && rawText.trim()) {
         this.db.prepare('DELETE FROM entry_topics WHERE entry_id = ?').run(entryId);
+        // A pairing is a claim about *this wording* of the entry — once the topics it named are
+        // gone, a stored pairing (suggested or confirmed alike) no longer describes anything real,
+        // the same reasoning that drops `entry_topics` here.
+        this.db.prepare('DELETE FROM entry_topic_feelings WHERE entry_id = ?').run(entryId);
         this.db
           .prepare(`DELETE FROM inference_jobs WHERE entry_id = ? AND kind = 'entry_analysis'`)
           .run(entryId);
@@ -471,6 +482,7 @@ export class EntriesService {
       this.db.prepare('DELETE FROM guiding_question_answers WHERE entry_id = ?').run(entryId);
       this.db.prepare('DELETE FROM entry_feelings WHERE entry_id = ?').run(entryId);
       this.db.prepare('DELETE FROM entry_topics WHERE entry_id = ?').run(entryId);
+      this.db.prepare('DELETE FROM entry_topic_feelings WHERE entry_id = ?').run(entryId);
       this.db.prepare('DELETE FROM pattern_entries WHERE entry_id = ?').run(entryId);
       this.db.prepare('DELETE FROM inference_jobs WHERE entry_id = ?').run(entryId);
       this.db.prepare('DELETE FROM diary_entries WHERE id = ?').run(entryId);
@@ -480,6 +492,70 @@ export class EntriesService {
            AND id NOT IN (SELECT topic_id FROM patterns)`,
         )
         .run();
+    });
+  }
+
+  /**
+   * Store the user's confirmed/overridden topic↔feeling pairings for an entry, replacing whatever
+   * was there before (E-1a).
+   *
+   * Validated against the entry's *own* topics and feelings only — a pairing naming a topic this
+   * entry never mentioned, or a feeling that is not on it, is rejected outright rather than
+   * silently dropped, the same "whole request or nothing" rule `updateEntry` applies to
+   * `feeling_keys`.
+   *
+   * `source` is never taken from the request; it is derived here, mirroring how `updateEntry`
+   * derives `feeling_source` — a pair that matches what the worker last *suggested* is
+   * `'confirmed'`, and anything else the user submits is `'overridden'`. The comparison is
+   * per-pair, not per-entry: a mixed-valence entry can confirm one pairing and override another in
+   * the same call.
+   */
+  setTopicFeelingPairings(
+    entryId: string,
+    pairs: TopicFeelingPairingInput[],
+  ): TopicFeelingPairing[] {
+    return this.db.transaction(() => {
+      const entry = this.repo.findById(entryId);
+      if (!entry) throw new EntryNotFoundError(entryId);
+
+      const validTopicIds = new Set(this.repo.entryTopicIds(entryId));
+      const validFeelingKeys = new Set(entry.feelingKeys);
+      for (const pair of pairs) {
+        if (!validTopicIds.has(pair.topicId)) {
+          throw new InvalidPairingError(`Topic is not on this entry: ${pair.topicId}`);
+        }
+        if (!validFeelingKeys.has(pair.feelingKey)) {
+          throw new InvalidPairingError(`Feeling is not on this entry: ${pair.feelingKey}`);
+        }
+      }
+
+      // A set of pairs has no order and no repeats — de-duplicated the same way `replaceFeelings`
+      // de-duplicates a feeling set, keyed on the pair rather than a single string.
+      const deduped = new Map<string, TopicFeelingPairingInput>();
+      for (const pair of pairs) deduped.set(`${pair.topicId} ${pair.feelingKey}`, pair);
+
+      const previouslySuggested = new Set(
+        (
+          this.db
+            .prepare(
+              `SELECT topic_id, feeling_key FROM entry_topic_feelings
+               WHERE entry_id = ? AND source = 'suggested'`,
+            )
+            .all(entryId) as Array<{ topic_id: string; feeling_key: string }>
+        ).map((row) => `${row.topic_id} ${row.feeling_key}`),
+      );
+
+      this.db.prepare('DELETE FROM entry_topic_feelings WHERE entry_id = ?').run(entryId);
+      const insert = this.db.prepare(
+        `INSERT INTO entry_topic_feelings (entry_id, topic_id, feeling_key, source)
+         VALUES (?, ?, ?, ?)`,
+      );
+      for (const [key, pair] of deduped) {
+        const source = previouslySuggested.has(key) ? 'confirmed' : 'overridden';
+        insert.run(entryId, pair.topicId, pair.feelingKey, source);
+      }
+
+      return this.repo.findTopicFeelingPairings(entryId);
     });
   }
 }
