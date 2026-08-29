@@ -131,7 +131,7 @@ void main() {
       await tester.tap(find.text('Uplifted'));
       await tester.pumpAndSettle();
       expect(
-        find.text('Choose as many as fit. Tap one again to remove it.'),
+        find.text('Choose up to 4. Tap one again to remove it.'),
         findsOneWidget,
       );
       expect(find.text('Happy'), findsOneWidget);
@@ -157,7 +157,7 @@ void main() {
       await tester.tap(find.text('Done'));
       await tester.pumpAndSettle();
       expect(
-        find.text('Choose as many as fit. Tap one again to remove it.'),
+        find.text('Choose up to 4. Tap one again to remove it.'),
         findsNothing,
       );
     });
@@ -253,6 +253,69 @@ void main() {
           ),
         );
         handle.dispose();
+      },
+    );
+  });
+
+  group('FeelingChips — cross-group selection', () {
+    testWidgets(
+      'Overwhelmed (Tense) joins Grateful (Uplifted) in the same open '
+      'sheet, in 4 taps total with no close/reopen between them — the '
+      "issue's Stressed + Grateful case, and the stale-closure regression "
+      'now that a single sheet carries every group',
+      (tester) async {
+        // A tall viewport rather than manual scrolling: the sheet holds
+        // all four groups now, and this proves the taps themselves — not
+        // where a thumb happens to have scrolled to — satisfy the ≤4-taps
+        // acceptance criterion. See `app_test.dart` for the same pattern.
+        tester.view.physicalSize = const Size(1000, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        List<Feeling>? result;
+        await tester.pumpWidget(
+          _Harness(onChangeSpy: (next) => result = next),
+        );
+
+        // Tap 1: open the shared sheet, from the Uplifted group chip.
+        await tester.tap(find.text('Uplifted'));
+        await tester.pumpAndSettle();
+
+        // Tap 2: choose Grateful, in the Uplifted section the sheet
+        // opened on.
+        await tester.tap(find.text('Grateful'));
+        await tester.pump();
+        expect(result?.map((f) => f.key), ['grateful']);
+        // The sheet is still open: nothing closed to switch groups.
+        expect(
+          find.text('Choose up to 4. Tap one again to remove it.'),
+          findsOneWidget,
+        );
+
+        // Tap 3: choose Overwhelmed, from the Tense section of the very
+        // same still-open sheet. A stale closure over the selection as it
+        // stood when the sheet opened would compute oldSelection +
+        // overwhelmed and drop grateful; both must survive.
+        await tester.tap(find.text('Overwhelmed'));
+        await tester.pump();
+        expect(
+          result?.map((f) => f.key).toSet(),
+          {'grateful', 'overwhelmed'},
+        );
+        expect(
+          find.text('Choose up to 4. Tap one again to remove it.'),
+          findsOneWidget,
+          reason: 'still open — no close/reopen happened between groups',
+        );
+
+        // Tap 4: Done.
+        await tester.tap(find.text('Done'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Choose up to 4. Tap one again to remove it.'),
+          findsNothing,
+        );
+        expect(result?.map((f) => f.key).toSet(), {'grateful', 'overwhelmed'});
       },
     );
   });
