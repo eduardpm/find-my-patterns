@@ -12,8 +12,10 @@ import 'package:find_my_patterns/features/today/writing_streak_line.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../support/fake_backdate_nudge_store.dart';
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
 import 'json_fixtures.dart';
@@ -52,6 +54,7 @@ void main() {
     required List<FakeReply> replies,
     VoidCallback? onNewEntry,
     ValueChanged<Entry>? onOpenEntry,
+    FakeBackdateNudgeStore? nudgeStore,
   }) {
     final harness = Harness(
       settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
@@ -62,6 +65,15 @@ void main() {
         requireAuthProvider.overrideWithValue(harness.requireAuth),
         settingsStoreProvider.overrideWithValue(harness.store),
         apiClientProvider.overrideWithValue(harness.client),
+        // Dismissed by default: the backdate nudge (#36) is its own
+        // concern, tested in its own group below, and every test in this
+        // file that predates it built its expectations -- including some
+        // that tap a widget positioned by how tall the page is -- around a
+        // layout that never had to make room for it. A test that wants to
+        // see the card passes its own non-dismissed [nudgeStore].
+        backdateNudgeStoreProvider.overrideWithValue(
+          nudgeStore ?? FakeBackdateNudgeStore(dismissed: true),
+        ),
         todayControllerProvider.overrideWith(
           () => TodayController(now: () => fixedNow, delay: (_) async {}),
         ),
@@ -69,6 +81,49 @@ void main() {
       child: MaterialApp(
         home: TodayScreen(onNewEntry: onNewEntry, onOpenEntry: onOpenEntry),
       ),
+    );
+  }
+
+  /// Boots the screen behind a real (throwaway) [GoRouter], the same
+  /// pattern `settings_screen_test.dart`'s "the topics card opens the
+  /// topics route" test uses -- only the nudge's "Write about yesterday"
+  /// tap needs this, since it navigates through `context.push` rather than
+  /// through [TodayScreen.onNewEntry].
+  Widget buildRoutedTestable({
+    required List<FakeReply> replies,
+    FakeBackdateNudgeStore? nudgeStore,
+  }) {
+    final harness = Harness(
+      settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
+      adapter: FakeHttpAdapter([feelingsReply, ...replies]),
+    );
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(path: '/', builder: (context, state) => const TodayScreen()),
+        GoRoute(
+          path: '/compose',
+          builder: (context, state) => Scaffold(
+            body: Text(
+              'compose destination: ${state.uri.queryParameters['date']}',
+            ),
+          ),
+        ),
+      ],
+    );
+    return ProviderScope(
+      overrides: [
+        requireAuthProvider.overrideWithValue(harness.requireAuth),
+        settingsStoreProvider.overrideWithValue(harness.store),
+        apiClientProvider.overrideWithValue(harness.client),
+        backdateNudgeStoreProvider.overrideWithValue(
+          nudgeStore ?? FakeBackdateNudgeStore(),
+        ),
+        todayControllerProvider.overrideWith(
+          () => TodayController(now: () => fixedNow, delay: (_) async {}),
+        ),
+      ],
+      child: MaterialApp.router(routerConfig: router),
     );
   }
 
@@ -207,6 +262,123 @@ void main() {
 
       expect(find.byType(WritingStreakLine), findsNothing);
     });
+  });
+
+  group('backdate nudge (#36)', () {
+    const nudgeTitle = 'How was yesterday?';
+
+    testWidgets(
+      'shows once loaded, on today, under 7 total entries, and not '
+      'dismissed',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestable(
+            replies: loadReplies(streakDays: [today]),
+            nudgeStore: FakeBackdateNudgeStore(),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text(nudgeTitle), findsOneWidget);
+        expect(
+          find.text(
+            'Adding a day or two helps your patterns appear sooner.',
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets('stays hidden once the diary reaches 7 total entries', (
+      tester,
+    ) async {
+      final sevenDays = [for (var i = 0; i < 7; i++) today.addDays(-i)];
+      await tester.pumpWidget(
+        buildTestable(
+          replies: loadReplies(streakDays: sevenDays),
+          nudgeStore: FakeBackdateNudgeStore(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(nudgeTitle), findsNothing);
+    });
+
+    testWidgets('stays hidden once already dismissed on this device', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestable(
+          replies: loadReplies(streakDays: [today]),
+          nudgeStore: FakeBackdateNudgeStore(dismissed: true),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(nudgeTitle), findsNothing);
+    });
+
+    testWidgets('stays hidden while paging through a past day', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestable(
+          replies: [
+            ...loadReplies(streakDays: [today]),
+            ...pastDayReplies(),
+          ],
+          nudgeStore: FakeBackdateNudgeStore(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(nudgeTitle), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel('Previous day'));
+      await tester.pumpAndSettle();
+
+      expect(find.text(nudgeTitle), findsNothing);
+    });
+
+    testWidgets(
+      'dismissing hides the card immediately and persists through the '
+      'store',
+      (tester) async {
+        final store = FakeBackdateNudgeStore();
+        await tester.pumpWidget(
+          buildTestable(
+            replies: loadReplies(streakDays: [today]),
+            nudgeStore: store,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text(nudgeTitle), findsOneWidget);
+
+        await tester.tap(find.byTooltip('Dismiss'));
+        await tester.pumpAndSettle();
+
+        expect(find.text(nudgeTitle), findsNothing);
+        expect(store.dismissCount, 1);
+        expect(await store.isDismissed(), isTrue);
+      },
+    );
+
+    testWidgets(
+      'tapping "Write about yesterday" opens the composer for yesterday',
+      (tester) async {
+        await tester.pumpWidget(
+          buildRoutedTestable(replies: loadReplies(streakDays: [today])),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Write about yesterday'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('compose destination: ${today.addDays(-1)}'),
+          findsOneWidget,
+        );
+      },
+    );
   });
 
   group('day stepper', () {

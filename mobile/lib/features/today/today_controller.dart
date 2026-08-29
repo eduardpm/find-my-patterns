@@ -6,6 +6,23 @@ import '../../core/diary/entry.dart';
 import '../../core/diary/monthly_summary.dart';
 import '../../core/diary/writing_streak.dart';
 import '../../core/network/api_error.dart';
+import 'backdate_nudge_store.dart';
+
+/// How few total entries a diary may have before the first-week backdating
+/// nudge ("How was yesterday?" -- #36) is worth showing. Read from the same
+/// windowed entry count [TodayController._loadStreak] already fetches for
+/// the writing streak (#40) -- see [TodayState.totalEntries]'s doc comment
+/// for why that count, rather than a literal all-time total, is what this
+/// is compared against.
+const int backdateNudgeEntryThreshold = 7;
+
+/// Reads and writes whether the backdating nudge has been dismissed.
+///
+/// Overridable so tests can substitute an in-memory fake, the same way
+/// `composerDraftStoreProvider` works.
+final backdateNudgeStoreProvider = Provider<BackdateNudgeStore>(
+  (ref) => const SharedPreferencesBackdateNudgeStore(),
+);
 
 /// One day's reading state for the Today screen.
 class const TodayState(
@@ -27,6 +44,27 @@ class const TodayState(
   /// while nothing has loaded yet, which happens to read the same as "no
   /// streak" and keeps the line hidden either way.
   final int streakDays = 0,
+
+  /// How many entries the diary has written in the last
+  /// [writingStreakQueryWindowDays] days (#36) -- summed from the same
+  /// `GET /insights/series` call [streakDays] is computed from, so the
+  /// nudge-visibility check costs no extra request.
+  ///
+  /// Not a literal all-time count: for the brand-new diaries the nudge
+  /// exists for, every entry ever written is well inside this window, so
+  /// the two agree in exactly the case that matters. A diary old enough for
+  /// the difference to show already has 7 or more entries either way, which
+  /// is the only threshold this is ever compared against
+  /// ([backdateNudgeEntryThreshold]). Zero both while [date] is not today
+  /// (the same rule [streakDays] follows) and while nothing has loaded yet.
+  final int totalEntries = 0,
+
+  /// Whether the backdating nudge card has been dismissed on this device
+  /// (#36). Loaded once, in [TodayController.build] -- true is also the
+  /// safe default before that load lands, so the card never flashes on
+  /// screen for a moment before the dismissal it should already be honouring
+  /// is read back.
+  final bool nudgeDismissed = true,
 
   /// A reload is in flight over content that is already on screen.
   final bool isRefreshing = false,
@@ -55,6 +93,8 @@ class const TodayState(
     List<Entry>? entries,
     Object? daySummary = _unset,
     int? streakDays,
+    int? totalEntries,
+    bool? nudgeDismissed,
     bool? isRefreshing,
     bool? hasLoaded,
     Object? errorMessage = _unset,
@@ -65,6 +105,8 @@ class const TodayState(
         ? this.daySummary
         : daySummary as DaySummary?,
     streakDays: streakDays ?? this.streakDays,
+    totalEntries: totalEntries ?? this.totalEntries,
+    nudgeDismissed: nudgeDismissed ?? this.nudgeDismissed,
     isRefreshing: isRefreshing ?? this.isRefreshing,
     hasLoaded: hasLoaded ?? this.hasLoaded,
     errorMessage: identical(errorMessage, _unset)
@@ -143,7 +185,22 @@ class TodayController extends Notifier<TodayState> {
     // while this screen sits off-screen in the shell's other tabs, so it is
     // already current by the time the reader swipes back to it.
     ref.listen(diaryWriteSignalProvider, (_, _) => refresh());
+    Future.microtask(_loadNudgeDismissed);
     return TodayState(today);
+  }
+
+  /// Reads whether the backdating nudge was already dismissed on this
+  /// device (#36), once per controller lifetime.
+  Future<void> _loadNudgeDismissed() async {
+    final dismissed = await ref.read(backdateNudgeStoreProvider).isDismissed();
+    if (!ref.mounted) return;
+    state = state.copyWith(nudgeDismissed: dismissed);
+  }
+
+  /// Dismisses the backdating nudge for good on this device (#36).
+  Future<void> dismissBackdateNudge() async {
+    state = state.copyWith(nudgeDismissed: true);
+    await ref.read(backdateNudgeStoreProvider).dismiss();
   }
 
   /// Shows [date], clamped so it never runs ahead of today.
@@ -228,15 +285,16 @@ class TodayController extends Notifier<TodayState> {
     await _loadStreak(date, generation);
   }
 
-  /// Refreshes [TodayState.streakDays] (#40).
+  /// Refreshes [TodayState.streakDays] (#40) and [TodayState.totalEntries]
+  /// (#36) from one shared call.
   ///
-  /// Only fetched while [date] is today: the streak line is a fact about
-  /// today, not about whichever day the reader happens to be paging
-  /// through, so browsing history neither shows a stale number nor spends a
-  /// request re-deriving one nobody will see. A failed fetch is silent, the
-  /// same call the [TodayState.daySummary] fetch above makes -- one more
-  /// quiet number, not a second error snack bar for a backend already
-  /// reported unreachable.
+  /// Only fetched while [date] is today: both are facts about today, not
+  /// about whichever day the reader happens to be paging through, so
+  /// browsing history neither shows a stale number nor spends a request
+  /// re-deriving one nobody will see. A failed fetch is silent, the same
+  /// call the [TodayState.daySummary] fetch above makes -- one more quiet
+  /// number, not a second error snack bar for a backend already reported
+  /// unreachable.
   Future<void> _loadStreak(CalendarDate date, int generation) async {
     if (date != today) {
       state = state.copyWith(streakDays: 0);
@@ -257,10 +315,13 @@ class TodayController extends Notifier<TodayState> {
           entryDates: {for (final point in series.points) point.date},
           today: today,
         ),
+        totalEntries: [
+          for (final point in series.points) point.entryCount,
+        ].fold<int>(0, (sum, count) => sum + count),
       );
     } on ApiError {
       if (generation != _generation) return;
-      state = state.copyWith(streakDays: 0);
+      state = state.copyWith(streakDays: 0, totalEntries: 0);
     }
   }
 

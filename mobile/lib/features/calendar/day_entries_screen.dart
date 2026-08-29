@@ -277,12 +277,19 @@ class _DayEntriesPage extends ConsumerWidget {
             child: Center(child: CircularProgressIndicator()),
           )
         else if (state.entries.isEmpty)
-          const EmptyState(
-            icon: Icon(Icons.edit_note),
-            title: Text('Nothing written that day'),
-            supporting: Text(
+          EmptyState(
+            icon: const Icon(Icons.edit_note),
+            title: const Text('Nothing written that day'),
+            supporting: const Text(
               'Days without entries stay blank — nothing was lost.',
               textAlign: TextAlign.center,
+            ),
+            // Backdating (#36): this day always had entries it could have
+            // held, so the empty state offers a way to add one instead of
+            // only explaining the blank.
+            action: PillButton(
+              onPressed: () => context.push('/compose?date=$date'),
+              child: const Text('Write about this day'),
             ),
           )
         else

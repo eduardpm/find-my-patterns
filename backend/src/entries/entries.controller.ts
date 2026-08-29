@@ -30,7 +30,12 @@ import type {
   TopicFeelingPairing,
 } from '../domain/types';
 import { EchoService, type EchoOut } from '../insights/echo.service';
-import { EntriesService, EntryNotFoundError, InvalidPairingError } from './entries.service';
+import {
+  EntriesService,
+  EntryNotFoundError,
+  InvalidEntryDateError,
+  InvalidPairingError,
+} from './entries.service';
 import {
   EntriesRepository,
   FeelingsRepository,
@@ -122,18 +127,25 @@ export class EntriesController {
   @HttpCode(HttpStatus.CREATED)
   create(@Body() body: unknown): Record<string, unknown> {
     const input = parseOrThrow(entryCreateSchema, body ?? {});
-    const { entry, suggestion } = this.service.createEntry(input);
-    const pairings = this.entries.findTopicFeelingPairings(entry.id);
-    if (suggestion) return toEntryOut(entry, suggestion, false, [suggestion], null, pairings);
-    const analysis = this.service.analysisFor(entry.id);
-    return toEntryOut(
-      entry,
-      analysis.suggested,
-      analysis.pending,
-      analysis.suggestedAll,
-      null,
-      pairings,
-    );
+    try {
+      const { entry, suggestion } = this.service.createEntry(input);
+      const pairings = this.entries.findTopicFeelingPairings(entry.id);
+      if (suggestion) return toEntryOut(entry, suggestion, false, [suggestion], null, pairings);
+      const analysis = this.service.analysisFor(entry.id);
+      return toEntryOut(
+        entry,
+        analysis.suggested,
+        analysis.pending,
+        analysis.suggestedAll,
+        null,
+        pairings,
+      );
+    } catch (err) {
+      if (err instanceof InvalidEntryDateError) {
+        throw new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY);
+      }
+      throw err;
+    }
   }
 
   @Patch(':entryId')

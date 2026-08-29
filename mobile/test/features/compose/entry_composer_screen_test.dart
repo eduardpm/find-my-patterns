@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:find_my_patterns/core/audio/diary_audio_recorder.dart';
 import 'package:find_my_patterns/core/config/config_providers.dart';
+import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
@@ -96,6 +97,7 @@ void main() {
     VoidCallback? onDone,
     VoidCallback? onCancel,
     ComposerDraft? initialDraft,
+    CalendarDate? targetDate,
   }) {
     final harness = Harness(
       settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
@@ -111,6 +113,7 @@ void main() {
       ],
       child: MaterialApp(
         home: EntryComposerScreen(
+          targetDate: targetDate,
           onDone: onDone,
           onCancel: onCancel,
           // A fake plugin and a real-but-untouched temp directory (the
@@ -183,6 +186,54 @@ void main() {
       await tester.tap(find.byIcon(Icons.close));
       expect(cancelled, isTrue);
     });
+  });
+
+  group('backdated header chip (#36)', () {
+    testWidgets('is absent when composing for today, as before', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildTestable(replies: bootReplies()));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Writing about'), findsNothing);
+    });
+
+    testWidgets(
+      'shows the target day once opened for a past date, and the flow '
+      'still reaches the confirm step normally',
+      (tester) async {
+        final replies = [
+          ...bootReplies(),
+          FakeReply(
+            200,
+            body: entryJson(
+              suggestedFeelings: [suggestedFeelingJson(key: 'happy')],
+            ),
+          ),
+        ];
+        await tester.pumpWidget(
+          buildTestable(
+            replies: replies,
+            targetDate: const CalendarDate(2026, 8, 26),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Writing about Wednesday, August 26'), findsOneWidget);
+
+        await tester.tap(find.text('Write freely instead'));
+        await tester.pump();
+        await tester.enterText(find.byType(TextFormField), 'Catching up.');
+        await tester.pump();
+        await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('How did that feel?'), findsOneWidget);
+        // The chip stays up through the confirm step too -- which day this
+        // entry lands on is still worth knowing until it is actually saved.
+        expect(find.text('Writing about Wednesday, August 26'), findsOneWidget);
+      },
+    );
   });
 
   group('switching to freeform', () {
@@ -334,8 +385,14 @@ void main() {
         // during the pump above -- well before the save below, which is the
         // only thing that starts the poll loop.
         containerOf(
-          tester,
-        ).read(entryComposerControllerProvider.notifier).pollDelay = delay.call;
+                  tester,
+                )
+                .read(
+                  entryComposerControllerProvider(CalendarDate.today())
+                      .notifier,
+                )
+                .pollDelay =
+            delay.call;
 
         await saveFreeformEntry(tester);
         // See `pumpUntilFound`'s doc comment: not `pumpAndSettle` here, the
@@ -412,8 +469,14 @@ void main() {
         );
         await tester.pumpAndSettle();
         containerOf(
-          tester,
-        ).read(entryComposerControllerProvider.notifier).pollDelay = delay.call;
+                  tester,
+                )
+                .read(
+                  entryComposerControllerProvider(CalendarDate.today())
+                      .notifier,
+                )
+                .pollDelay =
+            delay.call;
 
         await saveFreeformEntry(tester);
         final banner = find.text('Reading your entry…');
@@ -471,8 +534,14 @@ void main() {
         );
         await tester.pumpAndSettle();
         containerOf(
-          tester,
-        ).read(entryComposerControllerProvider.notifier).pollDelay = delay.call;
+                  tester,
+                )
+                .read(
+                  entryComposerControllerProvider(CalendarDate.today())
+                      .notifier,
+                )
+                .pollDelay =
+            delay.call;
 
         await saveFreeformEntry(tester);
         // Not `pumpAndSettle` -- see the previous test's comment: the

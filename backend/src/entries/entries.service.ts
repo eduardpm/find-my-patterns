@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { encodeDate, encodeDateTime, nowUtc, todayLocal } from '../db/codecs';
+import { decodeDate, encodeDate, encodeDateTime, nowUtc, todayLocal } from '../db/codecs';
+import type { PlainDate } from '../db/codecs';
 import { DIARY_DB } from '../db/database.provider';
 import type { DiaryDatabase } from '../db/database';
 import type { DiaryEntry, SuggestedFeeling, TopicFeelingPairing } from '../domain/types';
 import { ENTRY_INFERENCE, type EntryInference } from '../inference/inference';
 import { StaleEntryError } from '../common/stale-entry';
+import { daysBetween } from '../insights/analysis';
 import { CONFIRMED_FEELING_SOURCES } from '../insights/constants';
 import { EntriesRepository } from './entries.repository';
 import { GUIDED_DRAFT_SENTINEL } from './guided-draft';
@@ -15,6 +17,11 @@ export class GuidedDraftNotFoundError extends Error {}
 export class EmptyGuidedDraftError extends Error {}
 /** A pairing write named a topic or feeling that is not on this entry — 422 (E-1a). */
 export class InvalidPairingError extends Error {}
+/** `entry_date` names a future day, or one too far in the past — 422 (#36). */
+export class InvalidEntryDateError extends Error {}
+
+/** How far back `entry_date` may backdate an entry (#36, daylio-competitive-analysis.md §11.6). */
+export const MAX_BACKDATE_DAYS = 30;
 
 export interface TopicFeelingPairingInput {
   topicId: string;
@@ -30,6 +37,8 @@ export interface EntryCreateInput {
   mode: 'guided' | 'freeform';
   raw_text: string;
   guided_answers: GuidedAnswerInput[];
+  /** Backdates the entry (#36). Omitted files it under the server's own `todayLocal()`. */
+  entry_date?: string;
 }
 
 export interface EntryUpdateInput {
@@ -70,6 +79,12 @@ export class EntriesService {
     entry: DiaryEntry;
     suggestion: SuggestedFeeling | null;
   } {
+    // Resolved and validated before anything else is written — a rejected `entry_date` must leave
+    // no trace, the same "whole request or nothing" rule the rest of this service follows.
+    const entryDate = data.entry_date
+      ? encodeDate(this.resolveBackdate(data.entry_date))
+      : encodeDate(todayLocal());
+
     let text = data.raw_text ?? '';
     const guidedRows: Array<{
       id: string;
@@ -121,7 +136,7 @@ export class EntriesService {
            (id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source, version)
            VALUES (?, ?, ?, ?, ?, ?, NULL, 'unset', 1)`,
         )
-        .run(id, created, created, encodeDate(todayLocal()), data.mode, text);
+        .run(id, created, created, entryDate, data.mode, text);
 
       const insertAnswer = this.db.prepare(
         `INSERT INTO guiding_question_answers
@@ -136,6 +151,30 @@ export class EntriesService {
     const suggestion = text.trim() ? this.analyzeStoredEntry(id) : null;
 
     return { entry: this.repo.findById(id)!, suggestion };
+  }
+
+  /**
+   * Validates an explicit `entry_date` against the server's own `todayLocal()` (#36): a diary
+   * entry can be backdated to help patterns surface sooner, but never postdated, and only within
+   * [MAX_BACKDATE_DAYS] — far enough to cover "I forgot to write for a few days", not so far that
+   * the date picker becomes a way to fabricate a diary's history.
+   *
+   * `data.entry_date`'s shape (`YYYY-MM-DD`) is already guaranteed by `entryCreateSchema`; this is
+   * the one place — mirroring every other date field in this codebase — where it is actually
+   * parsed and checked against the calendar.
+   */
+  private resolveBackdate(raw: string): PlainDate {
+    const parsed = decodeDate(raw);
+    const age = daysBetween(parsed, todayLocal());
+    if (age < 0) {
+      throw new InvalidEntryDateError('Entry date cannot be in the future.');
+    }
+    if (age > MAX_BACKDATE_DAYS) {
+      throw new InvalidEntryDateError(
+        `Entry date cannot be more than ${MAX_BACKDATE_DAYS} days in the past.`,
+      );
+    }
+    return parsed;
   }
 
   /**

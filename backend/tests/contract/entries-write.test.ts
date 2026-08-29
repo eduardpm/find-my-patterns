@@ -47,6 +47,95 @@ describe('POST /entries', () => {
   });
 });
 
+/**
+ * Local-calendar date math matching `todayLocal()` (`db/codecs.ts`): both this helper and the
+ * server read the local `Date` getters, on the same machine/process, so the two never disagree
+ * about which day "today" or "31 days ago" is — even across a month or year boundary, which
+ * `setDate` rolls over correctly.
+ */
+function localDateString(offsetDays: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+describe('POST /entries — entry_date (#36)', () => {
+  it('omitted, files the entry under today, exactly as before', async () => {
+    const body = await create('A quiet day.');
+    expect(body.entry_date).toBe(localDateString(0));
+  });
+
+  it('accepts an explicit past date and files the entry under it, leaving created_at at now', async () => {
+    const target = localDateString(-3);
+    const body = (
+      await request(server())
+        .post('/entries')
+        .send({ mode: 'freeform', raw_text: 'Backdated.', entry_date: target })
+        .expect(201)
+    ).body;
+
+    expect(body.entry_date).toBe(target);
+    // created_at is a full timestamp; only its date component is compared, against *today* (not
+    // the backdated entry_date) — the two are independent (data-model.md's existing distinction).
+    expect(String(body.created_at).slice(0, 10)).toBe(localDateString(0));
+  });
+
+  it('accepts a date exactly 30 days back — the inclusive boundary', async () => {
+    const target = localDateString(-30);
+    const body = (
+      await request(server())
+        .post('/entries')
+        .send({ mode: 'freeform', raw_text: 'Right at the edge.', entry_date: target })
+        .expect(201)
+    ).body;
+
+    expect(body.entry_date).toBe(target);
+  });
+
+  it('rejects a date 31 days back with a clear 422', async () => {
+    const target = localDateString(-31);
+    const res = await request(server())
+      .post('/entries')
+      .send({ mode: 'freeform', raw_text: 'Too far.', entry_date: target })
+      .expect(422);
+
+    expect(String(res.body.error?.message)).toMatch(/past/i);
+  });
+
+  it('rejects a future date with a clear 422', async () => {
+    const target = localDateString(1);
+    const res = await request(server())
+      .post('/entries')
+      .send({ mode: 'freeform', raw_text: 'From tomorrow.', entry_date: target })
+      .expect(422);
+
+    expect(String(res.body.error?.message)).toMatch(/future/i);
+  });
+
+  it('rejects a malformed entry_date at the schema layer', async () => {
+    await request(server())
+      .post('/entries')
+      .send({ mode: 'freeform', raw_text: 'Bad shape.', entry_date: '26-08-2026' })
+      .expect(422);
+  });
+
+  it('a rejected entry_date stores nothing — the entry never appears on any day', async () => {
+    const target = localDateString(-45);
+    await request(server())
+      .post('/entries')
+      .send({ mode: 'freeform', raw_text: 'Never stored.', entry_date: target })
+      .expect(422);
+
+    const listed = await request(server()).get(`/entries?date=${target}`);
+    expect(
+      listed.body.entries.some((e: { raw_text: string }) => e.raw_text === 'Never stored.'),
+    ).toBe(false);
+  });
+});
+
 describe('guided entries — derived values (data-model.md "Derived values")', () => {
   it('composes raw_text as one prompt/answer block per answer, blank line between', async () => {
     const body = (

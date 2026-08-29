@@ -8,6 +8,7 @@ import 'package:find_my_patterns/features/today/today_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../support/fake_backdate_nudge_store.dart';
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
 import 'json_fixtures.dart';
@@ -28,18 +29,25 @@ void main() {
     ProviderContainer container,
     TodayController controller,
     FakeHttpAdapter adapter,
+    FakeBackdateNudgeStore nudgeStore,
   })
-  buildEnv(List<FakeReply> replies, {DateTime? now}) {
+  buildEnv(
+    List<FakeReply> replies, {
+    DateTime? now,
+    FakeBackdateNudgeStore? nudgeStore,
+  }) {
     final adapter = FakeHttpAdapter([feelingsReply, ...replies]);
     final harness = Harness(
       settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
       adapter: adapter,
     );
+    final store = nudgeStore ?? FakeBackdateNudgeStore();
     final container = ProviderContainer(
       overrides: [
         requireAuthProvider.overrideWithValue(harness.requireAuth),
         settingsStoreProvider.overrideWithValue(harness.store),
         apiClientProvider.overrideWithValue(harness.client),
+        backdateNudgeStoreProvider.overrideWithValue(store),
         todayControllerProvider.overrideWith(
           () => TodayController(
             now: () => now ?? fixedNow,
@@ -50,7 +58,12 @@ void main() {
     );
     addTearDown(container.dispose);
     final controller = container.read(todayControllerProvider.notifier);
-    return (container: container, controller: controller, adapter: adapter);
+    return (
+      container: container,
+      controller: controller,
+      adapter: adapter,
+      nudgeStore: store,
+    );
   }
 
   /// One `refresh`'s worth of replies while showing *today*, once the
@@ -229,6 +242,102 @@ void main() {
     });
   });
 
+  group('totalEntries (#36)', () {
+    test(
+      'sums entry_count across the same series call streakDays reads',
+      () async {
+        final env = buildEnv(
+          loadReplies(streakDays: [today, yesterday, yesterday.addDays(-1)]),
+        );
+
+        await env.controller.refresh();
+
+        // `seriesJson`'s fixture gives each named day `entry_count: 1`, so
+        // three days sums to three -- no fourth request beyond the one
+        // `streakDays` already reads.
+        expect(env.container.read(todayControllerProvider).totalEntries, 3);
+      },
+    );
+
+    test('is zero while showing a past day, the same as streakDays', () async {
+      final env = buildEnv([
+        ...loadReplies(streakDays: [today, yesterday]),
+        ...pastDayReplies(),
+      ]);
+      await env.controller.refresh();
+      expect(env.container.read(todayControllerProvider).totalEntries, 2);
+
+      await env.controller.showPreviousDay();
+
+      expect(env.container.read(todayControllerProvider).totalEntries, 0);
+    });
+
+    test('resets to zero on a failed series request', () async {
+      final env = buildEnv([
+        FakeReply(200, body: entriesJson(const [])),
+        FakeReply(200, body: monthlySummaryJson(days: const [])),
+        FakeReply(500, body: {'error': 'boom'}),
+      ]);
+
+      await env.controller.refresh();
+
+      expect(env.container.read(todayControllerProvider).totalEntries, 0);
+    });
+  });
+
+  group('backdate nudge (#36)', () {
+    test('nudgeDismissed defaults true until the store load lands', () {
+      final env = buildEnv([]);
+
+      expect(
+        env.container.read(todayControllerProvider).nudgeDismissed,
+        isTrue,
+      );
+    });
+
+    test(
+      'nudgeDismissed reads false from the store once build\'s load lands',
+      () async {
+        final env = buildEnv(
+          [],
+          nudgeStore: FakeBackdateNudgeStore(dismissed: false),
+        );
+
+        // build() fires the load as a microtask; nothing else in this test
+        // touches the controller, so a single event-loop turn is enough for
+        // it to land.
+        await Future<void>.delayed(Duration.zero);
+
+        expect(
+          env.container.read(todayControllerProvider).nudgeDismissed,
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'dismissBackdateNudge flips the state and persists through the store',
+      () async {
+        final store = FakeBackdateNudgeStore(dismissed: false);
+        final env = buildEnv([], nudgeStore: store);
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          env.container.read(todayControllerProvider).nudgeDismissed,
+          isFalse,
+        );
+
+        await env.controller.dismissBackdateNudge();
+
+        expect(
+          env.container.read(todayControllerProvider).nudgeDismissed,
+          isTrue,
+        );
+        expect(store.dismissCount, 1);
+        expect(await store.isDismissed(), isTrue);
+      },
+    );
+  });
+
   group('day navigation', () {
     test('showPreviousDay moves back a day and clears entries first', () async {
       final env = buildEnv([
@@ -303,6 +412,9 @@ void main() {
             requireAuthProvider.overrideWithValue(harness.requireAuth),
             settingsStoreProvider.overrideWithValue(harness.store),
             apiClientProvider.overrideWithValue(harness.client),
+            backdateNudgeStoreProvider.overrideWithValue(
+              FakeBackdateNudgeStore(),
+            ),
             todayControllerProvider.overrideWith(
               () => TodayController(now: () => clock, delay: (_) async {}),
             ),

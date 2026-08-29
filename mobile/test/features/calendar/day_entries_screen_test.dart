@@ -9,6 +9,7 @@ import 'package:find_my_patterns/features/calendar/day_entries_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
@@ -129,6 +130,59 @@ void main() {
     );
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
+
+  testWidgets(
+    'an empty day offers "Write about this day", which opens the composer '
+    'for that day (#36)',
+    (tester) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter([
+          FakeReply(200, body: feelingsCatalogJson()),
+          FakeReply(200, body: {'entries': <Object?>[]}),
+        ]),
+      );
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) => DayEntriesScreen(date: '$date'),
+          ),
+          GoRoute(
+            path: '/compose',
+            builder: (context, state) => Scaffold(
+              body: Text(
+                'compose destination: ${state.uri.queryParameters['date']}',
+              ),
+            ),
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            requireAuthProvider.overrideWithValue(harness.requireAuth),
+            settingsStoreProvider.overrideWithValue(harness.store),
+            apiClientProvider.overrideWithValue(harness.client),
+            analysisPollConfigProvider.overrideWithValue(instantPoll),
+            analysisPollDelayProvider.overrideWithValue((_) async {}),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Nothing written that day'), findsOneWidget);
+
+      await tester.tap(find.text('Write about this day'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('compose destination: $date'),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('editing, saving and seeing the analysing notice, end to end', (
     tester,

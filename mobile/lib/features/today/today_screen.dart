@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -249,6 +251,27 @@ class _TodayScreenState extends ConsumerState<TodayScreen>
                           const SizedBox(height: JournalSpacing.x2),
                           WritingStreakLine(streakDays: state.streakDays),
                         ],
+                        // The first-week backdating nudge (#36): only while
+                        // the diary is new enough that filling in a missed
+                        // day or two would meaningfully speed up its first
+                        // patterns, only on Today (never while paging
+                        // through history), and never once dismissed.
+                        if (isToday &&
+                            !state.nudgeDismissed &&
+                            state.hasLoaded &&
+                            state.totalEntries <
+                                backdateNudgeEntryThreshold) ...[
+                          const SizedBox(height: JournalSpacing.x3),
+                          _BackdateNudgeCard(
+                            onWriteYesterday: () {
+                              final yesterday = controller.today.addDays(-1);
+                              context.push('/compose?date=$yesterday');
+                            },
+                            onDismiss: () => unawaited(
+                              controller.dismissBackdateNudge(),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: JournalSpacing.x5),
                         if (!state.hasLoaded)
                           const Padding(
@@ -413,4 +436,62 @@ String _titleText(CalendarDate date, CalendarDate today) {
     return DateFormat('MMMM d').format(date.toDateTime());
   }
   return DateFormat('MMMM d, yyyy').format(date.toDateTime());
+}
+
+/// "How was yesterday?" -- the first-week backdating nudge (#36), offering
+/// to open the composer for yesterday. Dismissible on its own, the same
+/// shape the composer's own restored-draft notice uses: an `x` that clears
+/// the card without doing anything else, so declining costs one tap and
+/// nothing more.
+class _BackdateNudgeCard extends StatelessWidget {
+  const _BackdateNudgeCard({
+    required this.onWriteYesterday,
+    required this.onDismiss,
+  });
+
+  final VoidCallback onWriteYesterday;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return JournalCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  'How was yesterday?',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Dismiss',
+                onPressed: onDismiss,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+          const SizedBox(height: JournalSpacing.x1),
+          Text(
+            'Adding a day or two helps your patterns appear sooner.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: JournalSpacing.x3),
+          SecondaryPillButton(
+            onPressed: onWriteYesterday,
+            child: const Text('Write about yesterday'),
+          ),
+        ],
+      ),
+    );
+  }
 }

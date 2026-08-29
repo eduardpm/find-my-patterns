@@ -94,12 +94,22 @@ class EntriesApi {
   final FeelingsApi _feelings;
 
   /// Creates a freeform entry from [text].
-  Future<Entry> createFreeform(String text) async {
+  ///
+  /// [entryDate] backdates the entry (#36) — omitted, the backend files it
+  /// under its own idea of today, exactly as before. A caller only passes
+  /// this when the composer is explicitly writing for a day other than
+  /// today, so the ordinary "write for today" path never risks the
+  /// server's and device's clocks disagreeing about what "today" means.
+  Future<Entry> createFreeform(String text, {CalendarDate? entryDate}) async {
     final catalog = await _feelings.catalog();
     return _client.postObject(
       AppConfig.entriesPath,
       (json) => entryFromJson(json, catalog),
-      body: {'mode': 'freeform', 'raw_text': text},
+      body: {
+        'mode': 'freeform',
+        'raw_text': text,
+        if (entryDate != null) 'entry_date': entryDate.toString(),
+      },
     );
   }
 
@@ -107,8 +117,12 @@ class EntriesApi {
   ///
   /// `raw_text` is deliberately sent empty — the backend composes the
   /// prose from the answers, prompt on its own line and answer under it, so
-  /// this client does not join them itself.
-  Future<Entry> createGuided(List<GuidingQuestionAnswer> answers) async {
+  /// this client does not join them itself. See [createFreeform] for
+  /// [entryDate].
+  Future<Entry> createGuided(
+    List<GuidingQuestionAnswer> answers, {
+    CalendarDate? entryDate,
+  }) async {
     final catalog = await _feelings.catalog();
     return _client.postObject(
       AppConfig.entriesPath,
@@ -123,6 +137,7 @@ class EntriesApi {
               'answer_text': answer.answerText,
             },
         ],
+        if (entryDate != null) 'entry_date': entryDate.toString(),
       },
     );
   }

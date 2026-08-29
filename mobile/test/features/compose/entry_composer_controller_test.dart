@@ -1,4 +1,5 @@
 import 'package:find_my_patterns/core/config/config_providers.dart';
+import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/diary_providers.dart';
 import 'package:find_my_patterns/core/diary/guiding_question.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
@@ -14,9 +15,21 @@ import '../../support/fake_http.dart';
 import '../../support/harness.dart';
 import 'json_fixtures.dart';
 
+/// The day every test in this file composes for, unless a test overrides
+/// [composerNowProvider] and reads a different family key itself (see the
+/// "backdating (#36)" group at the bottom) -- fixed rather than
+/// `CalendarDate.today()` so `composerNowProvider`'s default (the real
+/// clock) always resolves this to "today" deterministically, with no
+/// dependency on the date the suite happens to run on.
+const _testTargetDate = CalendarDate(2026, 8, 29);
+
 void main() {
   ({ProviderContainer container, FakeComposerDraftStore draftStore})
-  buildContainer(FakeHttpAdapter adapter, {ComposerDraft? initialDraft}) {
+  buildContainer(
+    FakeHttpAdapter adapter, {
+    ComposerDraft? initialDraft,
+    DateTime? now,
+  }) {
     final harness = Harness(
       settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
       adapter: adapter,
@@ -28,6 +41,9 @@ void main() {
         settingsStoreProvider.overrideWithValue(harness.store),
         apiClientProvider.overrideWithValue(harness.client),
         composerDraftStoreProvider.overrideWithValue(harness.draftStore),
+        composerNowProvider.overrideWithValue(
+          now ?? _testTargetDate.toDateTime(),
+        ),
       ],
     );
     addTearDown(container.dispose);
@@ -71,11 +87,13 @@ void main() {
     List<FakeReply> replies, {
     ComposerDraft? initialDraft,
     Duration draftSaveDebounce = Duration.zero,
+    CalendarDate targetDate = _testTargetDate,
+    DateTime? now,
   }) async {
     final adapter = FakeHttpAdapter(replies);
-    final built = buildContainer(adapter, initialDraft: initialDraft);
+    final built = buildContainer(adapter, initialDraft: initialDraft, now: now);
     final controller = built.container.read(
-      entryComposerControllerProvider.notifier,
+      entryComposerControllerProvider(targetDate).notifier,
     );
     controller.draftSaveDebounce = draftSaveDebounce;
     await controller.ready;
@@ -91,7 +109,9 @@ void main() {
     test('loads the guiding questions, feeling groups and constants', () async {
       final env = await readyController(bootReplies());
 
-      final state = env.container.read(entryComposerControllerProvider);
+      final state = env.container.read(
+        entryComposerControllerProvider(_testTargetDate),
+      );
       expect(state.stage, const GuidedStage());
       expect(state.guidingQuestions, hasLength(2));
       expect(state.feelingGroups, hasLength(2));
@@ -105,7 +125,9 @@ void main() {
           bootReplies(guiding: FakeReply(500, body: {'error': 'boom'})),
         );
 
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.stage, const FreeformStage());
         expect(state.errorMessage, isNotNull);
       },
@@ -123,7 +145,9 @@ void main() {
           ), // insights' own retry of feelings
         ]);
 
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.stage, const GuidedStage());
         expect(state.errorMessage, isNull);
         expect(state.feelingGroups, isEmpty);
@@ -142,7 +166,9 @@ void main() {
 
         env.controller.switchToFreeform();
 
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.stage, const FreeformStage());
         expect(state.freeformText, 'Feeling okay.\n\nBusy day.');
         // The guided answers are left intact so switching back is lossless.
@@ -158,7 +184,9 @@ void main() {
       env.controller.switchToFreeform();
 
       expect(
-        env.container.read(entryComposerControllerProvider).freeformText,
+        env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .freeformText,
         'Already writing this.',
       );
     });
@@ -171,7 +199,9 @@ void main() {
 
       env.controller.switchToGuided();
 
-      final state = env.container.read(entryComposerControllerProvider);
+      final state = env.container.read(
+        entryComposerControllerProvider(_testTargetDate),
+      );
       expect(state.stage, const GuidedStage());
       expect(state.guidedStepIndex, 1);
       expect(state.guidedAnswers['general'], 'Feeling okay.');
@@ -185,7 +215,9 @@ void main() {
       await env.controller.saveGuided(const []);
 
       expect(
-        env.container.read(entryComposerControllerProvider).stage,
+        env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .stage,
         const GuidedStage(),
       );
     });
@@ -200,7 +232,9 @@ void main() {
         GuidingQuestionAnswer('general', 'Okay.'),
       ]);
 
-      final state = env.container.read(entryComposerControllerProvider);
+      final state = env.container.read(
+        entryComposerControllerProvider(_testTargetDate),
+      );
       expect(state.stage, isA<ConfirmFeelingStage>());
       expect((state.stage as ConfirmFeelingStage).entry.id, 'entry-1');
       expect(state.isSaving, isFalse);
@@ -216,7 +250,9 @@ void main() {
         GuidingQuestionAnswer('general', 'Okay.'),
       ]);
 
-      final state = env.container.read(entryComposerControllerProvider);
+      final state = env.container.read(
+        entryComposerControllerProvider(_testTargetDate),
+      );
       expect(state.stage, const GuidedStage());
       expect(state.errorMessage, 'server exploded');
       expect(state.isSaving, isFalse);
@@ -230,7 +266,9 @@ void main() {
       await env.controller.saveFreeform('   ');
 
       expect(
-        env.container.read(entryComposerControllerProvider).stage,
+        env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .stage,
         const GuidedStage(),
       );
     });
@@ -248,7 +286,9 @@ void main() {
         'raw_text': 'hello world',
       });
       expect(
-        env.container.read(entryComposerControllerProvider).stage,
+        env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .stage,
         isA<ConfirmFeelingStage>(),
       );
     });
@@ -268,7 +308,7 @@ void main() {
 
         expect(
           env.container
-              .read(entryComposerControllerProvider)
+              .read(entryComposerControllerProvider(_testTargetDate))
               .isPollingSuggestions,
           isFalse,
         );
@@ -301,14 +341,16 @@ void main() {
         await env.controller.saveFreeform('A long day.');
         expect(
           env.container
-              .read(entryComposerControllerProvider)
+              .read(entryComposerControllerProvider(_testTargetDate))
               .isPollingSuggestions,
           isTrue,
         );
 
         await env.controller.suggestionPollSettled;
 
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.isPollingSuggestions, isFalse);
         final entry = (state.stage as ConfirmFeelingStage).entry;
         expect(entry.suggestedFeelings, hasLength(1));
@@ -333,7 +375,9 @@ void main() {
         await env.controller.saveFreeform('A long day.');
         await env.controller.suggestionPollSettled;
 
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.isPollingSuggestions, isFalse);
         expect(state.errorMessage, isNull);
         final entry = (state.stage as ConfirmFeelingStage).entry;
@@ -361,7 +405,9 @@ void main() {
         await env.controller.saveFreeform('A long day.');
         await env.controller.suggestionPollSettled;
 
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.errorMessage, isNull);
         expect(state.isPollingSuggestions, isFalse);
         final entry = (state.stage as ConfirmFeelingStage).entry;
@@ -389,7 +435,9 @@ void main() {
 
         expect(done, isTrue);
         expect(
-          env.container.read(entryComposerControllerProvider).stage,
+          env.container
+              .read(entryComposerControllerProvider(_testTargetDate))
+              .stage,
           isNot(isA<EchoStage>()),
         );
       },
@@ -412,7 +460,9 @@ void main() {
         );
 
         expect(done, isFalse);
-        final stage = env.container.read(entryComposerControllerProvider).stage;
+        final stage = env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .stage;
         expect(stage, isA<EchoStage>());
         expect((stage as EchoStage).echoes, hasLength(2));
       },
@@ -455,7 +505,9 @@ void main() {
         );
 
         expect(done, isFalse);
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.errorMessage, 'confirm failed');
         expect(state.isSaving, isFalse);
       },
@@ -510,14 +562,18 @@ void main() {
         bootReplies(guiding: FakeReply(500, body: {'error': 'boom'})),
       );
       expect(
-        env.container.read(entryComposerControllerProvider).errorMessage,
+        env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .errorMessage,
         isNotNull,
       );
 
       env.controller.dismissError();
 
       expect(
-        env.container.read(entryComposerControllerProvider).errorMessage,
+        env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .errorMessage,
         isNull,
       );
     });
@@ -529,7 +585,7 @@ void main() {
 
       expect(
         env.container
-            .read(entryComposerControllerProvider)
+            .read(entryComposerControllerProvider(_testTargetDate))
             .hasUnsavedComposition,
         isFalse,
       );
@@ -542,7 +598,7 @@ void main() {
 
       expect(
         env.container
-            .read(entryComposerControllerProvider)
+            .read(entryComposerControllerProvider(_testTargetDate))
             .hasUnsavedComposition,
         isTrue,
       );
@@ -556,7 +612,7 @@ void main() {
 
       expect(
         env.container
-            .read(entryComposerControllerProvider)
+            .read(entryComposerControllerProvider(_testTargetDate))
             .hasUnsavedComposition,
         isTrue,
       );
@@ -573,7 +629,7 @@ void main() {
 
         expect(
           env.container
-              .read(entryComposerControllerProvider)
+              .read(entryComposerControllerProvider(_testTargetDate))
               .hasUnsavedComposition,
           isTrue,
         );
@@ -589,7 +645,7 @@ void main() {
 
         expect(
           env.container
-              .read(entryComposerControllerProvider)
+              .read(entryComposerControllerProvider(_testTargetDate))
               .hasUnsavedComposition,
           isFalse,
         );
@@ -609,7 +665,9 @@ void main() {
         env.controller.updateFreeformText('A long day.');
         await env.controller.saveFreeform('A long day.');
 
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.stage, isA<ConfirmFeelingStage>());
         expect(state.freeformText, 'A long day.');
         expect(state.hasUnsavedComposition, isFalse);
@@ -621,7 +679,9 @@ void main() {
     test('an empty store leaves the composer blank, with no notice', () async {
       final env = await readyController(bootReplies());
 
-      final state = env.container.read(entryComposerControllerProvider);
+      final state = env.container.read(
+        entryComposerControllerProvider(_testTargetDate),
+      );
       expect(state.restoredDraftAt, isNull);
       expect(state.stage, const GuidedStage());
       expect(state.guidedAnswers, isEmpty);
@@ -643,7 +703,9 @@ void main() {
           ),
         );
 
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.stage, const GuidedStage());
         expect(state.guidedStepIndex, 1);
         expect(state.guidedAnswers, {'general': 'Feeling okay.'});
@@ -661,7 +723,9 @@ void main() {
         ),
       );
 
-      final state = env.container.read(entryComposerControllerProvider);
+      final state = env.container.read(
+        entryComposerControllerProvider(_testTargetDate),
+      );
       expect(state.stage, const FreeformStage());
       expect(state.freeformText, 'carried over');
       expect(state.restoredDraftAt, isNotNull);
@@ -676,7 +740,9 @@ void main() {
         ),
       );
 
-      final state = env.container.read(entryComposerControllerProvider);
+      final state = env.container.read(
+        entryComposerControllerProvider(_testTargetDate),
+      );
       expect(state.restoredDraftAt, isNull);
       expect(state.stage, const GuidedStage());
     });
@@ -790,13 +856,17 @@ void main() {
           ),
         );
         expect(
-          env.container.read(entryComposerControllerProvider).restoredDraftAt,
+          env.container
+              .read(entryComposerControllerProvider(_testTargetDate))
+              .restoredDraftAt,
           isNotNull,
         );
 
         await env.controller.discardDraft();
 
-        final state = env.container.read(entryComposerControllerProvider);
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
         expect(state.guidedAnswers, isEmpty);
         expect(state.guidedStepIndex, 0);
         expect(state.freeformText, isEmpty);
@@ -829,13 +899,17 @@ void main() {
         ),
       );
       expect(
-        env.container.read(entryComposerControllerProvider).restoredDraftAt,
+        env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .restoredDraftAt,
         savedAt,
       );
 
       env.controller.dismissDraftNotice();
 
-      final state = env.container.read(entryComposerControllerProvider);
+      final state = env.container.read(
+        entryComposerControllerProvider(_testTargetDate),
+      );
       expect(state.restoredDraftAt, isNull);
       expect(state.freeformText, 'carried over');
       expect(state.stage, const FreeformStage());
@@ -860,7 +934,9 @@ void main() {
         await Future<void>.delayed(Duration.zero);
 
         expect(
-          env.container.read(entryComposerControllerProvider).restoredDraftAt,
+          env.container
+              .read(entryComposerControllerProvider(_testTargetDate))
+              .restoredDraftAt,
           isNull,
         );
         expect(env.draftStore.clearCount, greaterThanOrEqualTo(1));
@@ -884,11 +960,186 @@ void main() {
         await Future<void>.delayed(Duration.zero);
 
         expect(
-          env.container.read(entryComposerControllerProvider).restoredDraftAt,
+          env.container
+              .read(entryComposerControllerProvider(_testTargetDate))
+              .restoredDraftAt,
           isNull,
         );
         expect(env.draftStore.clearCount, greaterThanOrEqualTo(1));
         expect(await env.draftStore.load(), isNull);
+      },
+    );
+  });
+
+  group('backdating (#36)', () {
+    final backdatedTarget = CalendarDate(2026, 8, 26);
+
+    test('isBackdated is false when the target date is today', () async {
+      final env = await readyController(bootReplies());
+
+      expect(
+        env.container
+            .read(entryComposerControllerProvider(_testTargetDate))
+            .isBackdated,
+        isFalse,
+      );
+    });
+
+    test(
+      'isBackdated is true when the target date is a day other than today',
+      () async {
+        final env = await readyController(
+          bootReplies(),
+          targetDate: backdatedTarget,
+        );
+
+        expect(
+          env.container
+              .read(entryComposerControllerProvider(backdatedTarget))
+              .isBackdated,
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'saveFreeform omits entry_date while writing for today, exactly as '
+      'before this feature existed',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(201, body: entryJson()),
+        ]);
+
+        await env.controller.saveFreeform('A long day.');
+
+        expect(env.adapter.requests.last.data, {
+          'mode': 'freeform',
+          'raw_text': 'A long day.',
+        });
+      },
+    );
+
+    test(
+      'saveFreeform sends the target date as an explicit entry_date while '
+      'backdated',
+      () async {
+        final env = await readyController(
+          [...bootReplies(), FakeReply(201, body: entryJson())],
+          targetDate: backdatedTarget,
+        );
+
+        await env.controller.saveFreeform('Catching up.');
+
+        expect(env.adapter.requests.last.data, {
+          'mode': 'freeform',
+          'raw_text': 'Catching up.',
+          'entry_date': '2026-08-26',
+        });
+      },
+    );
+
+    test(
+      'saveGuided sends the target date as an explicit entry_date while '
+      'backdated',
+      () async {
+        final env = await readyController(
+          [...bootReplies(), FakeReply(201, body: entryJson())],
+          targetDate: backdatedTarget,
+        );
+
+        await env.controller.saveGuided(const [
+          GuidingQuestionAnswer('general', 'Okay.'),
+        ]);
+
+        expect(
+          (env.adapter.requests.last.data as Map)['entry_date'],
+          '2026-08-26',
+        );
+      },
+    );
+
+    test(
+      'the autosaved draft carries the target date, so a restored draft '
+      'never silently reverts to today',
+      () async {
+        final env = await readyController(
+          bootReplies(),
+          targetDate: backdatedTarget,
+        );
+
+        env.controller.updateFreeformText('will be persisted');
+        await env.controller.draftSaveSettled;
+
+        expect(env.draftStore.saved.single.entryDate, backdatedTarget);
+      },
+    );
+
+    test(
+      'a draft saved for a different day is not restored into this '
+      'session',
+      () async {
+        // A draft left over from a *different* backdated session --
+        // restoring it here would silently move that composition onto
+        // `_testTargetDate`.
+        final env = await readyController(
+          bootReplies(),
+          initialDraft: ComposerDraft(
+            mode: ComposerDraftMode.freeform,
+            freeformText: 'from a different day',
+            entryDate: backdatedTarget,
+            savedAt: DateTime.utc(2026, 8, 26, 9),
+          ),
+        );
+
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
+        expect(state.freeformText, isEmpty);
+        expect(state.restoredDraftAt, isNull);
+      },
+    );
+
+    test(
+      'a draft saved for this same target date is restored normally',
+      () async {
+        final env = await readyController(
+          bootReplies(),
+          targetDate: backdatedTarget,
+          initialDraft: ComposerDraft(
+            mode: ComposerDraftMode.freeform,
+            freeformText: 'carried over',
+            entryDate: backdatedTarget,
+            savedAt: DateTime.utc(2026, 8, 26, 9),
+          ),
+        );
+
+        final state = env.container.read(
+          entryComposerControllerProvider(backdatedTarget),
+        );
+        expect(state.freeformText, 'carried over');
+        expect(state.restoredDraftAt, isNotNull);
+      },
+    );
+
+    test(
+      'a dateless (pre-#36) draft is treated as written for today, and '
+      'restores into a today session',
+      () async {
+        final env = await readyController(
+          bootReplies(),
+          initialDraft: ComposerDraft(
+            mode: ComposerDraftMode.freeform,
+            freeformText: 'from before backdating existed',
+            savedAt: DateTime.utc(2026, 8, 29, 9),
+          ),
+        );
+
+        final state = env.container.read(
+          entryComposerControllerProvider(_testTargetDate),
+        );
+        expect(state.freeformText, 'from before backdating existed');
+        expect(state.restoredDraftAt, isNotNull);
       },
     );
   });
