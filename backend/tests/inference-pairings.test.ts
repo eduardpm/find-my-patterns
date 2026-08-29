@@ -12,7 +12,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { encodeDate, encodeDateTime, nowUtc, todayLocal } from '../src/db/codecs';
+import { encodeDate, encodeDateTime, encodeJson, nowUtc, todayLocal } from '../src/db/codecs';
 import { openDiary, type DiaryDatabase } from '../src/db/database';
 import { initDiary } from '../src/db/init';
 import { runWorker } from '../src/inference/worker';
@@ -178,5 +178,67 @@ describe('worker pairing extraction (E-1a)', () => {
     await runWorker(true);
 
     expect(readPairings('phantom-topic-1')).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // #22 (E-3): `entry_topic_feelings` is a fifth reader of topic identity, alongside `entry_topics`,
+  // the pattern engine, the echo, and the topics listing — and it resolves through the very same
+  // `canonicalTopicName` call the other four go through (see `applyAnalysis` in `worker.ts`, just
+  // above where `entry_topic_feelings` is written). This is the one integration test that exercises
+  // that resolution on the *model-proposed* path rather than the keyword-extracted one: two entries,
+  // analysed on separate worker passes, propose the same idea in two different disguises — a case
+  // variant of the canonical name, and a case variant of a user-added alias — and both must land on
+  // one topic row.
+  // ---------------------------------------------------------------------------------------------
+  it('resolves a model-proposed topic through the alias table, case-insensitively, for entry_topic_feelings too', async () => {
+    const seed = openDiary(dbPath);
+    // A pre-existing topic with a user-added alias, the same shape `TopicsService.addAlias` writes —
+    // not a curated word, so the only thing that can connect "gold repair" to "kintsugi" is the
+    // alias table, never the curated list.
+    const now = encodeDateTime(nowUtc());
+    seed
+      .prepare(
+        `INSERT INTO topics (id, name, aliases, first_seen_at, last_seen_at)
+         VALUES ('t-kintsugi', 'kintsugi', ?, ?, ?)`,
+      )
+      .run(encodeJson(['gold repair']), now, now);
+    insertQueuedEntry(seed, 'case-1', 'A quiet evening with the bowl.');
+    seed.close();
+
+    // The model proposes the canonical name in a different case than it is stored in.
+    mockOllama({
+      feelings: [{ group_key: 'steady', feeling_key: 'content', confidence: 0.8 }],
+      topics: ['Kintsugi'],
+      topic_feelings: [{ topic: 'Kintsugi', feeling_keys: ['content'] }],
+    });
+    await runWorker(true);
+
+    const between = openDiary(dbPath);
+    insertQueuedEntry(between, 'case-2', 'Repaired another piece tonight.');
+    between.close();
+
+    // The second entry proposes the alias, also in a different case than it is stored in.
+    mockOllama({
+      feelings: [{ group_key: 'steady', feeling_key: 'content', confidence: 0.8 }],
+      topics: ['GOLD REPAIR'],
+      topic_feelings: [{ topic: 'GOLD REPAIR', feeling_keys: ['content'] }],
+    });
+    await runWorker(true);
+
+    expect(readPairings('case-1')).toEqual([
+      { topic: 'kintsugi', feeling_key: 'content', source: 'suggested' },
+    ]);
+    expect(readPairings('case-2')).toEqual([
+      { topic: 'kintsugi', feeling_key: 'content', source: 'suggested' },
+    ]);
+
+    // Both pairings point at the one pre-existing row — case and alias never grew a second one.
+    const db = openDiary(dbPath);
+    const topics = db.prepare('SELECT id, name FROM topics').all() as Array<{
+      id: string;
+      name: string;
+    }>;
+    db.close();
+    expect(topics).toEqual([{ id: 't-kintsugi', name: 'kintsugi' }]);
   });
 });
