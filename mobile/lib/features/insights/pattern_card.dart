@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/diary/calendar_date.dart';
+import '../../core/diary/experiment.dart';
 import '../../core/diary/pattern.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/journal_metrics.dart';
@@ -28,6 +29,8 @@ class PatternCard extends StatefulWidget {
     required this.pattern,
     required this.constants,
     required this.onOpenEntry,
+    this.activeExperiment,
+    this.onTestPattern,
   });
 
   /// The pattern to show.
@@ -45,6 +48,20 @@ class PatternCard extends StatefulWidget {
   /// carries both -- loading the entry first just to build a URL would be a
   /// round trip to learn something already known.
   final void Function(String entryId, CalendarDate entryDate) onOpenEntry;
+
+  /// The experiment currently running app-wide, if any (R-3b) -- used only
+  /// to tell whether it is *this* card's own pattern, which swaps "Test
+  /// this pattern" for "Experiment running". `null` while nothing is
+  /// running, and also the default for a caller (or a test) that does not
+  /// care about the experiments feature at all.
+  final Experiment? activeExperiment;
+
+  /// Called with [pattern] when "Test this pattern" is tapped, to open the
+  /// setup sheet. `null` hides the action entirely -- point 1 of R-3b is
+  /// offered from every card here, regardless of kind or status:
+  /// eligibility is `POST /experiments`'s call, never re-derived on this
+  /// card.
+  final void Function(Pattern pattern)? onTestPattern;
 
   @override
   State<PatternCard> createState() => _PatternCardState();
@@ -231,7 +248,55 @@ class _PatternCardState extends State<PatternCard> {
               recencyWindowDays: widget.constants.recencyWindowDays,
               onOpen: widget.onOpenEntry,
             ),
+          // R-3b: "Test this pattern", or "Experiment running" when this
+          // card's own topic/feeling is the one currently under test.
+          // Appended at the end rather than woven into the sections above
+          // so this stays a small, additive change.
+          if (widget.onTestPattern case final onTestPattern?) ...[
+            const SizedBox(height: JournalSpacing.x2),
+            _ExperimentAction(
+              isRunning:
+                  widget.activeExperiment?.matches(
+                    topic: pattern.topic,
+                    feeling: pattern.feeling?.key,
+                  ) ??
+                  false,
+              onTap: () => onTestPattern(pattern),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// The bottom-of-card R-3b action: "Test this pattern", or a quiet
+/// "Experiment running" badge in its place once this card's pattern is the
+/// one being tested.
+class _ExperimentAction extends StatelessWidget {
+  const _ExperimentAction({required this.isRunning, required this.onTap});
+
+  final bool isRunning;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isRunning) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: StatusBadge(
+          'Experiment running',
+          contentColor: Theme.of(context).colorScheme.primary,
+          leading: const Icon(Icons.science_outlined, size: 14),
+        ),
+      );
+    }
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: onTap,
+        icon: const Icon(Icons.science_outlined, size: 18),
+        label: const Text('Test this pattern'),
       ),
     );
   }

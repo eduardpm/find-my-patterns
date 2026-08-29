@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/diary/calendar_date.dart';
+import '../../core/diary/experiment.dart';
 import '../../core/diary/pattern.dart';
 import '../../core/network/api_error.dart';
 import '../../core/theme/journal_metrics.dart';
@@ -12,6 +13,7 @@ import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_page_wash.dart';
 import '../../core/widgets/journal_scrollbar.dart';
 import '../../core/widgets/status_views.dart';
+import '../experiments/experiment_setup_sheet.dart';
 import 'charts/mood_trend_chart.dart';
 import 'insights_controller.dart';
 import 'pattern_card.dart';
@@ -124,11 +126,36 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
     }
   }
 
-  void _showError(String message) {
+  void _showError(String message) => _showSnack(message);
+
+  void _showSnack(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
   }
+
+  /// Opens the "Test this pattern" sheet (R-3b). [constants] and
+  /// [activeExperiment] both come from the currently-loaded page state --
+  /// this sheet never fetches either on its own, since whichever screen
+  /// opens it already has them.
+  Future<void> _openTestPattern(
+    Pattern pattern, {
+    required ExperimentConstants constants,
+    required Experiment? activeExperiment,
+  }) => showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (sheetContext) => ExperimentSetupSheet(
+      pattern: pattern,
+      constants: constants,
+      activeExperiment: activeExperiment,
+      onStarted: (experiment) {
+        unawaited(ref.read(insightsControllerProvider.notifier).refresh());
+        if (!mounted) return;
+        _showSnack('Experiment started: ${experiment.patternTopic}.');
+      },
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -196,6 +223,15 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
                       data: data,
                       onOpenEntry: _openEntry,
                       onAcknowledge: () => unawaited(_acknowledge()),
+                      onTestPattern: (pattern) => unawaited(
+                        _openTestPattern(
+                          pattern,
+                          constants:
+                              data.activeExperiment?.constants ??
+                              ExperimentConstants.placeholder,
+                          activeExperiment: data.activeExperiment,
+                        ),
+                      ),
                     ),
                 ],
               ),
@@ -252,11 +288,13 @@ class _Content extends StatelessWidget {
     required this.data,
     required this.onOpenEntry,
     required this.onAcknowledge,
+    required this.onTestPattern,
   });
 
   final InsightsPageState data;
   final void Function(String entryId, CalendarDate entryDate) onOpenEntry;
   final VoidCallback onAcknowledge;
+  final void Function(Pattern pattern) onTestPattern;
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +330,8 @@ class _Content extends StatelessWidget {
               pattern: pattern,
               constants: data.constants,
               onOpenEntry: onOpenEntry,
+              activeExperiment: data.activeExperiment,
+              onTestPattern: onTestPattern,
             ),
             const SizedBox(height: JournalSpacing.x4),
           ],

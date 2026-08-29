@@ -11,6 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../support/fake_backdate_nudge_store.dart';
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
+import '../experiments/json_fixtures.dart'
+    show experimentJson, noActiveExperimentErrorJson;
 import 'json_fixtures.dart';
 
 void main() {
@@ -24,6 +26,12 @@ void main() {
   /// own shared `FeelingsApi` cache. Always the first request in a fresh
   /// container's lifetime; never repeated after that.
   final feelingsReply = FakeReply(200, body: feelingsCatalogJson());
+
+  /// `GET /experiments/active`'s reply when nothing is running -- the
+  /// fourth call `_load` makes while `date == today`, for a test that
+  /// scripts the sequence by hand instead of through [loadReplies].
+  FakeReply noActiveExperimentReply() =>
+      FakeReply(404, body: noActiveExperimentErrorJson());
 
   ({
     ProviderContainer container,
@@ -67,19 +75,21 @@ void main() {
   }
 
   /// One `refresh`'s worth of replies while showing *today*, once the
-  /// feelings catalog is already cached: entries, the monthly summary, then
-  /// the writing-streak series (#40) -- `_loadStreak` only makes that third
-  /// call while `date == today`, so this is only the right script for a
-  /// load that lands on today. A load of a past day needs [pastDayReplies]
-  /// instead.
+  /// feelings catalog is already cached: entries, the monthly summary, the
+  /// writing-streak series (#40), then the active experiment (R-3b) --
+  /// `_loadStreak` and `_loadActiveExperiment` only make their calls while
+  /// `date == today`, so this is only the right script for a load that
+  /// lands on today. A load of a past day needs [pastDayReplies] instead.
   List<FakeReply> loadReplies({
     List<Map<String, Object?>> entries = const [],
     List<Map<String, Object?>> days = const [],
     List<CalendarDate> streakDays = const [],
+    FakeReply? activeExperimentReply,
   }) => [
     FakeReply(200, body: entriesJson(entries)),
     FakeReply(200, body: monthlySummaryJson(days: days)),
     FakeReply(200, body: seriesJson(days: streakDays)),
+    activeExperimentReply ?? noActiveExperimentReply(),
   ];
 
   /// One `refresh`'s worth of replies while showing a day other than today:
@@ -133,6 +143,7 @@ void main() {
           FakeReply(500, body: {'error': 'server exploded'}),
           FakeReply(200, body: monthlySummaryJson(days: const [])),
           FakeReply(200, body: seriesJson()),
+          noActiveExperimentReply(),
         ]);
 
         await env.controller.refresh();
@@ -149,6 +160,7 @@ void main() {
         FakeReply(200, body: entriesJson(const [])),
         FakeReply(500, body: {'error': 'boom'}),
         FakeReply(200, body: seriesJson()),
+        noActiveExperimentReply(),
       ]);
 
       await env.controller.refresh();
@@ -165,6 +177,7 @@ void main() {
         FakeReply(500, body: {'error': 'boom'}),
         FakeReply(200, body: monthlySummaryJson(days: const [])),
         FakeReply(200, body: seriesJson()),
+        noActiveExperimentReply(),
       ]);
       await env.controller.refresh();
       expect(env.container.read(todayControllerProvider).entries, hasLength(1));
@@ -197,8 +210,10 @@ void main() {
         await env.controller.refresh();
 
         final from = today.addDays(-399);
+        // Not `.last`: the active-experiment fetch (R-3b) follows the
+        // series request in `_load`, so this is the second-to-last one.
         expect(
-          env.adapter.requests.last.path,
+          env.adapter.requests[env.adapter.requests.length - 2].path,
           '/insights/series?from=$from&to=$today&granularity=day',
         );
       },
@@ -218,10 +233,11 @@ void main() {
 
         final state = env.container.read(todayControllerProvider);
         expect(state.streakDays, 0);
-        // Exactly four requests total: feelings, then entries + monthly
-        // summary + series for today, then entries + monthly summary for
-        // yesterday -- no fifth (series) request for the past day.
-        expect(env.adapter.requests, hasLength(6));
+        // Exactly seven requests total: feelings, then entries + monthly
+        // summary + series + the active experiment for today, then entries
+        // + monthly summary for yesterday -- no series or experiment
+        // request for the past day.
+        expect(env.adapter.requests, hasLength(7));
       },
     );
 
@@ -230,6 +246,7 @@ void main() {
         FakeReply(200, body: entriesJson(const [])),
         FakeReply(200, body: monthlySummaryJson(days: const [])),
         FakeReply(500, body: {'error': 'boom'}),
+        noActiveExperimentReply(),
       ]);
 
       await env.controller.refresh();
@@ -277,11 +294,89 @@ void main() {
         FakeReply(200, body: entriesJson(const [])),
         FakeReply(200, body: monthlySummaryJson(days: const [])),
         FakeReply(500, body: {'error': 'boom'}),
+        noActiveExperimentReply(),
       ]);
 
       await env.controller.refresh();
 
       expect(env.container.read(todayControllerProvider).totalEntries, 0);
+    });
+  });
+
+  group('activeExperiment (R-3b)', () {
+    test(
+      'carries the active experiment through, when one is running',
+      () async {
+        final env = buildEnv(
+          loadReplies(
+            activeExperimentReply: FakeReply(
+              200,
+              body: experimentJson(patternTopic: 'exercise'),
+            ),
+          ),
+        );
+
+        await env.controller.refresh();
+
+        final experiment = env.container
+            .read(todayControllerProvider)
+            .activeExperiment;
+        expect(experiment, isNotNull);
+        expect(experiment!.patternTopic, 'exercise');
+      },
+    );
+
+    test('is null while nothing is running', () async {
+      final env = buildEnv(loadReplies());
+
+      await env.controller.refresh();
+
+      expect(
+        env.container.read(todayControllerProvider).activeExperiment,
+        isNull,
+      );
+    });
+
+    test(
+      'is null while showing a past day, and makes no request there',
+      () async {
+        final env = buildEnv([
+          ...loadReplies(
+            activeExperimentReply: FakeReply(
+              200,
+              body: experimentJson(patternTopic: 'exercise'),
+            ),
+          ),
+          ...pastDayReplies(),
+        ]);
+        await env.controller.refresh();
+        expect(
+          env.container.read(todayControllerProvider).activeExperiment,
+          isNotNull,
+        );
+
+        await env.controller.showPreviousDay();
+
+        expect(
+          env.container.read(todayControllerProvider).activeExperiment,
+          isNull,
+        );
+      },
+    );
+
+    test('is null on a fetch failure, without an error message', () async {
+      final env = buildEnv([
+        FakeReply(200, body: entriesJson(const [])),
+        FakeReply(200, body: monthlySummaryJson(days: const [])),
+        FakeReply(200, body: seriesJson()),
+        const FakeReply.networkError(),
+      ]);
+
+      await env.controller.refresh();
+
+      final state = env.container.read(todayControllerProvider);
+      expect(state.activeExperiment, isNull);
+      expect(state.errorMessage, isNull);
     });
   });
 
@@ -459,9 +554,10 @@ void main() {
       await env.controller.refresh();
       await env.controller.analysisSettled;
 
-      // Only the feelings + three requests `refresh` itself made (entries,
-      // monthly summary, writing-streak series) -- no poll follow-up.
-      expect(env.adapter.requests, hasLength(4));
+      // Only the feelings + four requests `refresh` itself made (entries,
+      // monthly summary, writing-streak series, active experiment) -- no
+      // poll follow-up.
+      expect(env.adapter.requests, hasLength(5));
     });
 
     test('polls while an entry is pending and stops once it settles', () async {
@@ -545,6 +641,7 @@ void main() {
         FakeReply(500, body: {'error': 'boom'}),
         FakeReply(200, body: monthlySummaryJson(days: const [])),
         FakeReply(200, body: seriesJson()),
+        noActiveExperimentReply(),
       ]);
       await env.controller.refresh();
       expect(

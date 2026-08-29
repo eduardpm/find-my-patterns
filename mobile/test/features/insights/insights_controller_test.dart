@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
+import '../experiments/json_fixtures.dart'
+    show experimentJson, noActiveExperimentErrorJson;
 import 'json_fixtures.dart';
 
 void main() {
@@ -16,6 +18,13 @@ void main() {
     addTearDown(container.dispose);
     return container;
   }
+
+  /// `GET /experiments/active`'s reply when nothing is running -- the
+  /// common case every test in this file that does not care about R-3b
+  /// scripts once per `InsightsController._fetch()` cycle, right after its
+  /// own `whenInsightsJson()` reply.
+  FakeReply noActiveExperimentReply() =>
+      FakeReply(404, body: noActiveExperimentErrorJson());
 
   Harness configuredHarness(FakeHttpAdapter adapter) => Harness(
     settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
@@ -36,6 +45,7 @@ void main() {
           ),
         ),
         FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
       ]);
       final container = buildContainer(configuredHarness(adapter));
 
@@ -63,6 +73,7 @@ void main() {
         ),
       ),
       FakeReply(200, body: whenInsightsJson()),
+      noActiveExperimentReply(),
     ]);
     final container = buildContainer(configuredHarness(adapter));
 
@@ -70,6 +81,21 @@ void main() {
 
     expect(state.active.map((p) => p.id), ['active-1']);
     expect(state.historical.map((p) => p.id), ['historical-1']);
+  });
+
+  test('carries the active experiment through, when one is running', () async {
+    final adapter = FakeHttpAdapter([
+      FakeReply(200, body: feelingsCatalogJson()),
+      FakeReply(200, body: insightsResultJson()),
+      FakeReply(200, body: whenInsightsJson()),
+      FakeReply(200, body: experimentJson()),
+    ]);
+    final container = buildContainer(configuredHarness(adapter));
+
+    final state = await container.read(insightsControllerProvider.future);
+
+    expect(state.activeExperiment, isNotNull);
+    expect(state.activeExperiment!.patternTopic, 'exercise');
   });
 
   test(
@@ -115,6 +141,7 @@ void main() {
         FakeReply(200, body: feelingsCatalogJson()),
         FakeReply(200, body: insightsResultJson(patterns: [patternJson()])),
         FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
         FakeReply(500, body: {'error': 'boom'}),
       ]);
       final container = buildContainer(configuredHarness(adapter));
@@ -141,11 +168,13 @@ void main() {
           body: insightsResultJson(patterns: [patternJson(id: 'first')]),
         ),
         FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
         FakeReply(
           200,
           body: insightsResultJson(patterns: [patternJson(id: 'second')]),
         ),
         FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
       ]);
       final container = buildContainer(configuredHarness(adapter));
       await container.read(insightsControllerProvider.future);
@@ -155,8 +184,9 @@ void main() {
       final state = container.read(insightsControllerProvider).value;
       expect(state?.patterns.single.id, 'second');
       // The feeling catalog is cached after its first fetch, so a refresh
-      // hits only the two insights endpoints, not `/feelings` again.
-      expect(adapter.requests, hasLength(5));
+      // hits only `/insights`, `/insights/when` and `/experiments/active`,
+      // not `/feelings` again.
+      expect(adapter.requests, hasLength(7));
     },
   );
 
@@ -171,9 +201,11 @@ void main() {
         ),
       ),
       FakeReply(200, body: whenInsightsJson()),
+      noActiveExperimentReply(),
       FakeReply(200),
       FakeReply(200, body: insightsResultJson(newWithdrawalCount: 0)),
       FakeReply(200, body: whenInsightsJson()),
+      noActiveExperimentReply(),
     ]);
     final container = buildContainer(configuredHarness(adapter));
     await container.read(insightsControllerProvider.future);
@@ -182,8 +214,8 @@ void main() {
         .read(insightsControllerProvider.notifier)
         .acknowledgeWithdrawals();
 
-    expect(adapter.requests[3].method, 'POST');
-    expect(adapter.requests[3].path, '/insights/withdrawals/acknowledge');
+    expect(adapter.requests[4].method, 'POST');
+    expect(adapter.requests[4].path, '/insights/withdrawals/acknowledge');
     final state = container.read(insightsControllerProvider).value;
     expect(state?.newWithdrawalCount, 0);
   });

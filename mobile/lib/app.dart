@@ -19,6 +19,7 @@ import 'features/calendar/calendar_screen.dart';
 import 'features/calendar/day_entries_screen.dart';
 import 'features/compose/entry_composer_screen.dart';
 import 'features/entry/entry_detail_screen.dart';
+import 'features/experiments/experiment_results_screen.dart';
 import 'features/insights/insights_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/shell/app_shell.dart';
@@ -125,6 +126,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/calendar/day/:date',
         builder: (context, state) =>
             DayEntriesScreen(date: state.pathParameters['date'] ?? ''),
+      ),
+      GoRoute(
+        // R-3b: opened from the active-experiment banner on Today and from
+        // a pattern card's "Test this pattern" flow alike -- both already
+        // know the experiment id, so this route is keyed on it rather than
+        // needing a list to filter down to one.
+        path: '/experiments/:experimentId',
+        builder: (context, state) => ExperimentResultsScreen(
+          experimentId: state.pathParameters['experimentId'] ?? '',
+        ),
       ),
       GoRoute(
         path: SettingsScreen.topicsRoute,

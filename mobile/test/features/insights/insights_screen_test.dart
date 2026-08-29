@@ -13,7 +13,19 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../support/fake_http.dart';
 import '../../support/harness.dart';
+import '../experiments/json_fixtures.dart'
+    show
+        experimentJson,
+        experimentValidationErrorJson,
+        noActiveExperimentErrorJson;
 import 'json_fixtures.dart';
+
+/// `GET /experiments/active`'s reply when nothing is running -- the common
+/// case every test in this file that is not itself about R-3b scripts once
+/// per `InsightsController._fetch()` cycle, right after its own
+/// `whenInsightsJson()` reply.
+FakeReply noActiveExperimentReply() =>
+    FakeReply(404, body: noActiveExperimentErrorJson());
 
 /// A double over [InsightsApi] whose two fetches are held open on
 /// [Completer]s the test controls -- the only way to look at the screen
@@ -154,6 +166,7 @@ void main() {
       FakeReply(200, body: feelingsCatalogJson()),
       FakeReply(200, body: insightsResultJson(insufficientData: true)),
       FakeReply(200, body: whenInsightsJson(totalEntries: 0)),
+      noActiveExperimentReply(),
       // The mood-trend chart's own fetch, made once `_Content` (and so the
       // chart at its top) first renders.
       FakeReply(200, body: seriesJson()),
@@ -188,6 +201,7 @@ void main() {
           ),
         ),
         FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
         FakeReply(200, body: seriesJson()),
       ]);
       await tester.pumpWidget(
@@ -238,6 +252,7 @@ void main() {
           ),
         ),
         FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
         FakeReply(200, body: seriesJson()),
       ]);
       await tester.pumpWidget(
@@ -277,13 +292,15 @@ void main() {
         ),
       ),
       FakeReply(200, body: whenInsightsJson()),
-      // The mood-trend chart's own fetch, request index 3 -- before the
+      noActiveExperimentReply(),
+      // The mood-trend chart's own fetch, request index 4 -- before the
       // "Got it" tap's acknowledge POST, since `_Content` (and the chart at
       // its top) renders as soon as the first load above settles.
       FakeReply(200, body: seriesJson()),
       FakeReply(200),
       FakeReply(200, body: insightsResultJson(newWithdrawalCount: 0)),
       FakeReply(200, body: whenInsightsJson()),
+      noActiveExperimentReply(),
     ]);
     await tester.pumpWidget(
       configuredHarness(adapter).wrap(const InsightsScreen()),
@@ -299,8 +316,8 @@ void main() {
     await tester.tap(find.text('Got it'));
     await tester.pumpAndSettle();
 
-    expect(adapter.requests[4].method, 'POST');
-    expect(adapter.requests[4].path, '/insights/withdrawals/acknowledge');
+    expect(adapter.requests[5].method, 'POST');
+    expect(adapter.requests[5].path, '/insights/withdrawals/acknowledge');
     expect(find.text('Got it'), findsNothing);
   });
 
@@ -331,6 +348,7 @@ void main() {
           ),
         ),
         FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
         FakeReply(200, body: seriesJson()),
       ]);
       await tester.pumpWidget(
@@ -360,12 +378,123 @@ void main() {
     },
   );
 
+  group('R-3b "Test this pattern"', () {
+    Future<void> pumpWithOnePattern(
+      WidgetTester tester, {
+      List<FakeReply> extraReplies = const [],
+    }) async {
+      final adapter = FakeHttpAdapter([
+        FakeReply(200, body: feelingsCatalogJson()),
+        FakeReply(
+          200,
+          body: insightsResultJson(
+            patterns: [patternJson(topic: 'coffee', direction: 'change')],
+          ),
+        ),
+        FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
+        FakeReply(200, body: seriesJson()),
+        ...extraReplies,
+      ]);
+      await tester.pumpWidget(
+        configuredHarness(adapter).wrap(const InsightsScreen()),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Test this pattern'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('opens the setup sheet, phrasing the hypothesis from the '
+        'pattern', (tester) async {
+      await pumpWithOnePattern(tester);
+
+      await tester.tap(find.text('Test this pattern'));
+      await tester.pumpAndSettle();
+
+      // Two matches now: the card's own button, still in the tree behind
+      // the sheet, and the sheet's title.
+      expect(find.text('Test this pattern'), findsNWidgets(2));
+      // A `change`-badged pattern is tested by doing less of it.
+      expect(find.textContaining('Try less coffee'), findsOneWidget);
+      expect(find.text('Start'), findsOneWidget);
+    });
+
+    testWidgets(
+      'starting an experiment posts to /experiments and refreshes the page',
+      (tester) async {
+        await pumpWithOnePattern(
+          tester,
+          extraReplies: [
+            FakeReply(
+              201,
+              body: experimentJson(
+                patternTopic: 'coffee',
+                patternFeeling: 'stressed',
+              ),
+            ),
+            // The refresh `onStarted` triggers.
+            FakeReply(
+              200,
+              body: insightsResultJson(
+                patterns: [patternJson(topic: 'coffee', direction: 'change')],
+              ),
+            ),
+            FakeReply(200, body: whenInsightsJson()),
+            FakeReply(
+              200,
+              body: experimentJson(
+                patternTopic: 'coffee',
+                patternFeeling: 'stressed',
+              ),
+            ),
+          ],
+        );
+
+        await tester.tap(find.text('Test this pattern'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Experiment started: coffee.'), findsOneWidget);
+        expect(find.textContaining('EXPERIMENT RUNNING'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'a 422 rejection from the backend is shown verbatim, not reworded',
+      (tester) async {
+        await pumpWithOnePattern(
+          tester,
+          extraReplies: [
+            FakeReply(
+              422,
+              body: experimentValidationErrorJson(
+                message: '"coffee" is not a currently qualifying pattern.',
+              ),
+            ),
+          ],
+        );
+
+        await tester.tap(find.text('Test this pattern'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('"coffee" is not a currently qualifying pattern.'),
+          findsOneWidget,
+        );
+      },
+    );
+  });
+
   testWidgets('a refresh failure surfaces a snack bar without losing the '
       'content underneath', (tester) async {
     final adapter = FakeHttpAdapter([
       FakeReply(200, body: feelingsCatalogJson()),
       FakeReply(200, body: insightsResultJson(patterns: [patternJson()])),
       FakeReply(200, body: whenInsightsJson()),
+      noActiveExperimentReply(),
       // The mood-trend chart's own fetch, consumed by the first load
       // before the resume below issues its own (failing) insights request.
       FakeReply(200, body: seriesJson()),
@@ -390,25 +519,27 @@ void main() {
       FakeReply(200, body: feelingsCatalogJson()),
       FakeReply(200, body: insightsResultJson(patterns: [patternJson()])),
       FakeReply(200, body: whenInsightsJson()),
+      noActiveExperimentReply(),
       // The mood-trend chart's own fetch, made once for the life of this
       // screen -- app-resume refetches `InsightsController`'s own data, not
       // the chart's, so this reply is not repeated below.
       FakeReply(200, body: seriesJson()),
       FakeReply(200, body: insightsResultJson(patterns: [patternJson()])),
       FakeReply(200, body: whenInsightsJson()),
+      noActiveExperimentReply(),
     ]);
     await tester.pumpWidget(
       configuredHarness(adapter).wrap(const InsightsScreen()),
     );
     await tester.pumpAndSettle();
-    expect(adapter.requests, hasLength(4));
+    expect(adapter.requests, hasLength(5));
 
     WidgetsBinding.instance.handleAppLifecycleStateChanged(
       AppLifecycleState.resumed,
     );
     await tester.pumpAndSettle();
 
-    expect(adapter.requests, hasLength(6));
+    expect(adapter.requests, hasLength(8));
   });
 
   testWidgets(
@@ -420,12 +551,14 @@ void main() {
         FakeReply(200, body: feelingsCatalogJson()),
         FakeReply(200, body: insightsResultJson(patterns: [patternJson()])),
         FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
         // The mood-trend chart's own fetch -- made once, since a tab
         // switch does not unmount the screen and the chart's provider is
         // not invalidated by a revisit.
         FakeReply(200, body: seriesJson()),
         FakeReply(200, body: insightsResultJson(patterns: [patternJson()])),
         FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
       ]);
       final harness = configuredHarness(adapter);
 
@@ -435,17 +568,17 @@ void main() {
 
       await tester.pumpWidget(onTab(active: true));
       await tester.pumpAndSettle();
-      expect(adapter.requests, hasLength(4));
+      expect(adapter.requests, hasLength(5));
 
       // Switching to another tab: no refetch just for going away.
       await tester.pumpWidget(onTab(active: false));
       await tester.pumpAndSettle();
-      expect(adapter.requests, hasLength(4));
+      expect(adapter.requests, hasLength(5));
 
       // Switching back: this is the revisit that refetches.
       await tester.pumpWidget(onTab(active: true));
       await tester.pumpAndSettle();
-      expect(adapter.requests, hasLength(6));
+      expect(adapter.requests, hasLength(8));
     },
   );
 }

@@ -1,4 +1,5 @@
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
+import 'package:find_my_patterns/core/diary/experiment.dart';
 import 'package:find_my_patterns/core/diary/pattern.dart';
 import 'package:find_my_patterns/core/theme/app_theme.dart';
 import 'package:find_my_patterns/core/theme/journal_palette.dart';
@@ -6,6 +7,7 @@ import 'package:find_my_patterns/features/insights/pattern_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../experiments/fixtures.dart';
 import 'fixtures.dart';
 
 /// The WCAG contrast ratio between two colours, via [Color.computeLuminance]
@@ -21,19 +23,25 @@ double _contrastRatio(Color a, Color b) {
 }
 
 void main() {
-  Widget app(Pattern pattern, {void Function(String, CalendarDate)? onOpen}) =>
-      MaterialApp(
-        theme: buildLightTheme(),
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: PatternCard(
-              pattern: pattern,
-              constants: buildConstants(),
-              onOpenEntry: onOpen ?? (_, _) {},
-            ),
-          ),
+  Widget app(
+    Pattern pattern, {
+    void Function(String, CalendarDate)? onOpen,
+    Experiment? activeExperiment,
+    void Function(Pattern)? onTestPattern,
+  }) => MaterialApp(
+    theme: buildLightTheme(),
+    home: Scaffold(
+      body: SingleChildScrollView(
+        child: PatternCard(
+          pattern: pattern,
+          constants: buildConstants(),
+          onOpenEntry: onOpen ?? (_, _) {},
+          activeExperiment: activeExperiment,
+          onTestPattern: onTestPattern,
         ),
-      );
+      ),
+    ),
+  );
 
   testWidgets('shows the topic capitalised and the narrative', (
     tester,
@@ -418,6 +426,75 @@ void main() {
 
     expect(openedId, 'entry-42');
     expect(openedDate, const CalendarDate(2026, 8, 20));
+  });
+
+  group('R-3b experiment action', () {
+    testWidgets('shows nothing when onTestPattern is not given', (
+      tester,
+    ) async {
+      await tester.pumpWidget(app(buildPattern()));
+
+      expect(find.text('Test this pattern'), findsNothing);
+      expect(find.text('EXPERIMENT RUNNING'), findsNothing);
+    });
+
+    testWidgets(
+      '"Test this pattern" is offered when nothing is running, and taps '
+      'call back with this pattern',
+      (tester) async {
+        Pattern? tapped;
+        final pattern = buildPattern(topic: 'coffee');
+        await tester.pumpWidget(
+          app(pattern, onTestPattern: (p) => tapped = p),
+        );
+
+        expect(find.text('Test this pattern'), findsOneWidget);
+        await tester.tap(find.text('Test this pattern'));
+        expect(tapped, same(pattern));
+      },
+    );
+
+    testWidgets(
+      'shows "Experiment running" instead, once the active experiment is '
+      "this card's own topic and feeling",
+      (tester) async {
+        final pattern = buildPattern(topic: 'coffee');
+        await tester.pumpWidget(
+          app(
+            pattern,
+            onTestPattern: (_) {},
+            activeExperiment: buildExperiment(
+              patternTopic: 'coffee',
+              patternFeeling: pattern.feeling!.key,
+            ),
+          ),
+        );
+
+        expect(find.text('EXPERIMENT RUNNING'), findsOneWidget);
+        expect(find.text('Test this pattern'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'still offers "Test this pattern" when a different pattern is the '
+      'one running',
+      (tester) async {
+        final pattern = buildPattern(topic: 'coffee');
+        await tester.pumpWidget(
+          app(
+            pattern,
+            onTestPattern: (_) {},
+            activeExperiment: buildExperiment(
+              patternTopic: 'exercise',
+              patternFeeling: pattern.feeling!.key,
+            ),
+          ),
+        );
+
+        expect(find.text('Test this pattern'), findsOneWidget);
+        expect(find.text('EXPERIMENT RUNNING'), findsNothing);
+      },
+    );
   });
 
   // P0-2: `patternBadgeFor` is the single function that decides which badge

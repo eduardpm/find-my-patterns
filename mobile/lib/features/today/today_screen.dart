@@ -10,6 +10,7 @@ import '../../core/diary/entry.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_page_wash.dart';
+import '../experiments/active_experiment_banner.dart';
 import 'day_summary_card.dart';
 import 'entry_card.dart';
 import 'today_controller.dart';
@@ -30,7 +31,12 @@ class TodayScreen extends ConsumerStatefulWidget {
   /// pushing the composer and entry-detail routes; a caller (or a test)
   /// passes its own to observe the call instead of depending on those
   /// other routes existing.
-  const TodayScreen({super.key, this.onNewEntry, this.onOpenEntry});
+  const TodayScreen({
+    super.key,
+    this.onNewEntry,
+    this.onOpenEntry,
+    this.onOpenExperiment,
+  });
 
   /// Called to start a new entry. Defaults to `context.push('/compose')`.
   final VoidCallback? onNewEntry;
@@ -38,6 +44,10 @@ class TodayScreen extends ConsumerStatefulWidget {
   /// Called to open [Entry] in the entry-detail screen. Defaults to
   /// `context.push('/entry/{id}/{date}')`.
   final ValueChanged<Entry>? onOpenEntry;
+
+  /// Called with the active experiment's id when the experiment banner
+  /// (R-3b) is tapped. Defaults to `context.push('/experiments/{id}')`.
+  final ValueChanged<String>? onOpenExperiment;
 
   @override
   ConsumerState<TodayScreen> createState() => _TodayScreenState();
@@ -169,6 +179,8 @@ class _TodayScreenState extends ConsumerState<TodayScreen>
     final openEntry =
         widget.onOpenEntry ??
         (entry) => context.push('/entry/${entry.id}/${entry.entryDate}');
+    final openExperiment =
+        widget.onOpenExperiment ?? (id) => context.push('/experiments/$id');
 
     ref.listen(todayControllerProvider.select((s) => s.errorMessage), (
       previous,
@@ -241,6 +253,22 @@ class _TodayScreenState extends ConsumerState<TodayScreen>
                           onNextDay: controller.showNextDay,
                           onToday: controller.showToday,
                         ),
+                        // The active-experiment banner (R-3b): above the
+                        // streak line and the backdate nudge below it,
+                        // because it is the one live, time-bound thing on
+                        // this header -- a countdown the reader is
+                        // mid-way through, not a passive fact like the
+                        // streak or an occasional nudge. Today-only, the
+                        // same as both.
+                        if (state.activeExperiment case final experiment?
+                            when isToday) ...[
+                          const SizedBox(height: JournalSpacing.x3),
+                          ActiveExperimentBanner(
+                            experiment: experiment,
+                            today: controller.today,
+                            onTap: () => openExperiment(experiment.id),
+                          ),
+                        ],
                         // Only on today, and only once the streak is worth
                         // naming (#40) -- [TodayState.streakDays] is already
                         // zero on a past day, so this stays out of the way

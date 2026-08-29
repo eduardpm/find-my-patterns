@@ -90,4 +90,18 @@ abstract final class AppConfig {
   /// The whole-diary export (M-6): `GET`, streaming back either a Markdown or
   /// a JSON document of every entry.
   static String exportPath(String format) => '/export?format=$format';
+
+  /// The N-of-1 experiment collection (R-3a/R-3b): `POST` to start one.
+  static const String experimentsPath = '/experiments';
+
+  /// The currently active experiment, if any: `GET`.
+  static const String experimentActivePath = '$experimentsPath/active';
+
+  /// Abandons one experiment: `POST`.
+  static String experimentAbandonPath(String experimentId) =>
+      '$experimentsPath/$experimentId/abandon';
+
+  /// One experiment's two-window comparison and verdict: `GET`.
+  static String experimentResultsPath(String experimentId) =>
+      '$experimentsPath/$experimentId/results';
 }
