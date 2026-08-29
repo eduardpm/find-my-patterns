@@ -19,6 +19,11 @@ void main() {
       expect(withIntensity.intensity, 4);
       expect(withoutIntensity.intensity, isNull);
     });
+
+    test('entryCount defaults to 0 when built by hand', () {
+      const day = DaySummary(CalendarDate(2026, 8, 1), []);
+      expect(day.entryCount, 0);
+    });
   });
 
   group('daySummaryFromJson', () {
@@ -45,6 +50,41 @@ void main() {
       final day = daySummaryFromJson({'date': '2026-08-01'}, catalog);
       expect(day.intensity, isNull);
     });
+
+    test('decodes entry_count (#72)', () {
+      final day = daySummaryFromJson({
+        'date': '2026-08-01',
+        'feelings': ['happy'],
+        'entry_count': 10,
+      }, catalog);
+      expect(day.entryCount, 10);
+    });
+
+    test(
+      'entry_count independent of feelings.length: many entries, one feeling',
+      () {
+        final day = daySummaryFromJson({
+          'date': '2026-08-01',
+          'feelings': ['happy'],
+          'entry_count': 10,
+        }, catalog);
+        expect(day.entryCount, 10);
+        expect(day.feelings, hasLength(1));
+        expect(day.entryCount, isNot(day.feelings.length));
+      },
+    );
+
+    test(
+      'a payload missing entry_count decodes to 0 rather than throwing '
+      '(backward compatibility)',
+      () {
+        final day = daySummaryFromJson({
+          'date': '2026-08-01',
+          'feelings': ['happy'],
+        }, catalog);
+        expect(day.entryCount, 0);
+      },
+    );
   });
 
   group('monthlySummaryFromJson', () {

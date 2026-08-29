@@ -57,11 +57,24 @@ Map<String, Object?> feelingsCatalogJson() => {
 };
 
 /// One day in `GET /monthly-summary`'s `days` array.
+///
+/// [entryCount] defaults to [feelings]'s length — the pre-#72 stand-in — so
+/// every call site that does not care about the distinction between the two
+/// keeps working unchanged. A test that specifically exercises `entry_count`
+/// (the calendar volume bar, its semantics label) passes it explicitly and
+/// on purpose, often with a value that deliberately does *not* match
+/// `feelings.length` (many entries, one feeling).
 Map<String, Object?> daySummaryJson({
   required String date,
   List<String> feelings = const [],
   int? intensity,
-}) => {'date': date, 'feelings': feelings, 'intensity': intensity};
+  int? entryCount,
+}) => {
+  'date': date,
+  'feelings': feelings,
+  'intensity': intensity,
+  'entry_count': entryCount ?? feelings.length,
+};
 
 /// `GET /monthly-summary`'s whole response.
 Map<String, Object?> monthlySummaryJson({
