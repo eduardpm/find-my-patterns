@@ -87,7 +87,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.text('Happening now'), findsOneWidget);
+    expect(find.text('Coffee'), findsOneWidget);
   });
 
   testWidgets('a refresh keeps existing content on screen instead of flashing '
@@ -174,17 +174,15 @@ void main() {
   });
 
   testWidgets(
-    'withdrawals render above the pattern sections and the "when" panel',
+    'withdrawals render above the pattern cards, and the "when" panel below '
+    'them',
     (tester) async {
       final adapter = FakeHttpAdapter([
         FakeReply(200, body: feelingsCatalogJson()),
         FakeReply(
           200,
           body: insightsResultJson(
-            patterns: [
-              patternJson(id: 'active-1', status: 'active'),
-              patternJson(id: 'historical-1', status: 'historical'),
-            ],
+            patterns: [patternJson(id: 'active-1', topic: 'planning')],
             withdrawals: [withdrawalJson()],
             newWithdrawalCount: 1,
           ),
@@ -200,13 +198,70 @@ void main() {
       final withdrawalsY = tester
           .getTopLeft(find.text('Recently withdrawn'))
           .dy;
-      final activeY = tester.getTopLeft(find.text('Happening now')).dy;
-      final historicalY = tester.getTopLeft(find.text('No longer recent')).dy;
+      final patternY = tester.getTopLeft(find.text('Planning')).dy;
       final whenY = tester.getTopLeft(find.text('When it happens')).dy;
 
-      expect(withdrawalsY, lessThan(activeY));
-      expect(activeY, lessThan(historicalY));
-      expect(historicalY, lessThan(whenY));
+      expect(withdrawalsY, lessThan(patternY));
+      expect(patternY, lessThan(whenY));
+    },
+  );
+
+  testWidgets(
+    'confirmed-lift patterns render as full cards, ranked richest first, '
+    'and weak/undefined-lift ones collapse under "Weaker signals"',
+    (tester) async {
+      final adapter = FakeHttpAdapter([
+        FakeReply(200, body: feelingsCatalogJson()),
+        FakeReply(
+          200,
+          body: insightsResultJson(
+            patterns: [
+              patternJson(
+                id: 'weak-1',
+                topic: 'screen time',
+                direction: 'none',
+                lift: null,
+              ),
+              patternJson(
+                id: 'low-1',
+                topic: 'sleep',
+                direction: 'keep',
+                lift: 1.6,
+              ),
+              patternJson(
+                id: 'high-1',
+                topic: 'coffee',
+                direction: 'change',
+                lift: 4.0,
+              ),
+            ],
+          ),
+        ),
+        FakeReply(200, body: whenInsightsJson()),
+        FakeReply(200, body: seriesJson()),
+      ]);
+      await tester.pumpWidget(
+        configuredHarness(adapter).wrap(const InsightsScreen()),
+      );
+      await tester.pumpAndSettle();
+
+      final coffeeY = tester.getTopLeft(find.text('Coffee')).dy;
+      final sleepY = tester.getTopLeft(find.text('Sleep')).dy;
+      final weakerSignalsY = tester.getTopLeft(find.text('Weaker signals')).dy;
+      final weakRowY = tester
+          .getTopLeft(
+            find.text('screen time → stressed · not enough contrast yet'),
+          )
+          .dy;
+
+      // The higher-lift confirmed card comes before the lower-lift one,
+      // and both confirmed cards come before the collapsed weak tier.
+      expect(coffeeY, lessThan(sleepY));
+      expect(sleepY, lessThan(weakerSignalsY));
+      expect(weakerSignalsY, lessThan(weakRowY));
+      // The weak pattern never renders as a full card on first paint --
+      // only its collapsed row does, until tapped.
+      expect(find.text('Screen time'), findsNothing);
     },
   );
 
