@@ -2,9 +2,16 @@ import { Inject, Injectable } from '@nestjs/common';
 import { decodeDate, decodeDateTime } from '../db/codecs';
 import { DIARY_DB } from '../db/database.provider';
 import type { DiaryDatabase } from '../db/database';
-import { averageValence, timeOfDayBucket, weekdayIndex, withinWindow } from './analysis';
+import {
+  averageValence,
+  hourBlockKey,
+  timeOfDayBucket,
+  weekdayIndex,
+  withinWindow,
+} from './analysis';
 import {
   CONFIRMED_FEELING_SOURCES,
+  HOUR_BLOCKS,
   MIN_BUCKET_ENTRIES,
   RECENCY_WINDOW_DAYS,
   TIME_OF_DAY_BUCKETS,
@@ -45,6 +52,22 @@ export interface WhenInsights {
   worst_weekday: string | null;
   best_time_of_day: string | null;
   worst_time_of_day: string | null;
+  /**
+   * CH-5: mean valence and entry count per 2-hour block (`HOUR_BLOCKS`), for the heat strip under
+   * "By time of day". Added alongside `times_of_day` rather than in place of it — the three-bucket
+   * data is what every existing client (mobile, web, and their tests) already reads, and nothing
+   * about that shape changes here.
+   */
+  hourly: WhenBucket[];
+  best_hour: string | null;
+  worst_hour: string | null;
+  /**
+   * The `times_of_day` bucket the diary writes into most, by entry count — not by valence, so this
+   * is a separate field from `best_time_of_day`/`worst_time_of_day` rather than reusing `extreme`'s
+   * tie-break. Null on a tie or on an empty window, same reasoning as `extreme` (I5-05): "entries
+   * cluster in the evening" is a claim about counts the diary would have to actually support.
+   */
+  busiest_time_of_day: string | null;
 }
 
 interface Scored {
@@ -77,15 +100,20 @@ export class WhenInsightsService {
     }>;
 
     const today = todayLocal();
-    const byEntry = new Map<string, { weekday: number; timeOfDay: string; valences: string[] }>();
+    const byEntry = new Map<
+      string,
+      { weekday: number; timeOfDay: string; hourBlock: string; valences: string[] }
+    >();
     for (const row of rows) {
       const entryDate = decodeDate(row.entry_date);
       if (!withinWindow(entryDate, today, RECENCY_WINDOW_DAYS)) continue;
       let entry = byEntry.get(row.id);
       if (!entry) {
+        const createdAt = decodeDateTime(row.created_at);
         entry = {
           weekday: weekdayIndex(entryDate),
-          timeOfDay: timeOfDayBucket(decodeDateTime(row.created_at)),
+          timeOfDay: timeOfDayBucket(createdAt),
+          hourBlock: hourBlockKey(createdAt),
           valences: [],
         };
         byEntry.set(row.id, entry);
@@ -108,6 +136,13 @@ export class WhenInsightsService {
         entries.filter((entry) => entry.timeOfDay === slot.key),
       ),
     );
+    const hourly = HOUR_BLOCKS.map((block) =>
+      this.bucket(
+        block.key,
+        block.label,
+        entries.filter((entry) => entry.hourBlock === block.key),
+      ),
+    );
 
     return {
       window_days: RECENCY_WINDOW_DAYS,
@@ -119,6 +154,10 @@ export class WhenInsightsService {
       worst_weekday: extreme(weekdays, 'worst'),
       best_time_of_day: extreme(timesOfDay, 'best'),
       worst_time_of_day: extreme(timesOfDay, 'worst'),
+      hourly,
+      best_hour: extreme(hourly, 'best'),
+      worst_hour: extreme(hourly, 'worst'),
+      busiest_time_of_day: busiest(timesOfDay),
     };
   }
 
@@ -156,5 +195,18 @@ function extreme(buckets: WhenBucket[], want: 'best' | 'worst'): string | null {
     want === 'best' ? b.average_valence - a.average_valence : a.average_valence - b.average_valence,
   );
   if (sorted[0].average_valence === sorted[1].average_valence) return null;
+  return sorted[0].key;
+}
+
+/**
+ * CH-5: the bucket with the most entries — by count, not by valence, which is the whole reason this
+ * is not another call to `extreme`. Ties, and an all-empty list, resolve to `null` for the same
+ * reason `extreme` does: a "diary clusters here" claim two equally-busy buckets do not support.
+ */
+function busiest(buckets: WhenBucket[]): string | null {
+  if (buckets.length === 0) return null;
+  const sorted = [...buckets].sort((a, b) => b.entry_count - a.entry_count);
+  if (sorted[0].entry_count === 0) return null;
+  if (sorted.length > 1 && sorted[0].entry_count === sorted[1].entry_count) return null;
   return sorted[0].key;
 }

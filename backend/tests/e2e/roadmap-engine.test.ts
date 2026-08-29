@@ -56,6 +56,25 @@ function backdate(entryId: string, daysAgo: number): void {
   db.close();
 }
 
+/**
+ * The API writes `created_at` at request time, so an hourly-bucket test has to reach around it the
+ * same way `backdate` reaches around `entry_date` — the calendar date is left untouched, only the
+ * wall-clock hour moves, and to an exact `HH:00:00` so a test can name the block it expects.
+ */
+function setHour(entryId: string, hour: number): void {
+  const db = new Database(h.dbPath);
+  const row = db.prepare('SELECT created_at FROM diary_entries WHERE id = ?').get(entryId) as {
+    created_at: string;
+  };
+  const datePart = row.created_at.slice(0, 10);
+  const time = `${String(hour).padStart(2, '0')}:00:00.000000`;
+  db.prepare('UPDATE diary_entries SET created_at = ? WHERE id = ?').run(
+    `${datePart} ${time}`,
+    entryId,
+  );
+  db.close();
+}
+
 interface Evidence {
   entry_id: string;
   entry_date: string;
@@ -617,6 +636,113 @@ describe('I5 — when am I worst', () => {
     const first = (await request(server()).get('/insights/when').expect(200)).body as unknown;
     const second = (await request(server()).get('/insights/when').expect(200)).body as unknown;
     expect(second).toEqual(first);
+  });
+
+  interface WhenBucketBody {
+    key: string;
+    label: string;
+    entry_count: number;
+    average_valence: number | null;
+    sufficient: boolean;
+  }
+
+  interface WhenBody {
+    weekdays: WhenBucketBody[];
+    times_of_day: WhenBucketBody[];
+    hourly: WhenBucketBody[];
+    best_weekday: string | null;
+    worst_weekday: string | null;
+    best_time_of_day: string | null;
+    worst_time_of_day: string | null;
+    best_hour: string | null;
+    worst_hour: string | null;
+    busiest_time_of_day: string | null;
+    min_bucket_entries: number;
+  }
+
+  describe('hourly heat strip — CH-5', () => {
+    it('sorts entries into their 2-hour block, boundary-exclusive at the top', async () => {
+      const inBlock: Written[] = [];
+      for (let index = 0; index < 3; index += 1) {
+        inBlock.push(await write(`Evening entry ${index}.`, ['content']));
+      }
+      for (const entry of inBlock) setHour(entry.id, 19); // 18:00-20:00
+
+      const nextBlock = await write('Just past the boundary.', ['content']);
+      setHour(nextBlock.id, 20); // 20:00-22:00
+
+      const body = (await request(server()).get('/insights/when').expect(200)).body as WhenBody;
+
+      const eighteen = body.hourly.find((bucket) => bucket.key === '18')!;
+      expect(eighteen.label).toBe('18:00–20:00');
+      expect(eighteen.entry_count).toBe(3);
+      expect(eighteen.sufficient).toBe(true);
+
+      const twenty = body.hourly.find((bucket) => bucket.key === '20')!;
+      expect(twenty.entry_count).toBe(1);
+      expect(twenty.sufficient).toBe(false);
+
+      expect(body.hourly).toHaveLength(12);
+    });
+
+    it('reuses MIN_BUCKET_ENTRIES: an hourly bucket below it reports no average', async () => {
+      const thin = await write('One late entry.', ['sad']);
+      setHour(thin.id, 22);
+
+      const body = (await request(server()).get('/insights/when').expect(200)).body as WhenBody;
+      const bucket = body.hourly.find((candidate) => candidate.key === '22')!;
+
+      expect(bucket.entry_count).toBeLessThan(body.min_bucket_entries);
+      expect(bucket.sufficient).toBe(false);
+      expect(bucket.average_valence).toBeNull();
+    });
+
+    it('keeps the existing weekday and time-of-day payload unchanged alongside the new hourly field', async () => {
+      const morning = await write('An early entry.', ['calm']);
+      setHour(morning.id, 7);
+
+      const body = (await request(server()).get('/insights/when').expect(200)).body as WhenBody;
+
+      // The pre-CH-5 shape: still exactly 7 weekday buckets and 3 time-of-day buckets, with the
+      // same fields on each — nothing about this ticket touches how those are computed.
+      expect(body.weekdays).toHaveLength(7);
+      expect(body.times_of_day).toHaveLength(3);
+      expect(body.times_of_day.map((bucket) => bucket.key).sort()).toEqual([
+        'afternoon',
+        'evening',
+        'morning',
+      ]);
+      for (const bucket of [...body.weekdays, ...body.times_of_day]) {
+        expect(bucket).toHaveProperty('key');
+        expect(bucket).toHaveProperty('label');
+        expect(bucket).toHaveProperty('entry_count');
+        expect(bucket).toHaveProperty('average_valence');
+        expect(bucket).toHaveProperty('negative_rate');
+        expect(bucket).toHaveProperty('sufficient');
+      }
+
+      // The new fields are additive: present, twelve blocks, well-formed keys.
+      expect(body.hourly).toHaveLength(12);
+      expect(body.hourly.map((bucket) => bucket.key)).toEqual([
+        '00',
+        '02',
+        '04',
+        '06',
+        '08',
+        '10',
+        '12',
+        '14',
+        '16',
+        '18',
+        '20',
+        '22',
+      ]);
+      expect(body.best_hour === null || typeof body.best_hour === 'string').toBe(true);
+      expect(body.worst_hour === null || typeof body.worst_hour === 'string').toBe(true);
+      expect(
+        body.busiest_time_of_day === null || typeof body.busiest_time_of_day === 'string',
+      ).toBe(true);
+    });
   });
 });
 

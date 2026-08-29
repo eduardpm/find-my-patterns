@@ -109,6 +109,31 @@ export const TIME_OF_DAY_BUCKETS = [
 
 export type TimeOfDayKey = (typeof TIME_OF_DAY_BUCKETS)[number]['key'];
 
+/**
+ * CH-5: the twelve 2-hour blocks the "when" heat strip renders `created_at` into.
+ *
+ * Finer than `TIME_OF_DAY_BUCKETS` above — which is unchanged, and still what the weekday/
+ * time-of-day rows use — but coarser than by-the-hour, which would fragment diary-sized data past
+ * `MIN_BUCKET_ENTRIES` in most cells (a full 24 is overkill at diary volumes). Fixed 2-hour-aligned
+ * blocks starting at midnight, not the three named periods' skewed widths, so every cell in the
+ * strip represents the same span of clock time and the twelve cells tile the day exactly once.
+ *
+ * `key` is the block's zero-padded start hour ("00", "02", … "22") rather than a name — the heat
+ * strip has no room for a label per cell, so both clients read the start hour directly off the key
+ * instead of parsing one out of `label`.
+ */
+export const HOUR_BLOCKS = Array.from({ length: 12 }, (_unused, index) => {
+  const startHour = index * 2;
+  const pad = (hour: number) => String(hour % 24).padStart(2, '0');
+  return {
+    key: pad(startHour),
+    label: `${pad(startHour)}:00–${pad(startHour + 2)}:00`,
+    startHour,
+  };
+});
+
+export type HourBlockKey = (typeof HOUR_BLOCKS)[number]['key'];
+
 export const WEEKDAYS = [
   { key: 'monday', label: 'Monday' },
   { key: 'tuesday', label: 'Tuesday' },

@@ -255,6 +255,21 @@ class const WhenInsights(
   final String? worstWeekday,
   final String? bestTimeOfDay,
   final String? worstTimeOfDay,
+
+  /// CH-5: mean valence and entry count per 2-hour block (`00:00-02:00` …
+  /// `22:00-00:00`), for the heat strip under "By time of day". The same
+  /// [WhenBucket] shape and the same [minBucketEntries] suppression rule as
+  /// [weekdays] and [timesOfDay] -- an empty list, not an error, is what an
+  /// older backend that predates this field decodes to.
+  final List<WhenBucket> hourly,
+  final String? bestHour,
+  final String? worstHour,
+
+  /// The [timesOfDay] bucket the diary writes into most, by entry count --
+  /// null on a tie or an empty window. A separate field from
+  /// [bestTimeOfDay]/[worstTimeOfDay], which rank by valence, not by how
+  /// many entries a period holds.
+  final String? busiestTimeOfDay,
 );
 
 /// What the diary already says about the topics in an entry that has just
@@ -444,6 +459,15 @@ WhenInsights whenInsightsFromJson(JsonObject json) => WhenInsights(
   json['worst_weekday'] as String?,
   json['best_time_of_day'] as String?,
   json['worst_time_of_day'] as String?,
+  [
+    for (final dto
+        in (json['hourly'] as List<Object?>?)?.cast<JsonObject>() ??
+            const <JsonObject>[])
+      whenBucketFromJson(dto),
+  ],
+  json['best_hour'] as String?,
+  json['worst_hour'] as String?,
+  json['busiest_time_of_day'] as String?,
 );
 
 /// Decodes one echoed pattern. The numbers are the pattern card's own;

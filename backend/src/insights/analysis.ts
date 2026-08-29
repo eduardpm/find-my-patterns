@@ -21,6 +21,7 @@
 import type { NaiveDateTime, PlainDate } from '../db/codecs';
 import {
   COLLINEARITY_THRESHOLD,
+  HOUR_BLOCKS,
   MAX_INTENSITY,
   MIN_COMPARISON_ENTRIES,
   MIN_LIFT,
@@ -33,6 +34,7 @@ import {
   WEEKDAYS,
   WEEKEND_START_INDEX,
   type DayTypeKey,
+  type HourBlockKey,
   type SeasonKey,
   type TimeOfDayKey,
 } from './constants';
@@ -106,6 +108,18 @@ export function timeOfDayBucket(createdAt: NaiveDateTime): TimeOfDayKey {
     }
   }
   return 'evening';
+}
+
+/**
+ * Which of `HOUR_BLOCKS`' twelve 2-hour blocks an entry's `created_at` falls into (CH-5).
+ *
+ * Unlike `timeOfDayBucket`, every block is the same fixed width and none of them wraps past
+ * midnight, so this is a plain division rather than a wrap-aware scan: hour 23 is still `Math.floor`
+ * away from a 24th block that does not exist, hence the clamp.
+ */
+export function hourBlockKey(createdAt: NaiveDateTime): HourBlockKey {
+  const index = Math.min(Math.floor(createdAt.hour / 2), HOUR_BLOCKS.length - 1);
+  return HOUR_BLOCKS[index].key;
 }
 
 /** Saturday and Sunday only (#21) — `weekdayIndex` is Monday-first, so those are indices 5 and 6. */

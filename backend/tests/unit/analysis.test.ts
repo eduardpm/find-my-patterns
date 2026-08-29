@@ -17,6 +17,7 @@ import {
   dayTypeFor,
   forwardNarrative,
   historicalNote,
+  hourBlockKey,
   invert,
   inverseNarrative,
   isStrong,
@@ -28,7 +29,7 @@ import {
   weekdayIndex,
   withinWindow,
 } from '../../src/insights/analysis';
-import { MIN_LIFT, RECENCY_WINDOW_DAYS } from '../../src/insights/constants';
+import { HOUR_BLOCKS, MIN_LIFT, RECENCY_WINDOW_DAYS } from '../../src/insights/constants';
 
 const at = (hour: number) => ({
   year: 2026,
@@ -190,6 +191,36 @@ describe('valence and time buckets (I5)', () => {
   it('indexes weekdays Monday-first', () => {
     expect(weekdayIndex({ year: 2026, month: 8, day: 24 })).toBe(0); // a Monday
     expect(weekdayIndex({ year: 2026, month: 8, day: 30 })).toBe(6); // the Sunday after
+  });
+});
+
+describe('hourly blocks (CH-5)', () => {
+  it('has twelve 2-hour blocks that tile the day exactly once', () => {
+    expect(HOUR_BLOCKS).toHaveLength(12);
+    expect(HOUR_BLOCKS[0]).toMatchObject({ key: '00', label: '00:00–02:00', startHour: 0 });
+    expect(HOUR_BLOCKS[9]).toMatchObject({ key: '18', label: '18:00–20:00', startHour: 18 });
+    expect(HOUR_BLOCKS[11]).toMatchObject({ key: '22', label: '22:00–00:00', startHour: 22 });
+  });
+
+  it('files an hour into the block it falls inside', () => {
+    expect(hourBlockKey(at(0))).toBe('00');
+    expect(hourBlockKey(at(1))).toBe('00');
+    expect(hourBlockKey(at(13))).toBe('12');
+    expect(hourBlockKey(at(22))).toBe('22');
+    expect(hourBlockKey(at(23))).toBe('22');
+  });
+
+  it('is boundary-exclusive at the top of a block', () => {
+    // 19:xx is still the 18:00-20:00 block; 20:xx is the next one.
+    expect(hourBlockKey(at(19))).toBe('18');
+    expect(hourBlockKey(at(20))).toBe('20');
+  });
+
+  it('never produces a key outside HOUR_BLOCKS', () => {
+    const keys = new Set(HOUR_BLOCKS.map((block) => block.key));
+    for (let hour = 0; hour < 24; hour += 1) {
+      expect(keys.has(hourBlockKey(at(hour)))).toBe(true);
+    }
   });
 });
 
