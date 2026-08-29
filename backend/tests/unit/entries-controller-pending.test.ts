@@ -44,7 +44,11 @@ function fakeEntry(overrides: Partial<DiaryEntry> = {}): DiaryEntry {
 function stubService(options: {
   createResult?: { entry: DiaryEntry; suggestion: SuggestedFeeling | null };
   finalizeResult?: { entry: DiaryEntry; suggestion: SuggestedFeeling | null };
-  analysis: { suggested: SuggestedFeeling | null; suggestedAll: SuggestedFeeling[]; pending: boolean };
+  analysis: {
+    suggested: SuggestedFeeling | null;
+    suggestedAll: SuggestedFeeling[];
+    pending: boolean;
+  };
 }): {
   service: EntriesService;
   analysisForCalls: string[];
@@ -68,11 +72,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       createResult: { entry, suggestion: null },
       analysis: { suggested: null, suggestedAll: [], pending: true },
     });
-    const controller = new EntriesController(
-      undefined as never,
-      service,
-      undefined as never,
-    );
+    const controller = new EntriesController(undefined as never, service, undefined as never);
 
     const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
 
@@ -89,11 +89,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       createResult: { entry, suggestion: null },
       analysis: { suggested: suggestion, suggestedAll: [suggestion], pending: false },
     });
-    const controller = new EntriesController(
-      undefined as never,
-      service,
-      undefined as never,
-    );
+    const controller = new EntriesController(undefined as never, service, undefined as never);
 
     const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
 
@@ -109,11 +105,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       createResult: { entry, suggestion },
       analysis: { suggested: null, suggestedAll: [], pending: true }, // would be wrong if used
     });
-    const controller = new EntriesController(
-      undefined as never,
-      service,
-      undefined as never,
-    );
+    const controller = new EntriesController(undefined as never, service, undefined as never);
 
     const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
 

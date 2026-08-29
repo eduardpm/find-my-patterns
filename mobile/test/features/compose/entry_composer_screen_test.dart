@@ -330,8 +330,7 @@ void main() {
         // only thing that starts the poll loop.
         containerOf(
           tester,
-        ).read(entryComposerControllerProvider.notifier).pollDelay =
-            delay.call;
+        ).read(entryComposerControllerProvider.notifier).pollDelay = delay.call;
 
         await saveFreeformEntry(tester);
         // See `pumpUntilFound`'s doc comment: not `pumpAndSettle` here, the
@@ -383,8 +382,7 @@ void main() {
         await tester.pumpAndSettle();
         containerOf(
           tester,
-        ).read(entryComposerControllerProvider.notifier).pollDelay =
-            delay.call;
+        ).read(entryComposerControllerProvider.notifier).pollDelay = delay.call;
 
         await saveFreeformEntry(tester);
         // Not `pumpAndSettle` -- see the previous test's comment: the

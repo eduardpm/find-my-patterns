@@ -240,7 +240,9 @@ void main() {
         await env.controller.suggestionPollSettled;
 
         expect(
-          env.container.read(entryComposerControllerProvider).isPollingSuggestions,
+          env.container
+              .read(entryComposerControllerProvider)
+              .isPollingSuggestions,
           isFalse,
         );
         // Nothing beyond the boot calls and the create itself: no GET
@@ -255,7 +257,10 @@ void main() {
         final env = await readyController([
           ...bootReplies(),
           FakeReply(201, body: entryJson(analysisPending: true)),
-          FakeReply(200, body: entryJson(analysisPending: true)), // still working
+          FakeReply(
+            200,
+            body: entryJson(analysisPending: true),
+          ), // still working
           FakeReply(
             200,
             body: entryJson(
@@ -268,7 +273,9 @@ void main() {
 
         await env.controller.saveFreeform('A long day.');
         expect(
-          env.container.read(entryComposerControllerProvider).isPollingSuggestions,
+          env.container
+              .read(entryComposerControllerProvider)
+              .isPollingSuggestions,
           isTrue,
         );
 
