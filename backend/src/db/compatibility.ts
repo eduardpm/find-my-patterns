@@ -109,6 +109,16 @@ const REQUIRED: Record<string, Record<string, string>> = {
     superseded_at: 'DATETIME',
   },
   diary_meta: { key: 'VARCHAR(64)', value: 'TEXT' },
+  experiments: {
+    id: 'VARCHAR(36)',
+    pattern_topic: 'VARCHAR(128)',
+    pattern_feeling: 'VARCHAR(32)',
+    hypothesis_kind: 'VARCHAR(16)',
+    start_date: 'DATE',
+    end_date: 'DATE',
+    status: 'VARCHAR(16)',
+    created_at: 'DATETIME',
+  },
   inference_jobs: {
     id: 'VARCHAR(36)',
     kind: 'VARCHAR(32)',
@@ -307,6 +317,29 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
       if (!['keep', 'change'].includes(String(row.direction))) throw new Error('invalid direction');
       decodeDateTime(String(row.first_detected_at));
       decodeDateTime(String(row.last_updated_at));
+    },
+  );
+
+  validateRows(
+    'experiments',
+    db
+      .prepare(
+        `SELECT id, pattern_feeling, hypothesis_kind, start_date, end_date, status, created_at
+         FROM experiments`,
+      )
+      .all() as Array<Record<string, unknown>>,
+    problems,
+    (row) => {
+      if (!feelingKeys.has(String(row.pattern_feeling))) throw new Error('unknown feeling key');
+      if (!['more_of', 'less_of'].includes(String(row.hypothesis_kind))) {
+        throw new Error('invalid hypothesis kind');
+      }
+      if (!['active', 'finished', 'abandoned'].includes(String(row.status))) {
+        throw new Error('invalid experiment status');
+      }
+      decodeDate(String(row.start_date));
+      decodeDate(String(row.end_date));
+      decodeDateTime(String(row.created_at));
     },
   );
 

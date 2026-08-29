@@ -166,6 +166,24 @@ export const SCHEMA_STATEMENTS: string[] = [
      value TEXT NOT NULL,
      PRIMARY KEY ("key")
    )`,
+
+  // --- N-of-1 experiments (R-3a) ------------------------------------------------------------
+  // `pattern_topic` is the topic *name*, not `topics.id` — a topic can be merged into another
+  // (A4-05), and an experiment must go on naming the topic it was actually started on even if
+  // its row later merges away. `pattern_feeling` does carry a foreign key: the feeling vocabulary
+  // is curated and stable, so a feeling key never goes stale the way a topic id can.
+  `CREATE TABLE experiments (
+     id VARCHAR(36) NOT NULL,
+     pattern_topic VARCHAR(128) NOT NULL,
+     pattern_feeling VARCHAR(32) NOT NULL,
+     hypothesis_kind VARCHAR(16) NOT NULL,
+     start_date DATE NOT NULL,
+     end_date DATE NOT NULL,
+     status VARCHAR(16) NOT NULL DEFAULT 'active',
+     created_at DATETIME NOT NULL,
+     PRIMARY KEY (id),
+     FOREIGN KEY(pattern_feeling) REFERENCES feelings ("key")
+   )`,
 ];
 
 /**
@@ -338,5 +356,21 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
     sql: `ALTER TABLE entry_feelings ADD COLUMN intensity INTEGER`,
     table: 'entry_feelings',
     column: 'intensity',
+  },
+
+  // --- N-of-1 experiments (R-3a) ------------------------------------------------------------
+  {
+    sql: `CREATE TABLE IF NOT EXISTS experiments (
+              id VARCHAR(36) NOT NULL,
+              pattern_topic VARCHAR(128) NOT NULL,
+              pattern_feeling VARCHAR(32) NOT NULL,
+              hypothesis_kind VARCHAR(16) NOT NULL,
+              start_date DATE NOT NULL,
+              end_date DATE NOT NULL,
+              status VARCHAR(16) NOT NULL DEFAULT 'active',
+              created_at DATETIME NOT NULL,
+              PRIMARY KEY (id),
+              FOREIGN KEY(pattern_feeling) REFERENCES feelings ("key")
+            )`,
   },
 ];

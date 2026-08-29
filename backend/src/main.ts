@@ -14,6 +14,7 @@ import { type AuthConfig, loadConfig } from './config';
 const NO_STORE_PREFIXES = [
   '/entries',
   '/insights',
+  '/experiments',
   '/monthly-summary',
   '/guiding-questions',
   '/transcriptions',
