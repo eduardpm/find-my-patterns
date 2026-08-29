@@ -43,6 +43,18 @@ BoxDecoration _decorationOf(WidgetTester tester) =>
 Color _textColorOf(WidgetTester tester, String label) =>
     tester.widget<Text>(find.text(label)).style!.color!;
 
+/// Sets the test surface to a real 360dp-wide phone viewport -- the width
+/// #111's own measurement used, and the "2-3 per row" acceptance criterion
+/// is stated against. A `MediaQueryData.size` override alone would not do
+/// this: `Scaffold`'s body gets its box constraints from the actual
+/// `RenderView`, which only `tester.view.physicalSize`/`devicePixelRatio`
+/// changes, not an ambient `MediaQuery` further down the tree.
+void _pump360Wide(WidgetTester tester) {
+  tester.view.physicalSize = const Size(360, 800);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+}
+
 /// The WCAG contrast ratio between two colours, via [Color.computeLuminance]
 /// — the same relative-luminance formula the 4.5:1 body-text rule and the
 /// 3:1 outline rule in `journal_palette.dart`'s own doc comment are stated
@@ -380,4 +392,131 @@ void main() {
       }
     });
   });
+
+  group('FeelingChip — shrink-wraps rather than filling the line (#111)', () {
+    // Regression coverage for #111: `Container(alignment: Alignment.center)`
+    // expands to the full bound of whatever axis is bounded, which inside a
+    // `Wrap` on a real phone width is the entire line -- so a `Wrap` full of
+    // these chips rendered as one full-width pill per row, the very defect
+    // a `find.byType(Wrap)` check happily passed through twice (#11, #15).
+    // Every assertion below is about the *rendered size and position*, not
+    // about a `Wrap` merely being present in the tree.
+    testWidgets(
+      'a display chip is far narrower than a 360dp line, not full-width',
+      (tester) async {
+        _pump360Wide(tester);
+        await tester.pumpWidget(
+          _host(
+            const FeelingChip(label: 'Grateful', color: Color(0xFF2A7430)),
+            dark: false,
+          ),
+        );
+
+        final pillWidth = tester.getSize(_pillFinder()).width;
+        expect(
+          pillWidth,
+          lessThan(180),
+          reason:
+              'a single short word plus its dot should not need anywhere '
+              'near half a 360dp line; $pillWidth suggests the chip is '
+              'still expanding to fill its container',
+        );
+      },
+    );
+
+    testWidgets(
+      'a selectable chip keeps its 48dp minimum tap target without '
+      'expanding past its own content width',
+      (tester) async {
+        _pump360Wide(tester);
+        await tester.pumpWidget(
+          _host(
+            FeelingChip(
+              label: 'Sad',
+              color: const Color(0xFFB3441A),
+              variant: FeelingChipVariant.selectable,
+              onTap: () {},
+            ),
+            dark: false,
+          ),
+        );
+
+        final pill = _pillFinder();
+        final pillSize = tester.getSize(pill);
+        // >= JournalSpacing.x7 (48dp): the tap-target floor #111 asked to
+        // keep, satisfying the platform's >=44pt minimum with room to
+        // spare.
+        expect(pillSize.height, greaterThanOrEqualTo(JournalSpacing.x7));
+        expect(pillSize.width, greaterThanOrEqualTo(JournalSpacing.x7));
+        // And still nowhere near the 360dp line -- the minimum-box centring
+        // must not have brought back the full-width expansion it replaces.
+        expect(pillSize.width, lessThan(180));
+
+        // The label sits centred in whatever height the 48dp floor added
+        // beyond the text's own natural height, rather than hugging the
+        // pill's top edge the way a plain `Padding` (with no alignment at
+        // all) would if the centring were dropped outright instead of
+        // moved to the inner `Center`.
+        final pillTop = tester.getTopLeft(pill).dy;
+        final labelCenterY = tester.getCenter(find.text('Sad')).dy;
+        expect(labelCenterY - pillTop, closeTo(pillSize.height / 2, 0.5));
+      },
+    );
+
+    testWidgets(
+      'two selectable chips share a row inside a 360dp-wide Wrap',
+      (tester) async {
+        _pump360Wide(tester);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildLightTheme(),
+            home: Scaffold(
+              body: Wrap(
+                spacing: JournalSpacing.x2,
+                runSpacing: JournalSpacing.x2,
+                children: [
+                  FeelingChip(
+                    label: 'Sad',
+                    color: const Color(0xFF2A7430),
+                    variant: FeelingChipVariant.selectable,
+                    onTap: () {},
+                  ),
+                  FeelingChip(
+                    label: 'Calm',
+                    color: const Color(0xFF2A7430),
+                    variant: FeelingChipVariant.selectable,
+                    onTap: () {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+
+        final firstTopLeft = tester.getTopLeft(find.text('Sad'));
+        final secondTopLeft = tester.getTopLeft(find.text('Calm'));
+        expect(
+          secondTopLeft.dy,
+          firstTopLeft.dy,
+          reason:
+              'both short labels should sit on the same Wrap row at 360dp; '
+              'a full-width chip (the #111 defect) would push the second '
+              'chip onto a row of its own',
+        );
+        expect(secondTopLeft.dx, greaterThan(firstTopLeft.dx));
+      },
+    );
+  });
 }
+
+/// The [FeelingChip]'s own pill -- see [_pillOf]'s doc comment for why the
+/// predicate picks the [Container] with a [BorderRadius] rather than the
+/// first one found.
+Finder _pillFinder() => find.descendant(
+  of: find.byType(FeelingChip),
+  matching: find.byWidgetPredicate(
+    (widget) =>
+        widget is Container &&
+        (widget.decoration as BoxDecoration?)?.borderRadius != null,
+  ),
+);
