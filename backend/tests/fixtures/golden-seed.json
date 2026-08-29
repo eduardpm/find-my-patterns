@@ -1,19 +1,5 @@
 {
   "alembicVersion": "a1c47f30b2e9",
-  "guidingQuestionOverrides": [
-    {
-      "key": "general_feeling",
-      "promptText": "Since your last entry—or in the last few hours—what happened? What were you doing, where were you, and who was around?"
-    },
-    {
-      "key": "mind_body",
-      "promptText": "What did you notice in your mind and body? Include thoughts, energy, tension, hunger, pain, or other sensations."
-    },
-    {
-      "key": "small_influences",
-      "promptText": "What small things might have influenced you—even if they seem unimportant? Think sleep, food or drink, caffeine or alcohol, medication, movement, work, social contact, screen time, weather, or a change in routine."
-    }
-  ],
   "topics": [
     {
       "id": "4680a43c-c0c9-4a81-8710-377e5cbeca09",

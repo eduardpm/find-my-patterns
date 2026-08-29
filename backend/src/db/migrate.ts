@@ -19,11 +19,24 @@ import { MIGRATION_STATEMENTS } from './schema';
  *  - add the columns it added to `feelings`;
  *  - insert reference rows for groups and feelings that are missing, and refresh the label, group
  *    and order of the ones already there;
+ *  - insert `guiding_questions` rows the library has gained since the diary was created, and
+ *    refresh `prompt_text` on the ones already there (#95 — see the note below the asymmetry this
+ *    closes);
  *  - backfill `entry_feelings` from each entry's existing single `feeling_key`.
  *
  * What it will never do: delete a feeling, rename a key, or touch a row in `diary_entries`. A
  * feeling key some entry still points at is left alone even if it has been dropped from the
  * vocabulary, because the alternative is breaking that entry's foreign key.
+ *
+ * #95: until this change, feelings got their display attributes refreshed on every migration but
+ * guiding questions did not — an existing `guiding_questions` row was inserted once and then frozen
+ * forever, so a copy edit like #14's (shortening the three mandatory prompts) could never reach a
+ * diary that already existed. That asymmetry was the bug, not a safety feature: the thing that
+ * makes rewording safe is that `guiding_question_answers.question_text_snapshot` already captures
+ * the exact wording an entry was answered under, independent of the current `guiding_questions`
+ * row (A6-02 read the insert-only behaviour backwards — see #95). This migration now refreshes
+ * `prompt_text` the same way it refreshes `feelings.label`, and leaves `question_text_snapshot`
+ * on every past answer untouched, because nothing here writes to that column.
  */
 export interface MigrationReport {
   groupsInserted: number;
@@ -33,6 +46,7 @@ export interface MigrationReport {
   /** Entry-wide intensities moved onto the primary feeling's own row. */
   feelingIntensitiesBackfilled: number;
   guidingQuestionsInserted: number;
+  guidingQuestionsUpdated: number;
   unknownFeelingKeys: string[];
 }
 
@@ -71,6 +85,7 @@ export function migrateDiary(targetPath: string): MigrationReport {
         entryFeelingsBackfilled: 0,
         feelingIntensitiesBackfilled: 0,
         guidingQuestionsInserted: 0,
+        guidingQuestionsUpdated: 0,
         unknownFeelingKeys: [],
       };
 
@@ -165,19 +180,41 @@ export function migrateDiary(targetPath: string): MigrationReport {
         .run();
       report.feelingIntensitiesBackfilled = intensities.changes;
 
-      // Guiding questions the library has gained since this diary was created — currently the
-      // three time-slot prompts (A6). Insert-only and keyed on the question key: an existing
-      // question keeps its exact prompt text (A6-02), because entries store a snapshot of the
-      // wording they were answered under and rewording one here would make those snapshots lie.
+      // Guiding questions: insert the ones the library has gained since this diary was created
+      // (currently the three time-slot prompts, A6), and refresh `prompt_text` on the ones already
+      // there (#95) so a copy change like #14's reaches every diary, not just freshly created ones.
+      //
+      // `prompt_text` is the only column refreshed here. `key` is identity by definition (it is
+      // the primary key and the foreign key `guiding_question_answers.question_key` points at).
+      // `category` and `trigger_keywords` are left alone too, deliberately: `category` groups
+      // questions for the client (e.g. driving which time-slot prompt is offered), and
+      // `trigger_keywords` decides *whether a question is offered at all* for a given entry
+      // (`question-yield` reads it to match against entry text) — both are behaviour, not
+      // presentation, so silently changing them under an existing key would change what a diary
+      // does, not just what it says. `is_mandatory` is left alone for the same reason: it decides
+      // whether the client can skip the question, which is behaviour a copy refresh has no
+      // business touching. Only `prompt_text` is pure display text with no behavioural reading
+      // anywhere in the codebase, which is what makes it — and only it — safe to refresh here.
+      //
+      // This cannot corrupt history: `guiding_question_answers.question_text_snapshot` already
+      // captures the exact wording an entry was answered under, independent of this table, so an
+      // update here changes only what a *future* entry sees.
       const insertQuestion = db.prepare(
         `INSERT INTO guiding_questions ("key", category, prompt_text, trigger_keywords, is_mandatory)
          VALUES (?, ?, ?, ?, ?)`,
       );
+      const updateQuestion = db.prepare(
+        'UPDATE guiding_questions SET prompt_text = ? WHERE "key" = ?',
+      );
       for (const [key, category, prompt, keywords, mandatory] of GUIDING_QUESTIONS) {
         const exists = db.prepare('SELECT 1 FROM guiding_questions WHERE "key" = ?').get(key);
-        if (exists) continue;
-        insertQuestion.run(key, category, prompt, encodeJson(keywords), encodeBool(mandatory));
-        report.guidingQuestionsInserted += 1;
+        if (exists) {
+          updateQuestion.run(prompt, key);
+          report.guidingQuestionsUpdated += 1;
+        } else {
+          insertQuestion.run(key, category, prompt, encodeJson(keywords), encodeBool(mandatory));
+          report.guidingQuestionsInserted += 1;
+        }
       }
 
       return report;
@@ -198,7 +235,8 @@ if (require.main === module) {
         `  feelings refreshed:     ${report.feelingsUpdated}\n` +
         `  entry feelings backfilled: ${report.entryFeelingsBackfilled}\n` +
         `  feeling intensities moved: ${report.feelingIntensitiesBackfilled}\n` +
-        `  guiding questions added: ${report.guidingQuestionsInserted}`,
+        `  guiding questions added:   ${report.guidingQuestionsInserted}\n` +
+        `  guiding questions refreshed: ${report.guidingQuestionsUpdated}`,
     );
     if (report.unknownFeelingKeys.length > 0) {
       console.log(`  kept, not in the current vocabulary: ${report.unknownFeelingKeys.join(', ')}`);
