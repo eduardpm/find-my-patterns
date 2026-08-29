@@ -292,6 +292,7 @@ class EntryDetailController extends Notifier<EntryDetailState> {
             editedIntensities: entry.feelingIntensities,
             savedMessage: 'Entry saved',
           );
+          ref.read(diaryWriteSignalProvider.notifier).bump();
           await _loadEchoes(entry.id);
         case EntryOutOfDate(:final current):
           state = state.copyWith(
@@ -344,6 +345,7 @@ class EntryDetailController extends Notifier<EntryDetailState> {
       switch (result) {
         case EntryRemoved():
           state = state.copyWith(isSaving: false, deleted: true);
+          ref.read(diaryWriteSignalProvider.notifier).bump();
         case EntryOutOfDate(:final current):
           state = state.copyWith(
             isSaving: false,

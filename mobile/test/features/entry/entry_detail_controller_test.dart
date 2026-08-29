@@ -1,3 +1,4 @@
+import 'package:find_my_patterns/core/diary/diary_providers.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/features/entry/entry_detail_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -245,6 +246,44 @@ void main() {
         expect(state.errorMessage, isNotNull);
       },
     );
+
+    test(
+      'a successful save bumps diaryWriteSignalProvider so Today picks up '
+      'the edited feed card',
+      () async {
+        final adapter = FakeHttpAdapter([
+          ...bootReplies(
+            entry: FakeReply(200, body: entryJson(rawText: 'Old.', version: 1)),
+          ),
+          FakeReply(200, body: entryJson(rawText: 'New.', version: 2)),
+          FakeReply(200, body: {'echoes': <Object?>[]}),
+        ]);
+        final env = await ready(adapter);
+        expect(env.container.read(diaryWriteSignalProvider), 0);
+        env.notifier.startEditing();
+        env.notifier.updateText('New.');
+
+        await env.notifier.save();
+
+        expect(env.container.read(diaryWriteSignalProvider), 1);
+      },
+    );
+
+    test('a failed save never bumps diaryWriteSignalProvider', () async {
+      final adapter = FakeHttpAdapter([
+        ...bootReplies(
+          entry: FakeReply(200, body: entryJson(rawText: 'Old.', version: 1)),
+        ),
+        FakeReply(500, body: {'error': 'server exploded'}),
+      ]);
+      final env = await ready(adapter);
+      env.notifier.startEditing();
+      env.notifier.updateText('New.');
+
+      await env.notifier.save();
+
+      expect(env.container.read(diaryWriteSignalProvider), 0);
+    });
   });
 
   group('conflict handling -- the delicate part', () {
@@ -401,6 +440,35 @@ void main() {
       await env.notifier.delete();
 
       expect(stateOf(env.container).deleted, isTrue);
+    });
+
+    test(
+      'a successful delete bumps diaryWriteSignalProvider so Today drops '
+      'the entry too',
+      () async {
+        final adapter = FakeHttpAdapter([
+          ...bootReplies(),
+          FakeReply(204),
+        ]);
+        final env = await ready(adapter);
+        expect(env.container.read(diaryWriteSignalProvider), 0);
+
+        await env.notifier.delete();
+
+        expect(env.container.read(diaryWriteSignalProvider), 1);
+      },
+    );
+
+    test('a failed delete never bumps diaryWriteSignalProvider', () async {
+      final adapter = FakeHttpAdapter([
+        ...bootReplies(),
+        FakeReply(500, body: {'error': 'server exploded'}),
+      ]);
+      final env = await ready(adapter);
+
+      await env.notifier.delete();
+
+      expect(env.container.read(diaryWriteSignalProvider), 0);
     });
   });
 

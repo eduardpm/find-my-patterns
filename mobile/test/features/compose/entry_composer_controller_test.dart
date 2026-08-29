@@ -1,4 +1,5 @@
 import 'package:find_my_patterns/core/config/config_providers.dart';
+import 'package:find_my_patterns/core/diary/diary_providers.dart';
 import 'package:find_my_patterns/core/diary/guiding_question.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
@@ -314,6 +315,48 @@ void main() {
         final state = env.container.read(entryComposerControllerProvider);
         expect(state.errorMessage, 'confirm failed');
         expect(state.isSaving, isFalse);
+      },
+    );
+
+    test(
+      'bumps diaryWriteSignalProvider once the entry is stored, whether or '
+      'not an echo follows -- Today refreshes either way it exits',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(200, body: entryJson()),
+          FakeReply(200, body: echoJson(count: 0)),
+        ]);
+        expect(env.container.read(diaryWriteSignalProvider), 0);
+
+        await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(env.container.read(diaryWriteSignalProvider), 1);
+      },
+    );
+
+    test(
+      'a confirm failure never bumps diaryWriteSignalProvider -- nothing '
+      'was actually stored',
+      () async {
+        final env = await readyController([
+          ...bootReplies(),
+          FakeReply(500, body: {'error': 'confirm failed'}),
+        ]);
+
+        await env.controller.confirmFeelings(
+          entryId: 'entry-1',
+          version: 1,
+          feelings: const [],
+          intensities: const {},
+        );
+
+        expect(env.container.read(diaryWriteSignalProvider), 0);
       },
     );
   });
