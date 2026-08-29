@@ -1,8 +1,25 @@
 # Mood Pattern Diary
 
-A private, self-hosted diary for noticing correlations between recurring topics and confirmed
-feelings. One NestJS backend owns the SQLite diary and every factual calculation; the React web app
-and Android app are presentation clients over that same data.
+A private diary for noticing correlations between recurring topics and confirmed feelings. One
+NestJS backend owns the SQLite diary and every factual calculation; the React web app and Android
+app are presentation clients over that same data. The backend runs on infrastructure we operate —
+see [Privacy](#privacy) below — but you can also run every part of it yourself from source; see
+"Start locally".
+
+## Privacy
+
+- **Where your data lives**: on infrastructure we operate — not on a third-party AI vendor's
+  platform, and not something you have to self-host. (Running the project yourself from source
+  keeps your data on whatever machine you deploy it to — see "Start locally" below.)
+- **What processes it**: open models we run ourselves — `qwen3` through Ollama for feeling and
+  topic inference, `whisper.cpp` for voice transcription — on our own hardware.
+- **What never happens**: no third-party AI vendor — not OpenAI, not Anthropic, not Groq — ever
+  sees your diary content. There is no analytics tracking on diary content, and entries are never
+  used to train a model.
+- **Export**: a full, free copy of your data is a permanent commitment, not a feature we intend to
+  paywall. Today that means the `npm run backup` command (see "Protect the diary" below), run by
+  whoever operates your backend, produces a complete, portable copy of the diary; a self-serve
+  export button for hosted customers is planned but not yet built.
 
 ## Start locally
 
@@ -125,10 +142,12 @@ Verify `/health`, Today, Calendar, and Insights before removing the preserved co
 - Online over the local network only; no offline sync.
 - No persistent browser drafts or service worker. Auth sessions are HttpOnly cookies and end on
   expiry, logout, or backend restart.
-- Diary text never leaves the machine. The API enqueues local inference work in SQLite; a separate
-  worker uses `qwen3:4b` through Ollama for feeling suggestion and topic extraction. It requests
-  immediate model unload after every entry. If the worker is unavailable, the entry is still saved
-  and the user can select a feeling manually. Pattern thresholds and wording stay deterministic.
-- Browser recordings never leave the machine either and are not retained after local transcription.
-- Audio transcripts are saved before local formatting starts. Formatting may change punctuation,
+- Diary text is never sent to a third-party AI vendor. The API enqueues inference work in SQLite; a
+  separate worker uses `qwen3:4b` through Ollama, running on the same infrastructure as the backend,
+  for feeling suggestion and topic extraction. It requests immediate model unload after every entry.
+  If the worker is unavailable, the entry is still saved and the user can select a feeling manually.
+  Pattern thresholds and wording stay deterministic.
+- Browser recordings are never sent to a third-party AI vendor either, and are not retained after
+  transcription on that same infrastructure.
+- Audio transcripts are saved before formatting starts. Formatting may change punctuation,
   capitalization, whitespace, paragraph breaks, and Markdown list markers, but not the word sequence.

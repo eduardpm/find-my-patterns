@@ -1,5 +1,12 @@
 # Existing Differentiator Plan: Fully Local Inference on a User-Owned Backend
 
+> **Note (2026-08-29):** positioning updated per hosting decision, see unified-backlog M-5. The
+> hosting decision (owner-operated backend; customers don't self-host) makes this plan's
+> "hardware the user owns" / "your machine" framing false as customer-facing messaging. The
+> replacement claim is: no third-party AI vendor ever sees your diary — inference runs on our own
+> servers, not OpenAI's. See `README.md`'s Privacy section for the current copy. This document is
+> kept as-is below as a historical record of the reasoning that led here.
+
 **Date:** 2026-08-24
 **Part of:** `specs/research/differentiator-opportunities.md` — Existing Differentiator #3
 **Other existing diff plans:** `diff-existing-1-auditable-patterns.md`, `diff-existing-2-confirmed-feelings.md`, `diff-existing-4-free-text-topics.md`, `diff-existing-5-guided-questions.md`
