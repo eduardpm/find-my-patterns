@@ -14,67 +14,141 @@ import '../../core/theme/journal_typography.dart';
 import '../../core/widgets/feeling_accent.dart';
 import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_page_wash.dart';
+import '../today/entry_card.dart';
 import 'day_entries_controller.dart';
 
 final DateFormat _dayTitleFormat = DateFormat('EEEE, MMMM d');
 final DateFormat _timeFormat = DateFormat.jm();
 
-/// Everything written on one day, readable end to end and editable in
-/// place — text only, by design.
+/// A day with no time of day, expressed in whole days since the Unix epoch.
 ///
-/// A day in the past is read to remember it, and the useful edit is fixing
-/// what was said, not re-running the guided prompts, which describe the
-/// moment of writing rather than the day itself. Saving sends only the
-/// text; what the re-analysis then proposes is offered, never applied — see
-/// [_FeelingProposalCard].
-class DayEntriesScreen extends ConsumerWidget {
-  /// Creates the day-entries screen for [date].
+/// [PageView] pages by integer index; a diary entry pages by date. This is
+/// the bijection between the two, so the controller can drive the page
+/// beneath a swipe or a chevron tap with plain integer arithmetic instead of
+/// re-deriving a date from a page offset by hand at every call site. UTC is
+/// used purely as a fixed-length-day ruler -- every value here stays at
+/// midnight, so daylight saving never enters into it the way it would if
+/// this measured local instants instead.
+final DateTime _epoch = DateTime.utc(1970);
+
+/// The whole-day offset of [date] from the Unix epoch.
+int _epochDay(CalendarDate date) =>
+    DateTime.utc(date.year, date.month, date.day).difference(_epoch).inDays;
+
+/// The date [epochDay] whole days after the Unix epoch.
+CalendarDate _dateFromEpochDay(int epochDay) =>
+    CalendarDate.fromDateTime(_epoch.add(Duration(days: epochDay)));
+
+/// The clock [DayEntriesScreen] reads "today" against, for the forward swipe
+/// limit and the disabled next-day chevron.
+///
+/// Overridden in tests so which day counts as the swipe ceiling is
+/// deterministic rather than following the real device clock — the same
+/// reason [CalendarDate.today] itself takes an injectable `now`.
+final dayEntriesNowProvider = Provider<DateTime?>((ref) => null);
+
+/// Everything written on one day, readable end to end -- and every day
+/// beside it one swipe away.
+///
+/// A day in the past is read to remember it. A heavy day used to mean an
+/// endless scroll of full-length entries with no way to move on except
+/// backing out to the calendar; entries are now truncated the same way
+/// Today's feed truncates them, tapping one opens it in full, and a
+/// horizontal swipe -- or the chevrons beside the date -- steps to the next
+/// or previous day without leaving this screen. The quick "fix a typo and
+/// let it re-read the feelings" edit stays here, inline, because that is a
+/// different job from reading the entry in full: see [_DayEntryCard].
+///
+/// The [PageView] is the only thing that changes which day is showing;
+/// nothing here ever pushes a second route while swiping or stepping, so
+/// the back gesture always pops this one screen straight back to the
+/// calendar, no matter how many days were swiped through first.
+class DayEntriesScreen extends ConsumerStatefulWidget {
+  /// Creates the day-entries screen, opening on [date].
   ///
   /// [date] arrives as a raw route parameter (`CalendarDate.toString()`)
   /// this screen does not control the shape of; an unparseable value falls
   /// back to today rather than throwing, the same rule every date-shaped
-  /// route parameter in this app follows.
+  /// route parameter in this app follows. A date after today is clamped to
+  /// today, the same rule [DayEntriesScreen]'s swipe ceiling enforces for
+  /// every later day too.
   ///
-  /// [onClose] is a plain callback rather than a direct `go_router`
-  /// dependency, so this screen — and its tests — never need a router in
-  /// the tree. Defaults to popping the route.
-  const DayEntriesScreen({super.key, required this.date, this.onClose});
+  /// [onClose] and [onOpenEntry] are plain callbacks rather than a direct
+  /// `go_router` dependency, so this screen — and its tests — never need a
+  /// router in the tree. [onClose] defaults to popping the route;
+  /// [onOpenEntry] defaults to pushing the entry-detail route.
+  const DayEntriesScreen({
+    super.key,
+    required this.date,
+    this.onClose,
+    this.onOpenEntry,
+  });
 
-  /// The day this screen shows, as `YYYY-MM-DD`.
+  /// The day this screen opens on, as `YYYY-MM-DD`.
   final String date;
 
   /// Called when the user asks to leave this screen. Defaults to
   /// `Navigator.pop`.
   final VoidCallback? onClose;
 
-  void _close(BuildContext context) {
-    if (onClose case final onClose?) {
+  /// Called to open [Entry] in the entry-detail screen. Defaults to
+  /// `context.push('/entry/{id}/{date}')`.
+  final ValueChanged<Entry>? onOpenEntry;
+
+  @override
+  ConsumerState<DayEntriesScreen> createState() => _DayEntriesScreenState();
+}
+
+class _DayEntriesScreenState extends ConsumerState<DayEntriesScreen> {
+  late CalendarDate _date;
+  late final PageController _pageController;
+
+  @override
+  void initState() {
+    super.initState();
+    final today = CalendarDate.today(now: ref.read(dayEntriesNowProvider));
+    final parsed = CalendarDate.tryParse(widget.date) ?? today;
+    _date = parsed > today ? today : parsed;
+    _pageController = PageController(initialPage: _epochDay(_date));
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _close() {
+    if (widget.onClose case final onClose?) {
       onClose();
       return;
     }
     context.pop();
   }
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final resolvedDate = CalendarDate.tryParse(date) ?? CalendarDate.today();
+  void _openEntry(Entry entry) {
+    if (widget.onOpenEntry case final onOpenEntry?) {
+      onOpenEntry(entry);
+      return;
+    }
+    context.push('/entry/${entry.id}/${entry.entryDate}');
+  }
 
-    ref.listen(dayEntriesControllerProvider(resolvedDate), (previous, next) {
-      final message = next.errorMessage;
-      if (message == null) return;
-      ScaffoldMessenger.maybeOf(
-        context,
-      )?.showSnackBar(SnackBar(content: Text(message)));
-      ref
-          .read(dayEntriesControllerProvider(resolvedDate).notifier)
-          .dismissError();
-    });
-
-    final state = ref.watch(dayEntriesControllerProvider(resolvedDate));
-    final notifier = ref.read(
-      dayEntriesControllerProvider(resolvedDate).notifier,
+  void _stepTo(int page) {
+    unawaited(
+      _pageController.animateToPage(
+        page,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      ),
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final today = CalendarDate.today(now: ref.watch(dayEntriesNowProvider));
+    final todayIndex = _epochDay(today);
 
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
@@ -82,7 +156,7 @@ class DayEntriesScreen extends ConsumerWidget {
         title: const Text('Entries'),
         backgroundColor: Colors.transparent,
         leading: IconButton(
-          onPressed: () => _close(context),
+          onPressed: _close,
           icon: const Icon(Icons.arrow_back),
           tooltip: 'Back to the calendar',
         ),
@@ -91,76 +165,186 @@ class DayEntriesScreen extends ConsumerWidget {
         children: [
           const Positioned.fill(child: JournalPageWash()),
           SafeArea(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(
-                JournalSpacing.x4,
-                JournalSpacing.x2,
-                JournalSpacing.x4,
-                JournalSpacing.x7,
-              ),
-              children: [
-                Eyebrow(_dayTitleFormat.format(resolvedDate.toDateTime())),
-                const SizedBox(height: JournalSpacing.x1),
-                Text(
-                  state.entries.length == 1
-                      ? '1 entry'
-                      : '${state.entries.length} entries',
-                  style: theme.textTheme.headlineSmall,
-                ),
-                const SizedBox(height: JournalSpacing.x4),
-                if (state.isAnalysing) ...[
-                  const _AnalysingNotice(),
-                  const SizedBox(height: JournalSpacing.x3),
-                ],
-                if (state.proposal case final proposal?) ...[
-                  _FeelingProposalCard(
-                    feelings: proposal.feelings,
-                    onAccept: () => unawaited(notifier.acceptProposal()),
-                    onDismiss: notifier.dismissProposal,
-                  ),
-                  const SizedBox(height: JournalSpacing.x3),
-                ],
-                if (!state.hasLoaded)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: JournalSpacing.x7),
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else if (state.entries.isEmpty)
-                  const EmptyState(
-                    icon: Icon(Icons.edit_note),
-                    title: Text('Nothing written that day'),
-                    supporting: Text(
-                      'Days without entries stay blank — nothing was lost.',
-                      textAlign: TextAlign.center,
-                    ),
-                  )
-                else
-                  for (final entry in state.entries) ...[
-                    _DayEntryCard(
-                      // Keyed on the entry's id so a save (which reorders
-                      // nothing but does replace the list with a freshly
-                      // fetched one) never hands this card's own text-field
-                      // state to a different entry landing at the same
-                      // position.
-                      key: ValueKey(entry.id),
-                      entry: entry,
-                      isEditing: state.editingId == entry.id,
-                      draft: state.draft,
-                      isSaving: state.isSaving,
-                      onEdit: () => notifier.startEditing(entry),
-                      onDraftChange: notifier.updateDraft,
-                      onSave: () => unawaited(notifier.saveEdit()),
-                      onCancel: notifier.cancelEditing,
-                    ),
-                    const SizedBox(height: JournalSpacing.x3),
-                  ],
-              ],
+            child: PageView.builder(
+              controller: _pageController,
+              // Bounded at today: there is no tomorrow to read, so the
+              // forward swipe simply runs out of pages rather than needing
+              // its own resistance the way the drag in [TodayScreen] does.
+              // Unbounded into the past -- a diary can hold entries from
+              // any day it was started on.
+              itemCount: todayIndex + 1,
+              onPageChanged: (page) =>
+                  setState(() => _date = _dateFromEpochDay(page)),
+              itemBuilder: (context, page) {
+                final pageDate = _dateFromEpochDay(page);
+                return _DayEntriesPage(
+                  date: pageDate,
+                  onPreviousDay: () => _stepTo(page - 1),
+                  onNextDay: page < todayIndex ? () => _stepTo(page + 1) : null,
+                  onOpenEntry: _openEntry,
+                );
+              },
             ),
           ),
         ],
       ),
     );
   }
+}
+
+/// One day's worth of the [PageView]: the date header with its chevrons,
+/// and that day's entries -- loaded and held entirely by
+/// [dayEntriesControllerProvider], keyed on [date], so a page's data is
+/// fetched only once it is actually built rather than for every day the
+/// swipe ceiling allows.
+class _DayEntriesPage extends ConsumerWidget {
+  const _DayEntriesPage({
+    required this.date,
+    required this.onPreviousDay,
+    required this.onNextDay,
+    required this.onOpenEntry,
+  });
+
+  final CalendarDate date;
+  final VoidCallback onPreviousDay;
+
+  /// Steps to the next day, or `null` when [date] is already today -- the
+  /// chevron's disabled state and the swipe ceiling agree because both
+  /// answer the same question.
+  final VoidCallback? onNextDay;
+  final ValueChanged<Entry> onOpenEntry;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen(dayEntriesControllerProvider(date), (previous, next) {
+      final message = next.errorMessage;
+      if (message == null) return;
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text(message)));
+      ref.read(dayEntriesControllerProvider(date).notifier).dismissError();
+    });
+
+    final state = ref.watch(dayEntriesControllerProvider(date));
+    final notifier = ref.read(dayEntriesControllerProvider(date).notifier);
+    final theme = Theme.of(context);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        JournalSpacing.x4,
+        JournalSpacing.x2,
+        JournalSpacing.x4,
+        JournalSpacing.x7,
+      ),
+      children: [
+        PageHeader(
+          eyebrow: Eyebrow(_dayTitleFormat.format(date.toDateTime())),
+          title: Text(
+            state.entries.length == 1
+                ? '1 entry'
+                : '${state.entries.length} entries',
+            style: theme.textTheme.headlineSmall,
+          ),
+          actions: [
+            _DayStepButton(
+              onPressed: onPreviousDay,
+              description: 'Previous day',
+              icon: Icons.chevron_left,
+            ),
+            _DayStepButton(
+              onPressed: onNextDay,
+              description: 'Next day',
+              icon: Icons.chevron_right,
+            ),
+          ],
+        ),
+        const SizedBox(height: JournalSpacing.x4),
+        if (state.isAnalysing) ...[
+          const _AnalysingNotice(),
+          const SizedBox(height: JournalSpacing.x3),
+        ],
+        if (state.proposal case final proposal?) ...[
+          _FeelingProposalCard(
+            feelings: proposal.feelings,
+            onAccept: () => unawaited(notifier.acceptProposal()),
+            onDismiss: notifier.dismissProposal,
+          ),
+          const SizedBox(height: JournalSpacing.x3),
+        ],
+        if (!state.hasLoaded)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: JournalSpacing.x7),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (state.entries.isEmpty)
+          const EmptyState(
+            icon: Icon(Icons.edit_note),
+            title: Text('Nothing written that day'),
+            supporting: Text(
+              'Days without entries stay blank — nothing was lost.',
+              textAlign: TextAlign.center,
+            ),
+          )
+        else
+          for (final entry in state.entries) ...[
+            _DayEntryCard(
+              // Keyed on the entry's id so a save (which reorders nothing
+              // but does replace the list with a freshly fetched one) never
+              // hands this card's own text-field state to a different entry
+              // landing at the same position.
+              key: ValueKey(entry.id),
+              entry: entry,
+              isEditing: state.editingId == entry.id,
+              draft: state.draft,
+              isSaving: state.isSaving,
+              onEdit: () => notifier.startEditing(entry),
+              onDraftChange: notifier.updateDraft,
+              onSave: () => unawaited(notifier.saveEdit()),
+              onCancel: notifier.cancelEditing,
+              onOpenDetail: () => onOpenEntry(entry),
+            ),
+            const SizedBox(height: JournalSpacing.x3),
+          ],
+      ],
+    );
+  }
+}
+
+/// One step of the day stepper: a 48dp bounded icon button, sized for a
+/// thumb rather than the icon -- the same touch target the Today screen's
+/// own day stepper uses.
+class _DayStepButton extends StatelessWidget {
+  const _DayStepButton({
+    required this.onPressed,
+    required this.description,
+    required this.icon,
+  });
+
+  final VoidCallback? onPressed;
+  final String description;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: JournalSpacing.x7,
+    height: JournalSpacing.x7,
+    child: Semantics(
+      label: description,
+      button: true,
+      enabled: onPressed != null,
+      child: ExcludeSemantics(
+        child: OutlinedButton(
+          onPressed: onPressed,
+          style: OutlinedButton.styleFrom(
+            shape: const CircleBorder(),
+            padding: EdgeInsets.zero,
+            backgroundColor: Theme.of(context).colorScheme.surfaceContainer,
+          ),
+          child: Icon(icon),
+        ),
+      ),
+    ),
+  );
 }
 
 class _AnalysingNotice extends StatelessWidget {
@@ -276,6 +460,19 @@ class _Dot extends StatelessWidget {
   );
 }
 
+/// One entry in the day's list.
+///
+/// Reading and editing are two different jobs, and this card offers both
+/// without conflating them. At rest it is the same truncated, tappable
+/// [EntryCard] the Today feed shows -- six lines here rather than five,
+/// because a full day's worth of entries has more competing for the screen
+/// than Today's single day does -- and tapping it opens the entry in full
+/// on the entry-detail screen, feelings, ratings and delete included.
+/// "Edit text" underneath stays a separate, narrower action: a quick fix to
+/// a typo, saved in place, that the backend then re-reads and may propose
+/// new feelings for -- see [DayEntriesController.saveEdit]. That re-analysis
+/// offer has no equivalent on the entry-detail screen, so it stays here
+/// rather than moving with the rest of editing.
 class _DayEntryCard extends StatefulWidget {
   const _DayEntryCard({
     super.key,
@@ -287,6 +484,7 @@ class _DayEntryCard extends StatefulWidget {
     required this.onDraftChange,
     required this.onSave,
     required this.onCancel,
+    required this.onOpenDetail,
   });
 
   final Entry entry;
@@ -297,6 +495,7 @@ class _DayEntryCard extends StatefulWidget {
   final ValueChanged<String> onDraftChange;
   final VoidCallback onSave;
   final VoidCallback onCancel;
+  final VoidCallback onOpenDetail;
 
   @override
   State<_DayEntryCard> createState() => _DayEntryCardState();
@@ -331,8 +530,22 @@ class _DayEntryCardState extends State<_DayEntryCard> {
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
-    final isEditing = widget.isEditing;
     final isSaving = widget.isSaving;
+
+    if (!widget.isEditing) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          EntryCard(entry: entry, onTap: widget.onOpenDetail, maxLines: 6),
+          const SizedBox(height: JournalSpacing.x2),
+          SecondaryPillButton(
+            onPressed: widget.onEdit,
+            child: const Text('Edit text'),
+          ),
+        ],
+      );
+    }
+
     final journal = context.journalColors;
     final theme = Theme.of(context);
     final railColor = entry.feeling?.accent(journal) ?? journal.hairline;
@@ -393,36 +606,27 @@ class _DayEntryCardState extends State<_DayEntryCard> {
                       ],
                     ),
                     const SizedBox(height: JournalSpacing.x3),
-                    if (isEditing) ...[
-                      TextField(
-                        controller: _controller,
-                        onChanged: widget.onDraftChange,
-                        minLines: 4,
-                        maxLines: null,
-                        style: JournalType.prose,
-                      ),
-                      const SizedBox(height: JournalSpacing.x3),
-                      Row(
-                        children: [
-                          PillButton(
-                            onPressed: isSaving ? null : widget.onSave,
-                            child: Text(isSaving ? 'Saving…' : 'Save'),
-                          ),
-                          const SizedBox(width: JournalSpacing.x2),
-                          SecondaryPillButton(
-                            onPressed: isSaving ? null : widget.onCancel,
-                            child: const Text('Cancel'),
-                          ),
-                        ],
-                      ),
-                    ] else ...[
-                      Text(entry.rawText, style: JournalType.prose),
-                      const SizedBox(height: JournalSpacing.x3),
-                      SecondaryPillButton(
-                        onPressed: widget.onEdit,
-                        child: const Text('Edit text'),
-                      ),
-                    ],
+                    TextField(
+                      controller: _controller,
+                      onChanged: widget.onDraftChange,
+                      minLines: 4,
+                      maxLines: null,
+                      style: JournalType.prose,
+                    ),
+                    const SizedBox(height: JournalSpacing.x3),
+                    Row(
+                      children: [
+                        PillButton(
+                          onPressed: isSaving ? null : widget.onSave,
+                          child: Text(isSaving ? 'Saving…' : 'Save'),
+                        ),
+                        const SizedBox(width: JournalSpacing.x2),
+                        SecondaryPillButton(
+                          onPressed: isSaving ? null : widget.onCancel,
+                          child: const Text('Cancel'),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),

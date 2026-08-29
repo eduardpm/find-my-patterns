@@ -1,5 +1,6 @@
 import 'package:find_my_patterns/core/config/config_providers.dart';
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
+import 'package:find_my_patterns/core/diary/entry.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
@@ -31,16 +32,26 @@ void main() {
     adapter: adapter,
   );
 
-  Widget app(Harness harness, {VoidCallback? onClose}) => ProviderScope(
+  Widget app(
+    Harness harness, {
+    VoidCallback? onClose,
+    ValueChanged<Entry>? onOpenEntry,
+    DateTime? now,
+  }) => ProviderScope(
     overrides: [
       requireAuthProvider.overrideWithValue(harness.requireAuth),
       settingsStoreProvider.overrideWithValue(harness.store),
       apiClientProvider.overrideWithValue(harness.client),
       analysisPollConfigProvider.overrideWithValue(instantPoll),
       analysisPollDelayProvider.overrideWithValue((_) async {}),
+      if (now != null) dayEntriesNowProvider.overrideWithValue(now),
     ],
     child: MaterialApp(
-      home: DayEntriesScreen(date: '$date', onClose: onClose),
+      home: DayEntriesScreen(
+        date: '$date',
+        onClose: onClose,
+        onOpenEntry: onOpenEntry,
+      ),
     ),
   );
 
@@ -355,5 +366,162 @@ void main() {
     // Falls back to today rather than throwing during the pump above.
     expect(tester.takeException(), isNull);
     expect(find.text('Nothing written that day'), findsOneWidget);
+  });
+
+  testWidgets('a long entry is truncated to six lines with an ellipsis', (
+    tester,
+  ) async {
+    useTallScreen(tester);
+    final longText = List.generate(10, (i) => 'Line $i').join('\n');
+    final harness = configuredHarness(
+      FakeHttpAdapter([
+        FakeReply(200, body: feelingsCatalogJson()),
+        FakeReply(
+          200,
+          body: {
+            'entries': [entryJson(id: 'entry-1', rawText: longText)],
+          },
+        ),
+      ]),
+    );
+    await tester.pumpWidget(app(harness));
+    await tester.pumpAndSettle();
+
+    final text = tester.widget<Text>(find.text(longText));
+    expect(text.maxLines, 6);
+    expect(text.overflow, TextOverflow.ellipsis);
+  });
+
+  testWidgets('tapping an entry opens it in the entry-detail screen', (
+    tester,
+  ) async {
+    useTallScreen(tester);
+    Entry? opened;
+    final harness = configuredHarness(
+      FakeHttpAdapter([
+        FakeReply(200, body: feelingsCatalogJson()),
+        FakeReply(
+          200,
+          body: {
+            'entries': [entryJson(id: 'entry-1', rawText: 'Tap me.')],
+          },
+        ),
+      ]),
+    );
+    await tester.pumpWidget(
+      app(harness, onOpenEntry: (entry) => opened = entry),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Tap me.'));
+
+    expect(opened?.id, 'entry-1');
+  });
+
+  group('paging between days', () {
+    // A clock pinned well after `date`, so the swipe test's forward step
+    // never runs into the today ceiling the next group is testing.
+    final midMonth = DateTime.utc(2026, 8, 20, 12);
+
+    /// However many requests a page turn ends up needing, every one gets
+    /// the same empty-day reply after the shared feelings catalog -- these
+    /// tests are about which day is on screen, not what is in it, so which
+    /// date a particular request was for does not matter.
+    FakeHttpAdapter emptyDayAdapter() => FakeHttpAdapter([
+      FakeReply(200, body: feelingsCatalogJson()),
+      for (var i = 0; i < 20; i++)
+        FakeReply(200, body: {'entries': <Object?>[]}),
+    ]);
+
+    testWidgets('a leftward swipe moves to the next day', (tester) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(emptyDayAdapter());
+      await tester.pumpWidget(app(harness, now: midMonth));
+      await tester.pumpAndSettle();
+      expect(find.text('WEDNESDAY, AUGUST 5'), findsOneWidget);
+
+      await tester.drag(find.byType(PageView), const Offset(-600, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.text('WEDNESDAY, AUGUST 5'), findsNothing);
+      expect(find.text('THURSDAY, AUGUST 6'), findsOneWidget);
+    });
+
+    testWidgets('a rightward swipe moves to the previous day', (
+      tester,
+    ) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(emptyDayAdapter());
+      await tester.pumpWidget(app(harness, now: midMonth));
+      await tester.pumpAndSettle();
+
+      await tester.drag(find.byType(PageView), const Offset(600, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.text('TUESDAY, AUGUST 4'), findsOneWidget);
+    });
+
+    testWidgets('the next-day chevron steps forward the same way a swipe '
+        'does', (tester) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(emptyDayAdapter());
+      await tester.pumpWidget(app(harness, now: midMonth));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.bySemanticsLabel('Next day'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('THURSDAY, AUGUST 6'), findsOneWidget);
+    });
+  });
+
+  group('the forward swipe ceiling', () {
+    // `date` itself is "today" on this clock, so the forward direction has
+    // nowhere left to go.
+    final onDate = DateTime.utc(2026, 8, 5, 12);
+
+    testWidgets('the next-day chevron is disabled on today', (tester) async {
+      final handle = tester.ensureSemantics();
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter([
+          FakeReply(200, body: feelingsCatalogJson()),
+          FakeReply(200, body: {'entries': <Object?>[]}),
+        ]),
+      );
+      await tester.pumpWidget(app(harness, now: onDate));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getSemantics(find.bySemanticsLabel('Next day')),
+        matchesSemantics(
+          label: 'Next day',
+          isButton: true,
+          hasEnabledState: true,
+          isEnabled: false,
+        ),
+      );
+      handle.dispose();
+    });
+
+    testWidgets('a leftward swipe on today does not move forward', (
+      tester,
+    ) async {
+      useTallScreen(tester);
+      final harness = configuredHarness(
+        FakeHttpAdapter([
+          FakeReply(200, body: feelingsCatalogJson()),
+          FakeReply(200, body: {'entries': <Object?>[]}),
+        ]),
+      );
+      await tester.pumpWidget(app(harness, now: onDate));
+      await tester.pumpAndSettle();
+      expect(find.text('WEDNESDAY, AUGUST 5'), findsOneWidget);
+
+      await tester.drag(find.byType(PageView), const Offset(-600, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.text('WEDNESDAY, AUGUST 5'), findsOneWidget);
+    });
   });
 }

@@ -18,13 +18,25 @@ import '../../core/widgets/journal.dart';
 /// decoration.
 class EntryCard extends StatelessWidget {
   /// Builds a card for [entry].
-  const EntryCard({super.key, required this.entry, required this.onTap});
+  const EntryCard({
+    super.key,
+    required this.entry,
+    required this.onTap,
+    this.maxLines = 5,
+  });
 
   /// The entry to show.
   final Entry entry;
 
   /// Called when the card is tapped.
   final VoidCallback onTap;
+
+  /// How many lines of [Entry.rawText] to show before ellipsising the rest.
+  ///
+  /// Defaults to the Today feed's own five lines; the day-entries screen
+  /// passes six, so this stays additive rather than changing what Today
+  /// already shows.
+  final int maxLines;
 
   @override
   Widget build(BuildContext context) {
@@ -106,7 +118,7 @@ class EntryCard extends StatelessWidget {
                             style: JournalType.prose.copyWith(
                               color: theme.colorScheme.onSurface,
                             ),
-                            maxLines: 5,
+                            maxLines: maxLines,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ],
