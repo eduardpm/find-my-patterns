@@ -2,6 +2,13 @@ import type { NaiveDateTime, PlainDate } from '../db/codecs';
 
 export type EntryMode = 'guided' | 'freeform';
 export type FeelingSource = 'unset' | 'suggested' | 'confirmed' | 'overridden';
+/**
+ * Where an entry came from (L-1b, #35): `'app'` for the normal compose flow, `'daylio_import'` for
+ * a row the Daylio CSV importer wrote. Distinct from `FeelingSource` — that describes how the
+ * *feeling* was decided; this describes where the *entry* itself originated, and is what makes
+ * imported history visibly, permanently distinguishable from what the user typed here.
+ */
+export type EntryOrigin = 'app' | 'daylio_import';
 export type Valence = 'positive' | 'neutral' | 'negative';
 
 /**
@@ -95,6 +102,8 @@ export interface DiaryEntry {
    * map read at [feelingKey] — the two can never disagree, because both are written together.
    */
   feelingIntensities: Record<string, number>;
+  /** Where this entry came from (L-1b, #35) — `'app'` for every entry written before this ticket. */
+  origin: EntryOrigin;
 }
 
 export interface SuggestedFeeling {

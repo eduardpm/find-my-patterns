@@ -59,6 +59,11 @@ export const SCHEMA_STATEMENTS: string[] = [
      feeling_source VARCHAR(16) NOT NULL,
      version INTEGER DEFAULT '1' NOT NULL,
      feeling_intensity INTEGER,
+     -- Provenance marker (L-1b, #35): 'app' for every entry written through the normal compose
+     -- flow, 'daylio_import' for a row the Daylio importer wrote. Defaults to 'app' so every
+     -- entry a diary already holds is correctly labelled the instant this column appears — see
+     -- MIGRATION_STATEMENTS below.
+     origin VARCHAR(16) NOT NULL DEFAULT 'app',
      PRIMARY KEY (id),
      FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
    )`,
@@ -206,6 +211,21 @@ export const SCHEMA_STATEMENTS: string[] = [
      FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
      FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE,
      FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
+   )`,
+
+  // --- Daylio CSV import idempotency (L-1b, #35) ------------------------------------------------
+  // One row per committed file. `content_hash` (sha256 of the raw upload) is what makes a commit
+  // idempotent: re-posting the exact same export cannot double-import, because the second commit
+  // finds its hash already here and writes nothing. `report_json` is the dry-run report that was
+  // accepted, kept for `GET`-free auditability — "what did this import actually do" never requires
+  // re-parsing the original file.
+  `CREATE TABLE csv_imports (
+     content_hash VARCHAR(64) NOT NULL,
+     source VARCHAR(16) NOT NULL,
+     imported_at DATETIME NOT NULL,
+     entry_count INTEGER NOT NULL,
+     report_json JSON NOT NULL,
+     PRIMARY KEY (content_hash)
    )`,
 ];
 
@@ -426,5 +446,25 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
     sql: `ALTER TABLE patterns ADD COLUMN narration_next_attempt_at DATETIME`,
     table: 'patterns',
     column: 'narration_next_attempt_at',
+  },
+
+  // --- Import provenance and idempotency (L-1b, #35) ---------------------------------------------
+  // `DEFAULT 'app'` backfills every existing row the instant the column appears: a diary migrated
+  // today has never imported anything, so every entry it already holds was written through the
+  // normal compose flow.
+  {
+    sql: `ALTER TABLE diary_entries ADD COLUMN origin VARCHAR(16) NOT NULL DEFAULT 'app'`,
+    table: 'diary_entries',
+    column: 'origin',
+  },
+  {
+    sql: `CREATE TABLE IF NOT EXISTS csv_imports (
+              content_hash VARCHAR(64) NOT NULL,
+              source VARCHAR(16) NOT NULL,
+              imported_at DATETIME NOT NULL,
+              entry_count INTEGER NOT NULL,
+              report_json JSON NOT NULL,
+              PRIMARY KEY (content_hash)
+            )`,
   },
 ];

@@ -115,8 +115,15 @@ export class TopicsService {
    * This is the single door every proposed topic comes through, whichever half of the app found
    * it. The canonical name is resolved before the row is touched, so a fragment never gets a row
    * of its own and then has to be merged back out of one later.
+   *
+   * `'import'` (L-1b, #35) is a Daylio CSV activity tag, mapped through the same canonicalisation
+   * every other topic goes through. It deliberately is **not** `'keyword'`:
+   * `PatternsService#loadEvidenceEntries` deletes and re-derives every `'keyword'` link from
+   * `raw_text` on each recompute, and an imported activity usually is not a word the note itself
+   * contains — a `'keyword'` link here would vanish the moment `GET /insights` next ran. Only
+   * `'keyword'` rows are ever swept that way, so `'import'` (like `'llm'`) persists untouched.
    */
-  linkTopics(entryId: string, names: string[], extractedBy: 'keyword' | 'llm'): Topic[] {
+  linkTopics(entryId: string, names: string[], extractedBy: 'keyword' | 'llm' | 'import'): Topic[] {
     const known = this.knownTopics();
     const canonical = new Set<string>();
     for (const name of names) {

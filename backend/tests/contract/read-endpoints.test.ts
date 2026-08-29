@@ -174,6 +174,7 @@ describe('GET /entries?date=', () => {
         'guided_answers',
         'id',
         'mode',
+        'origin',
         'raw_text',
         'suggested_feeling',
         'suggested_feelings',

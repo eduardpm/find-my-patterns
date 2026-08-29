@@ -76,6 +76,9 @@ export function toEntryOut(
     // rated. `feeling_intensity` above is this map read at `feeling_key` and stays in the payload
     // for the calendar cell and for clients built before the dial moved off the entry.
     feeling_intensities: entry.feelingIntensities,
+    // L-1b (#35): 'app' for everything written through the normal compose flow, 'daylio_import'
+    // for a row the Daylio importer wrote — the visible provenance marker the ticket requires.
+    origin: entry.origin,
     suggested_feeling: suggestion,
     suggested_feelings: suggestedAll,
     analysis_pending: analysisPending,

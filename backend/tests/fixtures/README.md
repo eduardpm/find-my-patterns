@@ -54,3 +54,26 @@ contradiction). Each names its `source`: the repo's own research under `specs/re
 n-of-1 self-tracking literature, or reasoning about a specific function.
 
 Adding a scenario needs no code — add an object to `scenarios` and run the suite.
+
+## `daylio-sample.csv`
+
+A Daylio CSV export, exercising the Daylio importer (L-1b, #35). The column layout and quoting
+conventions are adapted from a real export file, not invented — see
+`../../src/import/daylio-mood-map.ts`'s doc comment for the sources (retrieved 2026-08-29):
+`MichaelCurrin/daylio-csv-parser`'s `docs/csv-format.md` and its `dayliopy/sample.csv`, and
+`daylio-parser`'s `config.html` for the five default mood names.
+
+17 rows, deliberately containing:
+
+| Case | Exercises |
+|---|---|
+| `rad`, `good`, `meh`, `bad`, `awful` | Every entry in `DAYLIO_MOOD_MAP` |
+| `fantastic` (row 13) | A custom/renamed mood — skipped and reported, never guessed |
+| `12:00 am` (row 6) | Midnight — the one point a 12-hour clock does not add 12 for "pm" |
+| `12:00 pm` (row 9) | Noon, the same clock's other edge |
+| Empty `activities`/`note_title`/`note` (row 10) | A logged mood with nothing else attached |
+| A note with embedded commas (row 11) | Quoted-field CSV parsing |
+| A `note_title` (rows 4, 7) | `note_title` + `note` composed into `raw_text` |
+| "work" on 6 of 17 days, "bad"→`sad` on 5 of those 6 | A real lift once imported — `work`↔`sad`
+  crosses `MIN_OCCURRENCE_THRESHOLD` (5 ≥ 3) with `present_rate` 5/6 against `absent_rate` 1/11,
+  which the import e2e test uses to assert patterns actually compute over imported entries |
