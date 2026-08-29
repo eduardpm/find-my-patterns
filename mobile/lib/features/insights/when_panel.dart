@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/diary/pattern.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/journal_metrics.dart';
+import '../../core/theme/journal_palette.dart';
 import '../../core/widgets/journal.dart';
 import '../../core/widgets/journal_dashed_border.dart';
 
@@ -62,12 +63,10 @@ class WhenPanel extends StatelessWidget {
             ),
             const SizedBox(height: JournalSpacing.x4),
             _WhenChart(
-              // One family per bucket kind. Ticket CH-5 plans to add an
-              // hourly family here -- everything below this list (the
+              // One family per bucket kind. Everything below this list (the
               // axis, the shared zero rule, the row and marker widgets) is
               // written to take any number of families rather than
-              // assuming exactly two, so that ticket is a third list entry,
-              // not a rewrite.
+              // assuming exactly two.
               families: [
                 _WhenRowFamily(
                   title: 'By day of the week',
@@ -83,6 +82,13 @@ class WhenPanel extends StatelessWidget {
                 ),
               ],
               minimum: insights.minBucketEntries,
+              // CH-5: the heat strip is not a fourth row-family -- it is a
+              // different chart shape (twelve cells, not an axis row) -- so
+              // it is threaded through separately and drawn right under the
+              // "By time of day" rows above rather than appended to
+              // [families]. It still shares this chart's one suppressed
+              // marker legend at the bottom instead of printing its own.
+              hourlyInsights: insights,
             ),
           ],
         ],
@@ -95,6 +101,24 @@ class WhenPanel extends StatelessWidget {
 /// share -- so a track never starts at a different x than its neighbour's
 /// and the axis lines up under all of them at once.
 const double _labelColumnWidth = 104;
+
+/// "average valence -0.27 · 15 entries" -- the exact figure and the count
+/// for a sufficient bucket, in the one wording this panel ever uses for it.
+///
+/// Shared between [_WhenRow]'s printed line and the heat strip's tap/
+/// long-press detail so the two chart shapes describe the same
+/// [WhenBucket] field the same way, and so the panel never grows a second
+/// place that decides how to phrase a valence average.
+///
+/// Only called for [WhenBucket.sufficient] buckets with a non-null
+/// [WhenBucket.averageValence] -- callers gate on that themselves, the same
+/// way [_WhenRow] already did before this was factored out.
+String bucketDetailText(WhenBucket bucket) {
+  final average = bucket.averageValence!;
+  final entryWord = bucket.entryCount == 1 ? 'entry' : 'entries';
+  return 'average valence ${average >= 0 ? '+' : ''}'
+      '${average.toStringAsFixed(2)} · ${bucket.entryCount} $entryWord';
+}
 
 /// One row-family in the shared chart: a heading plus the buckets under it.
 /// Not a domain type -- just the pairing of a title with the three fields
@@ -122,16 +146,26 @@ class _WhenRowFamily {
 /// against night on the same scale, so the scale itself has to appear only
 /// once.
 class _WhenChart extends StatelessWidget {
-  const _WhenChart({required this.families, required this.minimum});
+  const _WhenChart({
+    required this.families,
+    required this.minimum,
+    required this.hourlyInsights,
+  });
 
   final List<_WhenRowFamily> families;
   final int minimum;
 
-  bool get _hasSuppressed => families.any(
-    (family) => family.buckets.any(
-      (bucket) => !(bucket.sufficient && bucket.averageValence != null),
-    ),
-  );
+  /// The whole payload, not just [WhenInsights.hourly] -- the heat strip's
+  /// semantics label also reads [WhenInsights.timesOfDay] (for "cluster in
+  /// the evening") and [WhenInsights.worstHour] (for "lowest around").
+  final WhenInsights hourlyInsights;
+
+  bool _bucketSuppressed(WhenBucket bucket) =>
+      !(bucket.sufficient && bucket.averageValence != null);
+
+  bool get _hasSuppressed =>
+      families.any((family) => family.buckets.any(_bucketSuppressed)) ||
+      hourlyInsights.hourly.any(_bucketSuppressed);
 
   @override
   Widget build(BuildContext context) {
@@ -183,15 +217,23 @@ class _WhenChart extends StatelessWidget {
                         const SizedBox(height: JournalSpacing.x3),
                       ],
                     ],
-                    // One legend for the whole chart, not one apology per
-                    // suppressed row -- see the panel's own doc comment.
-                    if (_hasSuppressed) _SuppressedLegend(minimum: minimum),
                   ],
                 ),
               ],
             );
           },
         ),
+        // The heat strip is not on the −1…+1 axis above -- it is a
+        // different chart shape -- so it sits outside the `Stack` rather
+        // than under the zero rule, which would otherwise run straight
+        // through cells it has nothing to say about.
+        if (hourlyInsights.hourly.isNotEmpty) ...[
+          const SizedBox(height: JournalSpacing.x4),
+          _HourlyStrip(insights: hourlyInsights, minimum: minimum),
+        ],
+        // One legend for the whole chart, not one apology per suppressed
+        // row or cell -- see the panel's own doc comment.
+        if (_hasSuppressed) _SuppressedLegend(minimum: minimum),
       ],
     );
   }
@@ -335,9 +377,7 @@ class _WhenRow extends StatelessWidget {
                   left: _labelColumnWidth + JournalSpacing.x3,
                 ),
                 child: Text(
-                  'average valence ${average >= 0 ? '+' : ''}'
-                  '${average.toStringAsFixed(2)} · ${bucket.entryCount} '
-                  '$entryWord',
+                  bucketDetailText(bucket),
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -460,4 +500,242 @@ class _SuppressedLegend extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The heat strip under "By time of day": twelve 2-hour cells, coloured by
+/// mean valence on the shared ramp (CH-5, [ValenceRamp.colorForScore]).
+/// Reads as part of this panel rather than a bolted-on widget: it opens
+/// with the same small-heading style the two row families above it use,
+/// reuses their hollow-marker suppression convention for a thin cell, and
+/// leans on the chart's one shared legend line instead of printing a
+/// second apology of its own.
+///
+/// Twelve real cell widgets, not a canvas -- unlike the calendar's year grid
+/// and its 372 days, twelve is cheap enough that each cell can be its own
+/// [GestureDetector] without the single-hit-test trick that grid needs.
+/// Accessibility still follows that grid's shape: the strip exposes one
+/// semantic node
+/// summarising the whole pattern ([hourlyStripSemantics]), and a per-cell
+/// detail line ([hourCellDetailText]) appears -- as its own live-announcing
+/// node, and as an inline caption every sighted user sees too -- only while
+/// a tap or long-press holds one cell active.
+class _HourlyStrip extends StatefulWidget {
+  const _HourlyStrip({required this.insights, required this.minimum});
+
+  /// The whole payload -- the strip's own semantics read [WhenInsights.
+  /// timesOfDay] and [WhenInsights.busiestTimeOfDay] as well as
+  /// [WhenInsights.hourly].
+  final WhenInsights insights;
+  final int minimum;
+
+  @override
+  State<_HourlyStrip> createState() => _HourlyStripState();
+}
+
+class _HourlyStripState extends State<_HourlyStrip> {
+  int? _activeIndex;
+
+  /// A tap on the already-active cell closes its detail line; a tap on any
+  /// other cell opens that one instead. There is never more than one open
+  /// at a time -- the caption below the strip has room for exactly one.
+  void _tap(int index) =>
+      setState(() => _activeIndex = _activeIndex == index ? null : index);
+
+  void _pressStart(int index) => setState(() => _activeIndex = index);
+
+  void _pressEnd() => setState(() => _activeIndex = null);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final buckets = widget.insights.hourly;
+    final activeIndex = _activeIndex;
+    final active =
+        activeIndex != null && activeIndex >= 0 && activeIndex < buckets.length
+        ? buckets[activeIndex]
+        : null;
+
+    return Semantics(
+      container: true,
+      label: hourlyStripSemantics(widget.insights),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ExcludeSemantics(
+            child: Text('By hour', style: theme.textTheme.titleSmall),
+          ),
+          const SizedBox(height: JournalSpacing.x2),
+          ExcludeSemantics(
+            child: Row(
+              children: [
+                for (var i = 0; i < buckets.length; i++) ...[
+                  if (i > 0) const SizedBox(width: JournalSpacing.x1 / 2),
+                  Expanded(
+                    child: GestureDetector(
+                      key: Key('hourCell-${buckets[i].key}'),
+                      onTap: () => _tap(i),
+                      onLongPressStart: (_) => _pressStart(i),
+                      onLongPressEnd: (_) => _pressEnd(),
+                      child: _HourCell(bucket: buckets[i]),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: JournalSpacing.x1),
+          ExcludeSemantics(child: _HourAxisLabels(buckets: buckets)),
+          if (active != null) ...[
+            const SizedBox(height: JournalSpacing.x1),
+            Semantics(
+              liveRegion: true,
+              label: hourCellDetailText(active, widget.minimum),
+              child: ExcludeSemantics(
+                child: Text(
+                  hourCellDetailText(active, widget.minimum),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One 2-hour cell: filled with [ValenceRamp.colorForScore] when
+/// [WhenBucket.sufficient] carries a real average, or hollow and dashed --
+/// the same suppression convention [_Track] draws for a thin weekday/
+/// time-of-day bucket -- when it does not.
+class _HourCell extends StatelessWidget {
+  const _HourCell({required this.bucket});
+
+  final WhenBucket bucket;
+
+  static const double _height = 28;
+
+  @override
+  Widget build(BuildContext context) {
+    final journal = context.journalColors;
+    final theme = Theme.of(context);
+    final average = bucket.averageValence;
+
+    if (bucket.sufficient && average != null) {
+      return SizedBox(
+        height: _height,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: journal.feelings.colorForScore(average),
+            borderRadius: JournalShapes.small,
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: _height,
+      child: DashedBorder(
+        color: theme.colorScheme.onSurfaceVariant,
+        borderRadius: JournalShapes.small,
+        strokeWidth: 1.5,
+        dash: 3,
+        gap: 2,
+        // A transparent `ColoredBox`, not a bare `SizedBox` -- unlike the
+        // sufficient branch's `DecoratedBox` above, a `CustomPaint` (which
+        // `DashedBorder` draws through) does not treat its own painted
+        // area as tappable by default, and neither does an empty `SizedBox`.
+        // `ColoredBox` always does, transparent or not, which is what makes
+        // a hollow cell -- not just a coloured one -- register the tap and
+        // long-press this widget wires up on it.
+        child: const ColoredBox(color: Colors.transparent),
+      ),
+    );
+  }
+}
+
+/// The sparse 0/6/12/18 hour ticks under the strip.
+///
+/// Every third cell gets a tick -- indices 0, 3, 6 and 9, which are hours 0,
+/// 6, 12 and 18 given the backend's fixed 2-hour block width -- and the label
+/// text itself is read off each tick cell's own [WhenBucket.key] rather
+/// than a hardcoded string, so a cell and the tick under it can never name
+/// two different hours.
+class _HourAxisLabels extends StatelessWidget {
+  const _HourAxisLabels({required this.buckets});
+
+  final List<WhenBucket> buckets;
+
+  static const Set<int> _tickIndices = {0, 3, 6, 9};
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.labelSmall?.copyWith(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    return Row(
+      children: [
+        for (var i = 0; i < buckets.length; i++)
+          Expanded(
+            child: Text(
+              _tickIndices.contains(i) ? _hourLabel(buckets[i].key) : '',
+              style: style,
+              textAlign: TextAlign.center,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// "18" from "18", "6" from "06" -- the strip's ticks drop the backend's
+/// zero-padding, which exists so `key` sorts and compares cleanly but reads
+/// oddly under a tick mark.
+String _hourLabel(String key) => int.tryParse(key)?.toString() ?? key;
+
+/// The heat strip's one semantics summary (I5-06's restraint again): built
+/// only from fields the backend already computed -- the [WhenInsights.
+/// timesOfDay] bucket with the most entries, and the [WhenInsights.
+/// worstHour] bucket by average valence -- never a magnitude word this
+/// screen invented on its own. Falls back to a plain "not enough entries
+/// yet" sentence when neither is available (a tie, or too little written
+/// so far), the same restraint the backend's own `extreme` applies to
+/// [WhenInsights.bestWeekday]/[WhenInsights.worstWeekday].
+String hourlyStripSemantics(WhenInsights insights) {
+  final clusterBucket = insights.timesOfDay
+      .where((bucket) => bucket.key == insights.busiestTimeOfDay)
+      .firstOrNull;
+  final worstBucket = insights.hourly
+      .where((bucket) => bucket.key == insights.worstHour)
+      .firstOrNull;
+
+  final clusterClause = clusterBucket == null
+      ? null
+      : 'entries cluster in the ${clusterBucket.label.toLowerCase()}';
+  final worstAverage = worstBucket?.averageValence;
+  final worstClause = worstBucket == null || worstAverage == null
+      ? null
+      : 'lowest around ${worstBucket.key}:00 (from ${worstBucket.entryCount} '
+            '${worstBucket.entryCount == 1 ? 'entry' : 'entries'})';
+
+  final clauses = [clusterClause, worstClause].whereType<String>().toList();
+  if (clauses.isEmpty) {
+    return 'By hour: not enough entries yet to show a pattern.';
+  }
+  return 'By hour: ${clauses.join('; ')}.';
+}
+
+/// "18:00–20:00 · average valence -0.27 · 15 entries" for a sufficient cell
+/// once tapped or long-pressed -- reusing [bucketDetailText] so a cell here
+/// describes its valence in exactly the same words a row does. A
+/// suppressed cell reuses the chart's one legend phrase rather than
+/// inventing a second wording for the same fact.
+String hourCellDetailText(WhenBucket bucket, int minimum) {
+  final isSufficient = bucket.sufficient && bucket.averageValence != null;
+  final detail = isSufficient
+      ? bucketDetailText(bucket)
+      : 'fewer than $minimum entries — not enough to show';
+  return '${bucket.label} · $detail';
 }

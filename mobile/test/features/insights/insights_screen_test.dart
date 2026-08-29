@@ -485,5 +485,18 @@ Pattern patternFixture({String topic = 'coffee'}) => Pattern(
   DateTime.utc(2026, 8, 20),
 );
 
-WhenInsights whenInsightsFromFixture() =>
-    const WhenInsights(30, 3, 0, [], [], null, null, null, null);
+WhenInsights whenInsightsFromFixture() => const WhenInsights(
+  30,
+  3,
+  0,
+  [],
+  [],
+  null,
+  null,
+  null,
+  null,
+  [],
+  null,
+  null,
+  null,
+);

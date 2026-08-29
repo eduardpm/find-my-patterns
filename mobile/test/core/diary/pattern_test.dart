@@ -511,6 +511,19 @@ void main() {
         'worst_weekday': 'monday',
         'best_time_of_day': 'morning',
         'worst_time_of_day': 'evening',
+        'hourly': [
+          {
+            'key': '18',
+            'label': '18:00–20:00',
+            'entry_count': 7,
+            'average_valence': -0.27,
+            'negative_rate': 0.5,
+            'sufficient': true,
+          },
+        ],
+        'best_hour': '08',
+        'worst_hour': '22',
+        'busiest_time_of_day': 'evening',
       });
       expect(when.windowDays, 30);
       expect(when.totalEntries, 40);
@@ -518,9 +531,15 @@ void main() {
       expect(when.timesOfDay.single.key, 'morning');
       expect(when.bestWeekday, 'friday');
       expect(when.worstTimeOfDay, 'evening');
+      expect(when.hourly.single.key, '18');
+      expect(when.hourly.single.label, '18:00–20:00');
+      expect(when.hourly.single.averageValence, -0.27);
+      expect(when.bestHour, '08');
+      expect(when.worstHour, '22');
+      expect(when.busiestTimeOfDay, 'evening');
     });
 
-    test('defaults for a bare payload', () {
+    test('defaults for a bare payload — CH-5 fields included', () {
       final when = whenInsightsFromJson({});
       expect(when.windowDays, 30);
       expect(when.minBucketEntries, 3);
@@ -531,6 +550,13 @@ void main() {
       expect(when.worstWeekday, isNull);
       expect(when.bestTimeOfDay, isNull);
       expect(when.worstTimeOfDay, isNull);
+      // A backend that predates CH-5 sends no `hourly` at all — this
+      // decodes to an empty list, not an error, same as `weekdays` and
+      // `times_of_day` already do above.
+      expect(when.hourly, isEmpty);
+      expect(when.bestHour, isNull);
+      expect(when.worstHour, isNull);
+      expect(when.busiestTimeOfDay, isNull);
     });
   });
 

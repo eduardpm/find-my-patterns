@@ -187,6 +187,12 @@ WhenBucket buildBucket({
 
 /// The "when" panel's data, with one weekday and one time-of-day bucket by
 /// default.
+///
+/// [hourly] defaults to an empty list, not a populated one -- the same
+/// default an old backend that predates CH-5 decodes to (see
+/// `whenInsightsFromJson`) -- so every test written before the heat strip
+/// existed keeps exercising exactly the widget tree it always has, and only
+/// a test that explicitly passes [hourly] sees the strip at all.
 WhenInsights buildWhenInsights({
   int windowDays = 30,
   int minBucketEntries = 3,
@@ -197,6 +203,10 @@ WhenInsights buildWhenInsights({
   String? worstWeekday,
   String? bestTimeOfDay,
   String? worstTimeOfDay,
+  List<WhenBucket>? hourly,
+  String? bestHour,
+  String? worstHour,
+  String? busiestTimeOfDay,
 }) => WhenInsights(
   windowDays,
   minBucketEntries,
@@ -207,4 +217,28 @@ WhenInsights buildWhenInsights({
   worstWeekday,
   bestTimeOfDay,
   worstTimeOfDay,
+  hourly ?? const [],
+  bestHour,
+  worstHour,
+  busiestTimeOfDay,
 );
+
+/// Twelve hourly buckets keyed `00`, `02`, … `22`, all sufficient with a
+/// mild positive average by default -- a plausible "nothing suppressed, no
+/// standout hour" heat strip a test can override just the cells it cares
+/// about.
+List<WhenBucket> buildHourlyBuckets({
+  Map<String, WhenBucket> overrides = const {},
+}) => [
+  for (var hour = 0; hour < 24; hour += 2)
+    overrides[hour.toString().padLeft(2, '0')] ??
+        buildBucket(
+          key: hour.toString().padLeft(2, '0'),
+          label:
+              '${hour.toString().padLeft(2, '0')}:00–'
+              '${((hour + 2) % 24).toString().padLeft(2, '0')}:00',
+          entryCount: 5,
+          averageValence: 0.1,
+          negativeRate: 0.2,
+        ),
+];
