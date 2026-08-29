@@ -1,8 +1,10 @@
 import 'package:dio/dio.dart';
+import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/feeling.dart';
 import 'package:find_my_patterns/core/diary/feelings_api.dart';
 import 'package:find_my_patterns/core/diary/insights_api.dart';
 import 'package:find_my_patterns/core/network/api_client.dart';
+import 'package:find_my_patterns/core/network/api_error.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -98,6 +100,74 @@ void main() {
       expect(when.totalEntries, 12);
       expect(when.weekdays.single.key, 'monday');
       expect(adapter.requests.last.path, '/insights/when');
+    });
+  });
+
+  group('series', () {
+    test('requests day granularity over the given range and decodes the '
+        'points', () async {
+      final adapter = FakeHttpAdapter([
+        FakeReply(
+          200,
+          body: {
+            'granularity': 'day',
+            'points': [
+              {'date': '2026-08-25', 'score': 1, 'entry_count': 1},
+              {'date': '2026-08-28', 'score': null, 'entry_count': 15},
+            ],
+            'constants': <String, Object?>{},
+          },
+        ),
+      ]);
+      final client = clientFor(adapter);
+      final api = InsightsApi(client, FeelingsApi(client));
+
+      final series = await api.series(
+        from: const CalendarDate(2026, 8, 1),
+        to: const CalendarDate(2026, 8, 28),
+      );
+
+      expect(series.points, hasLength(2));
+      expect(series.points.first.score, 1.0);
+      expect(series.points.last.score, isNull);
+      expect(series.points.last.entryCount, 15);
+
+      final request = adapter.requests.last;
+      expect(request.uri.path, '/insights/series');
+      expect(request.uri.queryParameters, {
+        'from': '2026-08-01',
+        'to': '2026-08-28',
+        'granularity': 'day',
+      });
+    });
+
+    // The repo-wide convention: a validation failure answers 422, and it
+    // surfaces as the same sealed `ApiError` every other failure does.
+    test('a 422 validation failure surfaces as an HttpFailure', () async {
+      final adapter = FakeHttpAdapter([
+        FakeReply(
+          422,
+          body: {'error': "Invalid granularity: 'hour'"},
+        ),
+      ]);
+      final client = clientFor(adapter);
+      final api = InsightsApi(client, FeelingsApi(client));
+
+      await expectLater(
+        api.series(
+          from: const CalendarDate(2026, 8, 1),
+          to: const CalendarDate(2026, 8, 28),
+        ),
+        throwsA(
+          isA<HttpFailure>()
+              .having((e) => e.statusCode, 'statusCode', 422)
+              .having(
+                (e) => e.message,
+                'message',
+                "Invalid granularity: 'hour'",
+              ),
+        ),
+      );
     });
   });
 

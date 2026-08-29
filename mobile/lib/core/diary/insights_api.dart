@@ -1,10 +1,12 @@
 import '../config/app_config.dart';
 import '../network/api_client.dart';
+import 'calendar_date.dart';
 import 'feelings_api.dart';
+import 'mood_series.dart';
 import 'pattern.dart';
 
-/// Talks to `GET /insights`, `GET /insights/when`, and the withdrawal
-/// acknowledgement endpoint.
+/// Talks to `GET /insights`, `GET /insights/when`, `GET /insights/series`,
+/// and the withdrawal acknowledgement endpoint.
 class InsightsApi {
   /// Creates an API over an [ApiClient], resolving feeling keys through a
   /// [FeelingsApi].
@@ -28,6 +30,21 @@ class InsightsApi {
   /// The weekday and time-of-day breakdown behind the "when" panel.
   Future<WhenInsights> whenInsights() =>
       _client.getObject(AppConfig.insightsWhenPath, whenInsightsFromJson);
+
+  /// The daily mood series behind the Insights mood-trend chart, from
+  /// [from] to [to] inclusive.
+  ///
+  /// Always requested at day granularity: every period the chart currently
+  /// offers -- 30 days, 90 days, the last year -- fits under the endpoint's
+  /// day-granularity range cap, so there is nothing for a `week`/`month`
+  /// choice to buy this client yet.
+  Future<MoodSeries> series({
+    required CalendarDate from,
+    required CalendarDate to,
+  }) => _client.getObject(
+    '${AppConfig.seriesPath}?from=$from&to=$to&granularity=day',
+    moodSeriesFromJson,
+  );
 
   /// Marks every current withdrawal notice as seen.
   ///
