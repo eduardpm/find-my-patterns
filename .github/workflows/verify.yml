@@ -2,7 +2,16 @@ name: verify
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A push to a PR branch should cancel the in-flight run for that branch's old
+  # commit — nobody needs a superseded commit's result. A push to main should
+  # not: every merge must get a completed post-merge verification run, so this
+  # only cancels in-progress runs when the ref is not the default branch.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   typescript:
