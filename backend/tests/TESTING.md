@@ -132,8 +132,9 @@ delete real complexity from `codecs.ts`.
 
 A small diary used as test input. It exercises freeform and guided entries, all four feeling
 sources, an entry with no text, a guided entry citing an unknown question key, multi-feeling days,
-and a qualifying pattern. Regenerate it by replaying those cases through the API — see
-`fixtures/README.md`.
+and a qualifying pattern. Not committed (#83) — built from `tests/fixtures/golden-seed.json` and
+the current schema on every `npm test` run. See `fixtures/README.md` and
+`../docs/golden-fixture.md`.
 
 ## Known behaviour worth revisiting
 
