@@ -8,7 +8,23 @@ import type { Response } from 'express';
  * Note what this filter must **not** touch: the 409 stale-entry response carries a `current` key
  * as a sibling of `error`, so it is returned directly by the controller rather than thrown. Routing
  * it through here would silently drop `current` and relabel the code (contracts/api.md).
+ *
+ * Also not touched: `RequiresPremiumGuard`'s `{"error": "premium_required"}` (`billing/
+ * requires-premium.guard.ts`) — a bare string under `error`, not the nested `{code, message}` this
+ * filter builds for everything else. That shape is the issue's (#47) literal acceptance criterion,
+ * so `passesThroughAsIs` below recognises and forwards it verbatim instead of wrapping it into
+ * `{error: {code: 'error', message: '[object Object]'}}`, which is what falling through to the
+ * generic branch would otherwise silently produce for any payload that is not a string.
  */
+function passesThroughAsIs(payload: unknown): payload is { error: string } {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    Object.keys(payload).length === 1 &&
+    typeof (payload as { error?: unknown }).error === 'string'
+  );
+}
 
 const ERROR_CODES: Record<number, string> = {
   400: 'bad_request',
@@ -27,6 +43,12 @@ export class ErrorEnvelopeFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const payload = exception.getResponse();
+
+      if (passesThroughAsIs(payload)) {
+        response.status(status).json(payload);
+        return;
+      }
+
       const message =
         typeof payload === 'string'
           ? payload

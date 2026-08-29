@@ -9,6 +9,8 @@ import { AppModule } from './app.module';
 import { AuthManager } from './auth/auth';
 import { installIdentityGate } from './auth/identity.middleware';
 import { AuthService } from './auth/identity.service';
+import { EntitlementsService } from './billing/entitlements.service';
+import type { PlayPurchaseVerifier } from './billing/play-verifier';
 import { ErrorEnvelopeFilter } from './common/http-exception.filter';
 import { type AuthConfig, loadConfig } from './config';
 
@@ -33,6 +35,22 @@ export interface CreateAppOptions {
    * uses, and for the same reason: tests need to flip this per-boot rather than through a process
    * env var shared by every test file in this suite's single worker thread. */
   singleUserMode?: boolean;
+  /**
+   * M-2, #47: overrides which `PlayPurchaseVerifier` `POST /billing/play/verify` uses, in place of
+   * `AppModule`'s own default (`GooglePlayVerifier` or `ManualPlayVerifier`, chosen by
+   * `AppConfig.billing.manualEntitlements`). The recon rules out any test reaching the network, so
+   * this is how the e2e suite (`tests/contract/billing.test.ts`) swaps in a `FakePlayVerifier`
+   * (`billing/fake-play-verifier.ts`) per test — the same per-boot-injection shape `singleUserMode`
+   * above already uses, for the same reason: `MANUAL_ENTITLEMENTS` is a process env var shared by
+   * every test file in this suite's single worker thread, and a fake needs per-test control over
+   * exactly what it returns, which an env var flag could never express.
+   */
+  playVerifier?: PlayPurchaseVerifier;
+  /** Overrides `AppConfig.billing.manualEntitlements` (`config.ts`) — same shape and same reason as
+   * `singleUserMode` above. Lets a test boot the real `MANUAL_ENTITLEMENTS=true` dev-mode gate
+   * (`POST /billing/admin/grant` reachable, `ManualPlayVerifier` selected when no `playVerifier`
+   * override is also given) without touching the shared process env var. */
+  manualEntitlements?: boolean;
 }
 
 export async function createApp(
@@ -44,7 +62,10 @@ export async function createApp(
       : (databasePathOrOptions ?? {});
 
   const app = await NestFactory.create<NestExpressApplication>(
-    AppModule.forRoot(options.databasePath),
+    AppModule.forRoot(options.databasePath, {
+      playVerifier: options.playVerifier,
+      manualEntitlements: options.manualEntitlements,
+    }),
     { logger: ['error', 'warn'] },
   );
 
@@ -146,6 +167,26 @@ async function bootstrap(): Promise<void> {
       'Remote access is enabled and there is no login. Keep this port behind a trusted LAN or VPN; never port-forward it.',
     );
   }
+  if (config.billing.manualEntitlements) {
+    logger.warn(
+      'MANUAL_ENTITLEMENTS is on: POST /billing/play/verify grants premium for any token with no ' +
+        'Google Play check, and POST /billing/admin/grant is reachable. Do not set this in production.',
+    );
+  }
+
+  // M-2, #47: the daily sweep (recon: "poll-on-verify plus a daily sweep is acceptable" — RTDN/
+  // webhook integration is a follow-up, not this ticket). Started only here, never inside
+  // `createApp`, so booting an app for a test never leaves a timer running past that test's own
+  // teardown — every test in this suite drives expiry through `EntitlementsService.sweepExpired`
+  // directly (`tests/unit/entitlements-service.test.ts`) or through the admin grant endpoint
+  // (`tests/contract/billing.test.ts`), never by waiting on this interval. `.unref()` so this timer
+  // never by itself keeps the process alive past a graceful shutdown.
+  const entitlements = app.get(EntitlementsService);
+  entitlements.sweepExpired(); // catches up on anything that expired while the server was down.
+  setInterval(
+    () => entitlements.sweepExpired(),
+    config.billing.entitlementsSweepIntervalMs,
+  ).unref();
 }
 
 if (require.main === module) {

@@ -524,3 +524,49 @@ describe('migrateDiary — M-1a: multi-tenant identity (#45)', () => {
     expect(read<Record<string, unknown>>('SELECT * FROM users')).toEqual(once);
   });
 });
+
+describe('migrateDiary — M-2: server-side entitlements (#47)', () => {
+  it('adds an empty entitlements table without backfilling a row for the default user', () => {
+    const before = openDiary(target);
+    expect(() => assertCompatible(before)).toThrow(/users/);
+    before.close();
+
+    migrateDiary(target);
+
+    // Unlike `users`, no row is inserted for anyone — see `schema.ts`'s comment on this table:
+    // absence already reads as free through `EntitlementsService#getEntitlement`, so there is
+    // nothing to backfill for a diary that has never recorded a purchase.
+    expect(read<{ n: number }>('SELECT COUNT(*) AS n FROM entitlements')[0].n).toBe(0);
+
+    const after = openDiary(target);
+    expect(() => assertCompatible(after)).not.toThrow();
+    after.close();
+  });
+
+  it('is idempotent — running it twice leaves entitlements empty both times', () => {
+    migrateDiary(target);
+    migrateDiary(target);
+    expect(read<{ n: number }>('SELECT COUNT(*) AS n FROM entitlements')[0].n).toBe(0);
+  });
+
+  it('lets the default user hold an entitlement once migrated, with the foreign key to users intact', () => {
+    migrateDiary(target);
+    const db = new Database(target);
+    db.prepare(
+      `INSERT INTO entitlements (user_id, tier, source, expires_at, updated_at)
+       VALUES (?, 'premium', 'manual', NULL, '2026-01-01 00:00:00.000000')`,
+    ).run(DEFAULT_USER_ID);
+    db.close();
+
+    const after = openDiary(target);
+    expect(() => assertCompatible(after)).not.toThrow();
+    after.close();
+
+    const check = new Database(target, { readonly: true });
+    const row = check
+      .prepare('SELECT tier FROM entitlements WHERE user_id = ?')
+      .get(DEFAULT_USER_ID) as { tier: string };
+    check.close();
+    expect(row.tier).toBe('premium');
+  });
+});

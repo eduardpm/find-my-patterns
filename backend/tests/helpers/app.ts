@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { PlayPurchaseVerifier } from '../../src/billing/play-verifier';
 import { createApp } from '../../src/main';
 import { initDiary } from '../../src/db/init';
 
@@ -38,12 +39,31 @@ export async function startOnLoopback(app: INestApplication): Promise<void> {
  * argument keeps running exactly as it did before M-1a (#45): no bearer token required, every
  * request resolves to the fixed default user. Pass `{ singleUserMode: false }` to boot the real
  * multi-tenant gate instead (`tests/contract/identity.test.ts`).
+ *
+ * `playVerifier` and `manualEntitlements` (M-2, #47) are the same per-boot-injection shape, for
+ * `tests/contract/billing.test.ts`: pass a `FakePlayVerifier` (`../../src/billing/
+ * fake-play-verifier.ts`) to script `POST /billing/play/verify` without any network access, and/or
+ * `manualEntitlements: true` to exercise the real dev-mode gate (`POST /billing/admin/grant`
+ * becomes reachable) — both without touching `MANUAL_ENTITLEMENTS`, a process env var this suite's
+ * test files share a single worker thread with.
  */
-export async function bootOnCopy(options: { singleUserMode?: boolean } = {}): Promise<Harness> {
+export interface BillingTestOptions {
+  playVerifier?: PlayPurchaseVerifier;
+  manualEntitlements?: boolean;
+}
+
+export async function bootOnCopy(
+  options: { singleUserMode?: boolean } & BillingTestOptions = {},
+): Promise<Harness> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diary-test-'));
   const dbPath = path.join(dir, 'diary.db');
   fs.copyFileSync(GOLDEN, dbPath);
-  const app = await createApp({ databasePath: dbPath, singleUserMode: options.singleUserMode });
+  const app = await createApp({
+    databasePath: dbPath,
+    singleUserMode: options.singleUserMode,
+    playVerifier: options.playVerifier,
+    manualEntitlements: options.manualEntitlements,
+  });
   await startOnLoopback(app);
   return { app, dbPath, dir };
 }
@@ -56,11 +76,18 @@ export async function bootOnCopy(options: { singleUserMode?: boolean } = {}): Pr
  * *exactly* these insights and nothing else". Starting empty is what lets those assertions be
  * closed rather than "contains at least".
  */
-export async function bootOnFresh(options: { singleUserMode?: boolean } = {}): Promise<Harness> {
+export async function bootOnFresh(
+  options: { singleUserMode?: boolean } & BillingTestOptions = {},
+): Promise<Harness> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diary-fresh-'));
   const dbPath = path.join(dir, 'diary.db');
   initDiary(dbPath);
-  const app = await createApp({ databasePath: dbPath, singleUserMode: options.singleUserMode });
+  const app = await createApp({
+    databasePath: dbPath,
+    singleUserMode: options.singleUserMode,
+    playVerifier: options.playVerifier,
+    manualEntitlements: options.manualEntitlements,
+  });
   await startOnLoopback(app);
   return { app, dbPath, dir };
 }

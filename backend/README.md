@@ -65,6 +65,44 @@ npm run build && npm run auth:hash-password
 unset DIARY_AUTH_PASSWORD
 ```
 
+### Multi-tenant identity and entitlements variables
+
+| Variable           | Default | Notes                                                                                                                                                                                       |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SINGLE_USER_MODE` | `true`  | On: every request resolves to the fixed default user, no bearer token needed. Off: every route but `/health` and `/auth/*` requires `Authorization: Bearer <token>` from `POST /auth/token` |
+
+### Entitlements variables (M-2, #47)
+
+Server-side premium state, verified against the Google Play Developer API. `requiresPremium`
+(`src/billing/requires-premium.guard.ts`) is not applied to any route yet — gating which features
+require premium is a later ticket's decision.
+
+| Variable                            | Default          | Notes                                                                                                                                                                                            |
+| ----------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MANUAL_ENTITLEMENTS`               | `false`          | `true` skips Google entirely: `POST /billing/play/verify` grants premium for any token, and the dev-only `POST /billing/admin/grant` becomes reachable (otherwise 404). Never set in production. |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL` | unset            | Service account email for the Play Developer API. Ignored when `MANUAL_ENTITLEMENTS=true`                                                                                                        |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY`   | unset            | The service account's PEM private key. Literal `\n` sequences are unescaped automatically, so the key can be stored as a single-line value                                                       |
+| `GOOGLE_PLAY_PACKAGE_NAME`          | unset            | The Android app's package name (e.g. `org.example.diary`)                                                                                                                                        |
+| `ENTITLEMENTS_SWEEP_INTERVAL_MS`    | `86400000` (24h) | How often the background sweep drops expired premium entitlements to free. At least `60000`                                                                                                      |
+
+Startup never fails over a missing `GOOGLE_PLAY_*` value — a fresh deployment with no Play billing
+wired up yet must still boot. `POST /billing/play/verify` itself answers a clear error if called
+without either `MANUAL_ENTITLEMENTS=true` or all three `GOOGLE_PLAY_*` variables set.
+
+Try it locally with zero Google setup:
+
+```sh
+export MANUAL_ENTITLEMENTS=true
+npm run build && npm start
+# in another shell, against the default user (SINGLE_USER_MODE=true):
+curl -X POST localhost:8000/billing/play/verify \
+  -H 'Content-Type: application/json' \
+  -d '{"purchase_token": "anything", "product_id": "premium_lifetime", "product_type": "onetime"}'
+curl -X POST localhost:8000/billing/admin/grant \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id": "00000000-0000-0000-0000-000000000001", "tier": "free"}'
+```
+
 The server **opens a diary, never creates one**. That is why `init-db` is a separate command: a
 server that invents a missing file makes "wrong path" and "your diary is gone" look identical. If the
 file's structure cannot be fully interpreted the backend refuses to start and says why, without

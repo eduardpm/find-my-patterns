@@ -168,6 +168,14 @@ const REQUIRED: Record<string, Record<string, string>> = {
     created_at: 'DATETIME',
     expires_at: 'DATETIME',
   },
+  // --- Server-side entitlements (M-2, #47) ------------------------------------------------------
+  entitlements: {
+    user_id: 'VARCHAR(36)',
+    tier: 'VARCHAR(16)',
+    source: 'VARCHAR(16)',
+    expires_at: 'DATETIME',
+    updated_at: 'DATETIME',
+  },
 };
 
 export class IncompatibleDiaryError extends Error {
@@ -441,6 +449,29 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
       if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
       decodeDateTime(String(row.created_at));
       decodeDateTime(String(row.expires_at));
+    },
+  );
+
+  // --- Server-side entitlements (M-2, #47) --------------------------------------------------------
+  // No emptiness check, unlike `users` above: a diary with zero rows in this table is exactly the
+  // steady state for every account that has never verified a purchase (`schema.ts`'s comment on
+  // this table explains why absence, not a seeded `'free'` row, is what "everyone defaults to free"
+  // means here).
+  validateRows(
+    'entitlements',
+    db
+      .prepare('SELECT user_id, tier, source, expires_at, updated_at FROM entitlements')
+      .all() as Array<Record<string, unknown>>,
+    problems,
+    (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
+      if (!['free', 'premium'].includes(String(row.tier))) throw new Error('unsupported tier');
+      if (!['play', 'manual'].includes(String(row.source))) {
+        throw new Error('unsupported entitlement source');
+      }
+      // NULL is the lifetime marker (schema.ts) — only a real value needs to parse as a datetime.
+      if (row.expires_at !== null) decodeDateTime(String(row.expires_at));
+      decodeDateTime(String(row.updated_at));
     },
   );
 

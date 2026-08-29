@@ -256,6 +256,33 @@ export const SCHEMA_STATEMENTS: string[] = [
      PRIMARY KEY (token_hash),
      FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
    )`,
+
+  // --- Server-side entitlements (M-2, #47) --------------------------------------------------------
+  // `daylio-competitive-analysis.md` §11.2 rule 4: a client-side paywall over an open API is
+  // decorative, so the backend — not the Android client — is the source of truth for who paid.
+  // `user_id` is the primary key rather than a surrogate `id`: exactly one entitlement state per
+  // user is the whole model, so there is nothing a second row for the same user could ever mean.
+  //
+  // No row is inserted for a user who has never verified a purchase, on either fresh init or
+  // migration — unlike `users`/`sessions`, "everyone defaults to free" (the issue's task 1) is
+  // expressed as *absence*, not as a seeded `'free'` row for every account. `EntitlementsService`
+  // (`../billing/entitlements.service.ts`) treats a missing row and an explicit `tier = 'free'` row
+  // identically, which is what makes that free choice for new/never-purchased accounts, including
+  // the M-1a default user, cost nothing to keep correct as `users` grows.
+  //
+  // `expires_at` NULL means a lifetime entitlement — it must never expire, so `EntitlementsService`
+  // and the daily sweep both treat NULL as "not a candidate for expiry" rather than "expires
+  // immediately", the trap a naive `expires_at <= now` comparison would fall into if NULL sorted as
+  // the smallest possible value.
+  `CREATE TABLE entitlements (
+     user_id VARCHAR(36) NOT NULL,
+     tier VARCHAR(16) NOT NULL DEFAULT 'free',
+     source VARCHAR(16) NOT NULL DEFAULT 'manual',
+     expires_at DATETIME,
+     updated_at DATETIME NOT NULL,
+     PRIMARY KEY (user_id),
+     FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+   )`,
 ];
 
 /**
@@ -519,6 +546,23 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
               created_at DATETIME NOT NULL,
               expires_at DATETIME NOT NULL,
               PRIMARY KEY (token_hash),
+              FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+            )`,
+  },
+
+  // --- Server-side entitlements (M-2, #47) --------------------------------------------------------
+  // See the matching comment in SCHEMA_STATEMENTS above. Unlike `users`, nothing here inserts a
+  // default row for `DEFAULT_USER_ID` (or for any other existing account): a diary migrated today
+  // has never recorded a purchase, and "no row" already reads as free through
+  // `EntitlementsService#getEntitlement`, so there is nothing to backfill.
+  {
+    sql: `CREATE TABLE IF NOT EXISTS entitlements (
+              user_id VARCHAR(36) NOT NULL,
+              tier VARCHAR(16) NOT NULL DEFAULT 'free',
+              source VARCHAR(16) NOT NULL DEFAULT 'manual',
+              expires_at DATETIME,
+              updated_at DATETIME NOT NULL,
+              PRIMARY KEY (user_id),
               FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
             )`,
   },
