@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/diary/entry.dart';
 import '../../core/diary/feeling.dart';
@@ -22,6 +23,45 @@ import 'entry_detail_controller.dart';
 /// Matches one or more blank lines, the paragraph break in a freeform
 /// entry's stored text.
 final RegExp _paragraphBreak = RegExp(r'\n\s*\n');
+
+/// The header's date, "Friday, August 28".
+final DateFormat _headerDateFormat = DateFormat('EEEE, MMMM d');
+
+/// The header's time, "11:11 PM".
+final DateFormat _headerTimeFormat = DateFormat.jm();
+
+/// Formats [createdAt] as the header line, "Friday, August 28 · 11:11 PM",
+/// in the device's own timezone -- the backend's timestamp is a UTC
+/// instant, and a diary is read against the clock on the wall it was
+/// written by.
+String _formatHeaderDateTime(DateTime createdAt) {
+  final local = createdAt.toLocal();
+  return '${_headerDateFormat.format(local)} · ${_headerTimeFormat.format(local)}';
+}
+
+/// The mode chip's text -- "Guided" or "Freeform".
+String _modeLabel(EntryMode mode) => switch (mode) {
+  EntryMode.guided => 'Guided',
+  EntryMode.freeform => 'Freeform',
+};
+
+/// A subtle description of how a feeling came to be on this entry, for a
+/// [Tooltip] on its chip -- suggested, confirmed or overridden. Null for
+/// [FeelingSource.unset], an older entry this build has no source for,
+/// which shows no tooltip at all rather than a fabricated one.
+///
+/// The backend currently records one [FeelingSource] for the whole entry,
+/// not one per feeling (see the PR description) -- so every chip on an
+/// entry shows the same marker. That is a real limitation, not a shortcut
+/// taken here: showing nothing at all would hide information the API does
+/// provide, and inventing a per-feeling split the API does not provide
+/// would be worse.
+String? _feelingSourceTooltip(FeelingSource source) => switch (source) {
+  FeelingSource.suggested => 'Suggested by the app, not yet confirmed',
+  FeelingSource.confirmed => 'Confirmed',
+  FeelingSource.overridden => 'Chosen in place of what was suggested',
+  FeelingSource.unset => null,
+};
 
 /// View, edit and delete a single entry.
 ///
@@ -48,6 +88,7 @@ class EntryDetailScreen extends ConsumerStatefulWidget {
     required this.entryDate,
     this.onClose,
     this.onDeleted,
+    this.onOpenInsights,
   });
 
   /// The entry this screen shows.
@@ -63,6 +104,12 @@ class EntryDetailScreen extends ConsumerStatefulWidget {
   /// Called once the entry has actually been deleted. Defaults to
   /// `Navigator.pop`.
   final VoidCallback? onDeleted;
+
+  /// Called when a "This entry supports" row is tapped. Defaults to
+  /// pushing `/insights`. A plain callback rather than a direct
+  /// `go_router` dependency, matching [onClose] and [onDeleted] -- so a
+  /// test can assert the tap happened without a router in the tree.
+  final VoidCallback? onOpenInsights;
 
   @override
   ConsumerState<EntryDetailScreen> createState() => _EntryDetailScreenState();
@@ -93,6 +140,14 @@ class _EntryDetailScreenState extends ConsumerState<EntryDetailScreen> {
     context.pop();
   }
 
+  void _openInsights() {
+    if (widget.onOpenInsights case final onOpenInsights?) {
+      onOpenInsights();
+      return;
+    }
+    context.push('/insights');
+  }
+
   Future<void> _confirmDelete() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -106,6 +161,13 @@ class _EntryDetailScreenState extends ConsumerState<EntryDetailScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
+            // The one destructive action in this dialog, so it is the one
+            // styled in the theme's error colour -- Cancel stays whatever
+            // colour a neutral `TextButton` already is, precisely because
+            // it has nothing to warn about.
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
             child: const Text('Delete'),
           ),
         ],
@@ -218,10 +280,11 @@ class _EntryDetailScreenState extends ConsumerState<EntryDetailScreen> {
               _ => _EntryReadView(
                 entry: entry!,
                 echoes: state.echoes,
+                supportingPatterns: state.supportingPatterns,
                 maxIntensity: state.constants.maxIntensity,
                 scrollController: _scrollController,
-                onEdit: notifier.startEditing,
                 onDismissEchoes: notifier.dismissEchoes,
+                onOpenInsights: _openInsights,
               ),
             },
           ),
@@ -250,90 +313,104 @@ class _EntryReadView extends StatelessWidget {
   const _EntryReadView({
     required this.entry,
     required this.echoes,
+    required this.supportingPatterns,
     required this.maxIntensity,
     required this.scrollController,
-    required this.onEdit,
     required this.onDismissEchoes,
+    required this.onOpenInsights,
   });
 
   final Entry entry;
   final List<PatternEcho> echoes;
+
+  /// The active patterns this entry's topics match, for "This entry
+  /// supports" -- see [EntryDetailState.supportingPatterns].
+  final List<PatternEcho> supportingPatterns;
   final int maxIntensity;
   final ScrollController scrollController;
-  final VoidCallback onEdit;
   final VoidCallback onDismissEchoes;
+
+  /// Called when a supporting-pattern row is tapped.
+  final VoidCallback onOpenInsights;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.all(24),
-      child: Column(
-        children: [
-          Expanded(
-            child: JournalScrollbar(
-              controller: scrollController,
-              child: SingleChildScrollView(
-                controller: scrollController,
-                // Room for the bar to sit in, so it never lands on top of
-                // a word.
-                padding: const EdgeInsets.only(right: JournalSpacing.x3),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (entry.guidedAnswers.isNotEmpty)
-                      for (var i = 0; i < entry.guidedAnswers.length; i++) ...[
-                        if (i > 0) const SizedBox(height: JournalSpacing.x5),
-                        Text(
-                          entry.guidedAnswers[i].questionText,
-                          style: theme.textTheme.labelLarge?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: JournalSpacing.x2),
-                        Text(
-                          entry.guidedAnswers[i].answerText,
-                          style: JournalType.prose,
-                        ),
-                      ]
-                    else
-                      for (final (i, paragraph) in _paragraphs(
-                        entry.rawText,
-                      ).indexed) ...[
-                        if (i > 0) const SizedBox(height: JournalSpacing.x4),
-                        Text(paragraph, style: JournalType.prose),
-                      ],
-                    if (entry.feelings.isNotEmpty) ...[
-                      const SizedBox(height: JournalSpacing.x6),
-                      const Eyebrow('Feelings'),
-                      const SizedBox(height: JournalSpacing.x3),
-                      _ReadOnlyFeelings(
-                        feelings: entry.feelings,
-                        intensities: entry.feelingIntensities,
-                        maxIntensity: maxIntensity,
+      child: JournalScrollbar(
+        controller: scrollController,
+        child: SingleChildScrollView(
+          controller: scrollController,
+          // Room for the bar to sit in, so it never lands on top of a
+          // word.
+          padding: const EdgeInsets.only(right: JournalSpacing.x3),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      _formatHeaderDateTime(entry.createdAt),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
-                    ],
-                    if (echoes.isNotEmpty) ...[
-                      const SizedBox(height: JournalSpacing.x5),
-                      PatternEchoPanel(
-                        echoes: echoes,
-                        onDismiss: onDismissEchoes,
-                      ),
-                    ],
-                  ],
-                ),
+                    ),
+                  ),
+                  const SizedBox(width: JournalSpacing.x2),
+                  StatusBadge(_modeLabel(entry.mode)),
+                ],
               ),
-            ),
+              const SizedBox(height: JournalSpacing.x5),
+              if (entry.guidedAnswers.isNotEmpty)
+                for (var i = 0; i < entry.guidedAnswers.length; i++) ...[
+                  if (i > 0) const SizedBox(height: JournalSpacing.x5),
+                  Text(
+                    entry.guidedAnswers[i].questionText,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: JournalSpacing.x2),
+                  Text(
+                    entry.guidedAnswers[i].answerText,
+                    style: JournalType.prose,
+                  ),
+                ]
+              else
+                for (final (i, paragraph) in _paragraphs(
+                  entry.rawText,
+                ).indexed) ...[
+                  if (i > 0) const SizedBox(height: JournalSpacing.x4),
+                  Text(paragraph, style: JournalType.prose),
+                ],
+              if (entry.feelings.isNotEmpty) ...[
+                const SizedBox(height: JournalSpacing.x6),
+                const Eyebrow('Feelings'),
+                const SizedBox(height: JournalSpacing.x3),
+                _ReadOnlyFeelings(
+                  feelings: entry.feelings,
+                  intensities: entry.feelingIntensities,
+                  maxIntensity: maxIntensity,
+                  source: entry.feelingSource,
+                ),
+              ],
+              if (echoes.isNotEmpty) ...[
+                const SizedBox(height: JournalSpacing.x5),
+                PatternEchoPanel(echoes: echoes, onDismiss: onDismissEchoes),
+              ],
+              if (supportingPatterns.isNotEmpty) ...[
+                const SizedBox(height: JournalSpacing.x5),
+                _SupportingPatterns(
+                  echoes: supportingPatterns,
+                  onOpen: onOpenInsights,
+                ),
+              ],
+            ],
           ),
-          const SizedBox(height: JournalSpacing.x4),
-          SizedBox(
-            width: double.infinity,
-            child: SecondaryPillButton(
-              onPressed: onEdit,
-              child: const Text('Edit', textAlign: TextAlign.center),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -349,35 +426,141 @@ List<String> _paragraphs(String rawText) => [
 /// Not chips that look tappable: nothing here is a control, and a control
 /// that does nothing is worse than a label. The rating is spelled out
 /// rather than drawn as a bar, because "3 of 5" is the whole answer and a
-/// bar would need a legend to say the same thing.
+/// bar would need a legend to say the same thing. Each chip also carries a
+/// [Tooltip] naming [source] -- see [_feelingSourceTooltip] for why that is
+/// one value for every chip rather than one per feeling.
 class _ReadOnlyFeelings extends StatelessWidget {
   const _ReadOnlyFeelings({
     required this.feelings,
     required this.intensities,
     required this.maxIntensity,
+    required this.source,
   });
 
   final List<Feeling> feelings;
   final Map<String, int> intensities;
   final int maxIntensity;
+  final FeelingSource source;
 
   @override
   Widget build(BuildContext context) {
     final journal = context.journalColors;
+    final tooltip = _feelingSourceTooltip(source);
     return Wrap(
       spacing: JournalSpacing.x2,
       runSpacing: JournalSpacing.x2,
       children: [
         for (final feeling in feelings)
-          FeelingChip(
-            label: feeling.label,
-            color: feeling.accent(journal),
-            intensityLabel: switch (intensities[feeling.key]) {
-              null => null,
-              final rating => '$rating of $maxIntensity',
-            },
+          _maybeTooltip(
+            tooltip,
+            FeelingChip(
+              label: feeling.label,
+              color: feeling.accent(journal),
+              intensityLabel: switch (intensities[feeling.key]) {
+                null => null,
+                final rating => '$rating of $maxIntensity',
+              },
+            ),
           ),
       ],
+    );
+  }
+}
+
+/// Wraps [child] in a [Tooltip] showing [message], or returns [child]
+/// unchanged when [message] is null -- an entry this build has no feeling
+/// source for shows a plain chip rather than an empty tooltip.
+Widget _maybeTooltip(String? message, Widget child) =>
+    message == null ? child : Tooltip(message: message, child: child);
+
+/// "This entry supports:" -- the active patterns [echoes] names, each
+/// linking to Insights. Renders nothing when [echoes] is empty: most
+/// entries touch no pattern at all, and a "no patterns yet" line here would
+/// be the app narrating an absence rather than showing what is actually
+/// true (matching [PatternEchoPanel]'s own choice to render nothing).
+///
+/// Deliberately not [PatternEchoPanel]: that panel is the dismissible,
+/// just-saved nudge (I4) and is never reused here (see
+/// [EntryDetailState.supportingPatterns]). This list is permanent, carries
+/// each pattern's own count, and every row opens Insights.
+class _SupportingPatterns extends StatelessWidget {
+  const _SupportingPatterns({required this.echoes, required this.onOpen});
+
+  final List<PatternEcho> echoes;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    if (echoes.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Eyebrow('This entry supports'),
+        const SizedBox(height: JournalSpacing.x3),
+        for (var i = 0; i < echoes.length; i++) ...[
+          if (i > 0) const SizedBox(height: JournalSpacing.x2),
+          _SupportingPatternRow(echo: echoes[i], onTap: onOpen),
+        ],
+      ],
+    );
+  }
+}
+
+/// One row in [_SupportingPatterns]: the pattern's topic, its own
+/// narrative sentence exactly as the pattern card wrote it, and its
+/// occurrence count -- nothing here is recomputed, matching every other
+/// pattern-derived number this client shows.
+class _SupportingPatternRow extends StatelessWidget {
+  const _SupportingPatternRow({required this.echo, required this.onTap});
+
+  final PatternEcho echo;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final topic = echo.topic;
+    final capitalisedTopic = topic.isEmpty
+        ? topic
+        : topic[0].toUpperCase() + topic.substring(1);
+    final times = echo.occurrenceCount == 1 ? 'time' : 'times';
+    return Semantics(
+      container: true,
+      button: true,
+      label: '$capitalisedTopic. ${echo.narrativeText}',
+      onTap: onTap,
+      child: ExcludeSemantics(
+        child: JournalCard(
+          onTap: onTap,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(capitalisedTopic, style: theme.textTheme.titleMedium),
+                    const SizedBox(height: JournalSpacing.x1),
+                    Text(echo.narrativeText, style: theme.textTheme.bodyMedium),
+                    const SizedBox(height: JournalSpacing.x1),
+                    Text(
+                      '${echo.occurrenceCount} $times',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: JournalSpacing.x2),
+              Icon(
+                Icons.chevron_right,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

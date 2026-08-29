@@ -33,7 +33,14 @@ void main() {
   ) async {
     final container = buildContainer(configuredHarness(adapter));
     container.read(entryDetailControllerProvider(entryId));
-    await pumpEventQueue();
+    // `build` now chains four sequential requests (entry, feeling groups,
+    // constants, supporting patterns); the default 20 turns of the event
+    // loop is not reliably enough to drain all four through the real Dio
+    // pipeline before this helper hands back a container whose `build` is
+    // still in flight, which manifested as a `ref` used after a *later*
+    // test's `dispose()` ran. Doubled with margin, not tuned to the exact
+    // minimum.
+    await pumpEventQueue(times: 40);
     return (
       container: container,
       notifier: container.read(entryDetailControllerProvider(entryId).notifier),
@@ -43,13 +50,21 @@ void main() {
   EntryDetailState stateOf(ProviderContainer container) =>
       container.read(entryDetailControllerProvider(entryId));
 
-  /// The three requests a clean [ready] boot makes, in order: the entry
+  /// The four requests a clean [ready] boot makes, in order: the entry
   /// itself (whose own feelings lookup primes the shared cache), the
-  /// feeling groups (free, cache already warm), and the insights constants.
-  List<FakeReply> bootReplies({FakeReply? entry, FakeReply? insights}) => [
+  /// feeling groups (free, cache already warm), the insights constants, and
+  /// the entry's own echo -- read once for [EntryDetailState.supportingPatterns],
+  /// separately from the dismissible nudge [EntryDetailState.echoes] reads
+  /// only after a save.
+  List<FakeReply> bootReplies({
+    FakeReply? entry,
+    FakeReply? insights,
+    FakeReply? supportingPatterns,
+  }) => [
     FakeReply(200, body: feelingsCatalogJson()),
     entry ?? FakeReply(200, body: entryJson()),
     insights ?? FakeReply(200, body: insightsJson()),
+    supportingPatterns ?? FakeReply(200, body: {'echoes': <Object?>[]}),
   ];
 
   group('build', () {
@@ -90,8 +105,54 @@ void main() {
         expect(state.hasLoaded, isTrue);
         expect(state.entry, isNull);
         expect(state.errorMessage, isNotNull);
+        // There is nothing to echo against an id the backend just said it
+        // does not have.
+        expect(
+          adapter.requests.any((r) => r.path.endsWith('/echo')),
+          isFalse,
+        );
       },
     );
+
+    test(
+      'loads the persistent supporting-patterns list separately from the '
+      'dismissible echo nudge',
+      () async {
+        final adapter = FakeHttpAdapter(
+          bootReplies(
+            supportingPatterns: FakeReply(
+              200,
+              body: {
+                'echoes': <Object?>[echoJson(topic: 'coffee')],
+              },
+            ),
+          ),
+        );
+        final env = await ready(adapter);
+
+        final state = stateOf(env.container);
+        expect(state.supportingPatterns, hasLength(1));
+        expect(state.supportingPatterns.single.topic, 'coffee');
+        // The dismissible just-saved nudge is a different field, untouched
+        // by the initial load.
+        expect(state.echoes, isEmpty);
+      },
+    );
+
+    test('a failed supporting-patterns fetch on load is silent', () async {
+      final adapter = FakeHttpAdapter(
+        bootReplies(
+          supportingPatterns: FakeReply(500, body: {'error': 'boom'}),
+        ),
+      );
+      final env = await ready(adapter);
+
+      final state = stateOf(env.container);
+      expect(state.hasLoaded, isTrue);
+      expect(state.entry, isNotNull);
+      expect(state.supportingPatterns, isEmpty);
+      expect(state.errorMessage, isNull);
+    });
 
     test('a failed constants fetch leaves the placeholder standing', () async {
       final adapter = FakeHttpAdapter(
