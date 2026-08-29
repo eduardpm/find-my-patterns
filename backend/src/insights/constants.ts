@@ -217,6 +217,38 @@ export const MAX_CONTEXT_PATTERNS = 8;
 /** Only a feeling the user acted on is evidence — a mere suggestion is not a fact (FR-012, C-04). */
 export const CONFIRMED_FEELING_SOURCES = ['confirmed', 'overridden'];
 
+/**
+ * #88: pacing for the background narration worker (`src/inference/worker.ts`).
+ *
+ * Not part of `EngineConstants` below — these govern the worker's own request cadence, never a
+ * client-visible claim about the diary, so they have no reason to travel over `GET /insights`.
+ * They live here anyway, alongside every other tunable the engine applies, rather than as literals
+ * buried in the worker loop.
+ *
+ * The root defect (#88) was a rejected narration attempt reporting itself as "work done", which let
+ * the loop retry the same pattern immediately, forever, with no delay between calls to the model.
+ * These three numbers are what replace that: a cap so one unnarratable pattern cannot hold the
+ * model hostage, backoff so a retry is not immediate, and a floor on how often the worker is
+ * willing to call the model at all, regardless of which pattern it is trying.
+ */
+
+/** A pattern whose advice keeps getting rejected stops being retried after this many attempts. */
+export const MAX_NARRATION_ATTEMPTS = 5;
+
+/** The first backoff after a rejected attempt — doubled on every attempt after that. */
+export const NARRATION_BACKOFF_BASE_MS = 60_000;
+
+/** However many attempts a pattern has racked up, its backoff never exceeds this. */
+export const NARRATION_BACKOFF_MAX_MS = 30 * 60_000;
+
+/**
+ * The token bucket: the worker will not start a narration model call more often than this,
+ * regardless of outcome — a written suggestion is exactly as throttled as a rejected one. Actual
+ * user-facing work (`entry_analysis`) is never subject to this: `claimNext` is re-checked at the
+ * top of every loop iteration, so a queued job always preempts narration on the very next tick.
+ */
+export const NARRATION_MIN_INTERVAL_MS = 5_000;
+
 /** Everything above, in the shape `GET /insights` serves to clients (C-01). */
 export interface EngineConstants {
   min_occurrence_threshold: number;

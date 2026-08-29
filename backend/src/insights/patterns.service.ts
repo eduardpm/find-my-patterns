@@ -946,12 +946,14 @@ export class PatternsService {
         suggestion_text: string;
         direction: string;
         status: string;
+        narration_attempts: number;
+        narration_next_attempt_at: string | null;
       }
     >();
     for (const row of this.db
       .prepare(
         `SELECT id, topic_id, feeling_key, kind, occurrence_count, narrative_text, suggestion_text,
-                direction, status FROM patterns`,
+                direction, status, narration_attempts, narration_next_attempt_at FROM patterns`,
       )
       .all() as Array<{
       id: string;
@@ -963,6 +965,8 @@ export class PatternsService {
       suggestion_text: string;
       direction: string;
       status: string;
+      narration_attempts: number;
+      narration_next_attempt_at: string | null;
     }>) {
       existing.set(`${row.kind} ${row.topic_id} ${row.feeling_key}`, row);
     }
@@ -998,6 +1002,16 @@ export class PatternsService {
         ? templateSuggestionFor(candidate.feelingKey, candidate.topicName)
         : previous.suggestion_text;
 
+      // #88: a pattern whose suggestion just reverted to the template gets a clean slate of
+      // narration attempts, the same way its suggestion itself does just above — a pattern that
+      // exhausted its retries under an old count must not stay permanently un-narratable once the
+      // count that made it eligible again changes. When the suggestion is untouched, the attempt
+      // state is carried over unchanged rather than reset on every recompute.
+      const narrationAttempts = narrationStale ? 0 : (previous?.narration_attempts ?? 0);
+      const narrationNextAttemptAt = narrationStale
+        ? null
+        : (previous?.narration_next_attempt_at ?? null);
+
       // Stamped only when the pattern actually changed. An unconditional stamp made this field
       // mean "when insights were last viewed" and made two clients receive different payloads for
       // unchanged data — fixed during feature 003, and it must not come back.
@@ -1026,6 +1040,8 @@ export class PatternsService {
         candidate.baseRate,
         isStrong(assoc, candidate.windowCount) ? 1 : 0,
         encodeJson(candidate.confounders),
+        narrationAttempts,
+        narrationNextAttemptAt,
       ];
 
       let patternId: string;
@@ -1036,8 +1052,9 @@ export class PatternsService {
             `INSERT INTO patterns (id, topic_id, feeling_key, first_detected_at, last_updated_at,
              occurrence_count, narrative_text, suggestion_text, direction, kind, lifetime_count,
              status, last_occurrence_date, present_count, present_total, absent_count, absent_total,
-             lift, comparison_reason, base_rate, is_strong, confounders)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             lift, comparison_reason, base_rate, is_strong, confounders, narration_attempts,
+             narration_next_attempt_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(patternId, candidate.topicId, candidate.feelingKey, now, now, ...values);
       } else {
@@ -1047,7 +1064,8 @@ export class PatternsService {
             `UPDATE patterns SET occurrence_count = ?, narrative_text = ?, suggestion_text = ?,
              direction = ?, kind = ?, lifetime_count = ?, status = ?, last_occurrence_date = ?,
              present_count = ?, present_total = ?, absent_count = ?, absent_total = ?, lift = ?,
-             comparison_reason = ?, base_rate = ?, is_strong = ?, confounders = ?${
+             comparison_reason = ?, base_rate = ?, is_strong = ?, confounders = ?,
+             narration_attempts = ?, narration_next_attempt_at = ?${
                changed ? ', last_updated_at = ?' : ''
              } WHERE id = ?`,
           )

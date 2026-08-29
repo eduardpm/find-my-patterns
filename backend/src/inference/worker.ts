@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
 import { z } from 'zod';
 import { loadConfig } from '../config';
 import { assertCompatible } from '../db/compatibility';
@@ -7,6 +8,12 @@ import { openDiary, type DiaryDatabase } from '../db/database';
 import { canonicalTopicName, normalizeTopicName } from '../topics/canonicalization';
 import { CURATED_TOPIC_KEYWORDS } from '../topics/topics.service';
 import { templateSuggestionFor } from '../insights/patterns.service';
+import {
+  MAX_NARRATION_ATTEMPTS,
+  NARRATION_BACKOFF_BASE_MS,
+  NARRATION_BACKOFF_MAX_MS,
+  NARRATION_MIN_INTERVAL_MS,
+} from '../insights/constants';
 import {
   FEELING_GROUP_SEED,
   FEELING_GROUP_KEYS,
@@ -509,6 +516,74 @@ interface UnnarratedPattern {
   feeling_key: string;
   direction: string;
   suggestion_text: string;
+  narration_attempts: number;
+  narration_next_attempt_at: string | null;
+}
+
+/**
+ * What one call to {@link narrateNextPattern} actually did (#88).
+ *
+ *  - `'wrote'` — a real suggestion replaced the template. The only outcome allowed to skip the
+ *    worker loop's idle pacing (`runWorker`) — see there for why.
+ *  - `'attempted'` — a pattern was tried and the model's answer was rejected, or the call itself
+ *    failed. This branch *used to report success* (`return true`), which is root cause of #88: a
+ *    rejected attempt has to pace exactly like idleness, never like progress.
+ *  - `'idle'` — nothing was eligible to try: no pattern is still on the template, or every one
+ *    that is has exhausted its attempts or is still backing off from its last one.
+ */
+export type NarrationOutcome = 'wrote' | 'attempted' | 'idle';
+
+/** Doubles on every attempt and is capped, so a pattern's retries space out rather than repeating
+ *  at a fixed interval forever. `attempts` is the attempt count *after* the one just made. */
+function narrationBackoffMs(attempts: number): number {
+  const scaled = NARRATION_BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1);
+  return Math.min(scaled, NARRATION_BACKOFF_MAX_MS);
+}
+
+/**
+ * `now + backoff(attempts)`, in the same storage form every other timestamp in the diary uses
+ * (`codecs.ts`). Fixed-width and zero-padded, so a plain string comparison — which is all
+ * `narrateNextPattern`'s candidate query does — sorts identically to chronological order.
+ */
+function narrationBackoffTimestamp(attempts: number): string {
+  const target = new Date(Date.now() + narrationBackoffMs(attempts));
+  return encodeDateTime({
+    year: target.getUTCFullYear(),
+    month: target.getUTCMonth() + 1,
+    day: target.getUTCDate(),
+    hour: target.getUTCHours(),
+    minute: target.getUTCMinutes(),
+    second: target.getUTCSeconds(),
+    microsecond: target.getUTCMilliseconds() * 1000,
+  });
+}
+
+/**
+ * #88 fix 5 (observability): one structured line per narration model call, so a busy worker and a
+ * stuck one are distinguishable from the log alone — the incident that opened #88 had nothing to
+ * look at but process tables and twenty minutes of guessing. Plain stderr, one JSON object per
+ * line, matching the rest of the project's logging (`database.ts`, `migrate.ts`): no logging
+ * dependency, no metrics server.
+ */
+function logNarrationAttempt(entry: {
+  topic: string;
+  feelingKey: string;
+  outcome: 'accepted' | 'rejected' | 'error';
+  durationMs: number;
+  attempts: number;
+  error?: string;
+}): void {
+  process.stderr.write(
+    `${JSON.stringify({
+      event: 'narration_attempt',
+      topic: entry.topic,
+      feeling_key: entry.feelingKey,
+      outcome: entry.outcome,
+      duration_ms: entry.durationMs,
+      attempts: entry.attempts,
+      ...(entry.error ? { error: entry.error } : {}),
+    })}\n`,
+  );
 }
 
 /**
@@ -518,36 +593,93 @@ interface UnnarratedPattern {
  * /insights` writes the template and returns immediately, so the view is never blank and never
  * waits on a cold model. The upgrade lands on a later read.
  *
- * Returns whether there was anything to do, so the worker loop can tell work from idleness.
+ * #88: a pattern is eligible only while it is still on the template *and* has not exhausted
+ * `MAX_NARRATION_ATTEMPTS` *and* is not still backing off from its last rejection
+ * (`narration_next_attempt_at`). All three live as columns on `patterns` rather than in-memory
+ * worker state, so they survive a restart — the original bug had nothing survive anywhere, which
+ * is exactly why every idle tick started the same unbounded retry from scratch.
+ *
+ * Returns what actually happened, not merely whether something was tried — see {@link
+ * NarrationOutcome}. `runWorker` uses that distinction to decide whether to pace like idleness.
  */
-export async function narrateNextPattern(db: DiaryDatabase): Promise<boolean> {
+export async function narrateNextPattern(db: DiaryDatabase): Promise<NarrationOutcome> {
+  const now = encodeDateTime(nowUtc());
   const candidate = db
     .prepare(
-      `SELECT p.id, t.name AS topic, p.feeling_key, p.direction, p.suggestion_text
+      `SELECT p.id, t.name AS topic, p.feeling_key, p.direction, p.suggestion_text,
+              p.narration_attempts, p.narration_next_attempt_at
        FROM patterns p JOIN topics t ON t.id = p.topic_id
        ORDER BY p.last_updated_at DESC, p.id`,
     )
     .all() as UnnarratedPattern[];
 
   // "Still the template" is the whole definition of un-narrated. A pattern whose count changed was
-  // reset to the template by `recomputePatterns`, so it becomes eligible again automatically.
+  // reset to the template — and its attempt state with it — by `recomputePatterns`, so it becomes
+  // eligible again automatically.
   const pattern = candidate.find(
-    (row) => row.suggestion_text === templateSuggestionFor(row.feeling_key, row.topic),
+    (row) =>
+      row.suggestion_text === templateSuggestionFor(row.feeling_key, row.topic) &&
+      row.narration_attempts < MAX_NARRATION_ATTEMPTS &&
+      (row.narration_next_attempt_at === null || row.narration_next_attempt_at <= now),
   );
-  if (!pattern) return false;
+  if (!pattern) return 'idle';
 
-  const written = await ollamaSuggestion(pattern.topic, pattern.feeling_key, pattern.direction);
-  const accepted = acceptSuggestion(written, pattern.topic);
-  if (!accepted) return true; // Tried, rejected; the template stands. Still counts as work done.
+  const startedAt = Date.now();
+  let written: string | null = null;
+  let errorMessage: string | undefined;
+  try {
+    written = await ollamaSuggestion(pattern.topic, pattern.feeling_key, pattern.direction);
+  } catch (error) {
+    errorMessage = error instanceof Error ? error.message : 'Unknown narration error';
+  }
+  const durationMs = Date.now() - startedAt;
+  const accepted = written === null ? null : acceptSuggestion(written, pattern.topic);
+  const nextAttempts = pattern.narration_attempts + 1;
 
-  // `last_updated_at` is deliberately untouched: rewording the advice is not the insight changing,
-  // and stamping it here would reorder the user's Insights view for no reason they could see.
-  db.prepare('UPDATE patterns SET suggestion_text = ? WHERE id = ? AND suggestion_text = ?').run(
-    accepted,
+  if (accepted) {
+    logNarrationAttempt({
+      topic: pattern.topic,
+      feelingKey: pattern.feeling_key,
+      outcome: 'accepted',
+      durationMs,
+      attempts: nextAttempts,
+    });
+    // `last_updated_at` is deliberately untouched: rewording the advice is not the insight
+    // changing, and stamping it here would reorder the user's Insights view for no reason they
+    // could see. The attempt state resets — a pattern that just got narrated has nothing left to
+    // retry until `recomputePatterns` next makes it eligible.
+    db.prepare(
+      `UPDATE patterns SET suggestion_text = ?, narration_attempts = 0, narration_next_attempt_at = NULL
+       WHERE id = ? AND suggestion_text = ?`,
+    ).run(accepted, pattern.id, pattern.suggestion_text);
+    return 'wrote';
+  }
+
+  // Tried, rejected — or the call itself failed — so the template stands. This is the fix for the
+  // defect #88 describes: the old code reported this exact branch as "work done" (`return true`),
+  // which let the worker loop skip its idle delay and call the model again immediately, on the
+  // same pattern, forever. Recording the attempt and backing off is what makes a rejection pace
+  // like idleness instead. The `narration_attempts = ?` clause is a cheap extra guard against a
+  // second worker racing this same pattern — the primary defense is the singleton lock below.
+  logNarrationAttempt({
+    topic: pattern.topic,
+    feelingKey: pattern.feeling_key,
+    outcome: errorMessage ? 'error' : 'rejected',
+    durationMs,
+    attempts: nextAttempts,
+    error: errorMessage,
+  });
+  db.prepare(
+    `UPDATE patterns SET narration_attempts = ?, narration_next_attempt_at = ?
+     WHERE id = ? AND suggestion_text = ? AND narration_attempts = ?`,
+  ).run(
+    nextAttempts,
+    narrationBackoffTimestamp(nextAttempts),
     pattern.id,
     pattern.suggestion_text,
+    pattern.narration_attempts,
   );
-  return true;
+  return 'attempted';
 }
 
 /** Words are the immutable payload; only casing, punctuation, whitespace and list markers vary. */
@@ -931,8 +1063,102 @@ function recordFailure(db: DiaryDatabase, job: Job, error: unknown): void {
   ).run(retry ? 'queued' : 'failed', message, retry ? null : encodeDateTime(nowUtc()), job.id);
 }
 
-export async function runWorker(once = false): Promise<void> {
+/**
+ * #88 fix 4: a PID lock file beside the diary, so a second worker process exits instead of racing
+ * the first one for the same jobs and patterns.
+ *
+ * `claimNext` already guards `inference_jobs` with a conditional `UPDATE ... WHERE status =
+ * 'queued'`, so two workers never both apply the same analysis job -- but `narrateNextPattern` had
+ * no equivalent guard, which is the aggravating factor the incident's root-cause analysis called
+ * out separately (§2f): nothing stopped two or three worker processes, left running from repeated
+ * restarts during a seeding session, from all calling the model for the *same* un-narrated pattern
+ * before any one of their writes landed. One worker per diary, enforced here, removes that race
+ * outright instead of only making the final write safe.
+ *
+ * The lock lives next to the diary file rather than in a fixed system location, so two diaries on
+ * one machine -- a real one and a throwaway test fixture, say -- never contend for the same lock.
+ */
+function workerLockPath(databasePath: string): string {
+  return `${databasePath}.worker.lock`;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but is owned by someone else -- still alive, just not ours to
+    // signal. Anything else (ESRCH, or a PID that was never valid) means it is not.
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export interface WorkerLock {
+  release: () => void;
+}
+
+/**
+ * Exclusive-create the lock file (`wx`) so acquiring it is atomic even against a second process
+ * doing the same thing at the same instant. `EEXIST` means the file is already there -- unless the
+ * PID written inside it is no longer running, in which case the previous holder crashed or was
+ * killed without cleaning up, and the lock is stale and safe to take over.
+ *
+ * Returns `null` when a live process already holds the lock. The caller's job is to log and exit,
+ * never to retry: a second worker is not queued behind the first, it simply has nothing to do.
+ */
+export function acquireWorkerLock(databasePath: string): WorkerLock | null {
+  const lockPath = workerLockPath(databasePath);
+  try {
+    const fd = fs.openSync(lockPath, 'wx');
+    fs.writeSync(fd, String(process.pid));
+    fs.closeSync(fd);
+    return { release: () => releaseWorkerLock(lockPath) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+
+  let holderPid: number | null = null;
+  try {
+    const parsed = Number(fs.readFileSync(lockPath, 'utf8').trim());
+    holderPid = Number.isInteger(parsed) ? parsed : null;
+  } catch {
+    // Unreadable lock file -- treated the same as a stale one below.
+  }
+  if (holderPid !== null && isProcessAlive(holderPid)) return null;
+
+  // Stale lock: the file exists but nothing is listening on that PID any more. Take it over --
+  // a plain write, not an exclusive create, since the file is already there.
+  fs.writeFileSync(lockPath, String(process.pid));
+  return { release: () => releaseWorkerLock(lockPath) };
+}
+
+function releaseWorkerLock(lockPath: string): void {
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    // Already gone -- nothing left to clean up.
+  }
+}
+
+/**
+ * @param signal Lets a caller stop the long-running form (`once = false`) without sending a real
+ * process signal, which in a test would tear down the whole test process rather than just this
+ * worker. `SIGTERM`/`SIGINT` above remain how the compiled binary is actually stopped; this is
+ * purely an in-process escape hatch for tests that need to run the real loop for a bounded stretch.
+ */
+export async function runWorker(once = false, signal?: AbortSignal): Promise<void> {
   const config = loadConfig();
+
+  // #88 fix 4: refuse to run alongside another worker on the same diary rather than competing with
+  // it for jobs and patterns.
+  const lock = acquireWorkerLock(config.databasePath);
+  if (!lock) {
+    process.stderr.write(
+      `Inference worker: another worker already holds the lock for ${config.databasePath}; exiting.\n`,
+    );
+    return;
+  }
+
   const db = openDiary(config.databasePath);
   assertCompatible(db);
 
@@ -958,6 +1184,22 @@ export async function runWorker(once = false): Promise<void> {
       stopping = true;
     });
   }
+  if (signal) {
+    if (signal.aborted) stopping = true;
+    else
+      signal.addEventListener(
+        'abort',
+        () => {
+          stopping = true;
+        },
+        { once: true },
+      );
+  }
+
+  // #88 fix 3: the token bucket for narration. `0` until the first attempt, so the very first idle
+  // tick may narrate immediately -- only the *spacing between calls* is throttled, never the first
+  // one.
+  let lastNarrationCallAt = 0;
 
   try {
     do {
@@ -974,18 +1216,26 @@ export async function runWorker(once = false): Promise<void> {
 
       // Narration is strictly lower priority than analysis: an entry the user just wrote is
       // waiting on its feeling, while an insight already reads correctly and is only waiting to
-      // read better. So it happens only when the queue is empty.
-      let narrated = false;
-      try {
-        narrated = await narrateNextPattern(db);
-      } catch {
-        // A failed narration costs nothing -- the template is still in place and the pattern stays
-        // eligible, so the next idle moment tries again. Nothing to record and nothing to retry.
+      // read better. So it happens only when the queue is empty -- `claimNext` above is re-checked
+      // on every iteration, which is what lets a job queued mid-narration preempt on the very next
+      // tick -- and even then it is budgeted to at most one model call per
+      // `NARRATION_MIN_INTERVAL_MS`, regardless of outcome: a written suggestion is exactly as
+      // throttled as a rejected one, so a diary with fifty un-narrated patterns cannot burn
+      // through the model back-to-back either.
+      let outcome: NarrationOutcome = 'idle';
+      if (Date.now() - lastNarrationCallAt >= NARRATION_MIN_INTERVAL_MS) {
+        outcome = await narrateNextPattern(db);
+        if (outcome !== 'idle') lastNarrationCallAt = Date.now();
       }
+
       if (once) break;
-      if (!narrated) await delay(400);
+      // Only a real write skips the pacing delay. A rejected attempt, an errored call, and true
+      // idleness all wait the same 400ms -- the fix for #88's root cause, which let a rejected
+      // attempt report itself as "work done" and spin on the same pattern with no delay at all.
+      if (outcome !== 'wrote') await delay(400);
     } while (!stopping);
   } finally {
+    lock.release();
     db.close();
   }
 }
