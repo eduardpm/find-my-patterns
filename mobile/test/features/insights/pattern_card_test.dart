@@ -331,6 +331,204 @@ void main() {
     },
   );
 
+  // Issue #24 task 3: tapping a confounder's annotation expands a small
+  // split view in place, showing the 2x2 `Confounder` model from both
+  // sides. See `_ConfounderSplit`'s doc comment in `pattern_card.dart` for
+  // why "present/total" is `onlyThisCount`/`bothCount + onlyThisCount` for
+  // the pattern's own topic and the mirror image for the confounder's
+  // topic, rather than either side's share of the full 2x2.
+  group('confounder split view', () {
+    testWidgets(
+      'the split is absent until the confounder note is tapped',
+      (tester) async {
+        await tester.pumpWidget(
+          app(
+            buildPattern(
+              topic: 'coffee',
+              confounders: [buildConfounder(topic: 'work')],
+            ),
+          ),
+        );
+
+        expect(
+          find.text('Coffee and work often show up together.'),
+          findsOneWidget,
+        );
+        expect(find.text('WITH COFFEE ONLY'), findsNothing);
+        expect(find.text('WITH WORK ONLY'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'tapping the note reveals both mini-columns with the exact model '
+      'counts',
+      (tester) async {
+        await tester.pumpWidget(
+          app(
+            buildPattern(
+              topic: 'coffee',
+              confounders: [
+                buildConfounder(
+                  topic: 'work',
+                  bothCount: 9,
+                  onlyThisCount: 1,
+                  onlyOtherCount: 4,
+                  neitherCount: 20,
+                ),
+              ],
+            ),
+          ),
+        );
+
+        await tester.tap(
+          find.text('Coffee and work often show up together.'),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('WITH COFFEE ONLY'), findsOneWidget);
+        expect(find.text('WITH WORK ONLY'), findsOneWidget);
+        // onlyThisCount of (bothCount + onlyThisCount): 1 of 10.
+        expect(find.text('1 of 10 entries'), findsOneWidget);
+        // onlyOtherCount of (bothCount + onlyOtherCount): 4 of 13.
+        expect(find.text('4 of 13 entries'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'tapping again collapses the split back down',
+      (tester) async {
+        await tester.pumpWidget(
+          app(
+            buildPattern(
+              topic: 'coffee',
+              confounders: [buildConfounder(topic: 'work')],
+            ),
+          ),
+        );
+
+        final noteFinder = find.text(
+          'Coffee and work often show up together.',
+        );
+        await tester.tap(noteFinder);
+        await tester.pumpAndSettle();
+        expect(find.text('WITH WORK ONLY'), findsOneWidget);
+
+        await tester.tap(noteFinder);
+        await tester.pumpAndSettle();
+        expect(find.text('WITH WORK ONLY'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'inseparable (onlyThisCount 0) explains itself instead of showing a '
+      'bare zero',
+      (tester) async {
+        await tester.pumpWidget(
+          app(
+            buildPattern(
+              topic: 'coffee',
+              confounders: [
+                buildConfounder(
+                  topic: 'work',
+                  bothCount: 9,
+                  onlyThisCount: 0,
+                  onlyOtherCount: 3,
+                  inseparable: true,
+                ),
+              ],
+            ),
+          ),
+        );
+
+        await tester.tap(
+          find.text('Coffee and work often show up together.'),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Not enough entries to separate yet'),
+          findsOneWidget,
+        );
+        expect(find.text('0 of 9 entries'), findsNothing);
+        // The other side is unaffected: onlyOtherCount of (bothCount +
+        // onlyOtherCount), 3 of 12.
+        expect(find.text('WITH WORK ONLY'), findsOneWidget);
+        expect(find.text('3 of 12 entries'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'expanding one confounder does not expand another on the same card',
+      (tester) async {
+        await tester.pumpWidget(
+          app(
+            buildPattern(
+              topic: 'coffee',
+              confounders: [
+                buildConfounder(topic: 'work', note: 'Confounder A.'),
+                buildConfounder(topic: 'meetings', note: 'Confounder B.'),
+              ],
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Confounder A.'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('WITH WORK ONLY'), findsOneWidget);
+        expect(find.text('WITH MEETINGS ONLY'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a card without confounders shows no confounder annotation',
+      (tester) async {
+        await tester.pumpWidget(app(buildPattern()));
+
+        expect(find.byIcon(Icons.link), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'the expanded split renders inside a 320dp card at 2x text scale '
+      'with no overflow',
+      (tester) async {
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(
+              size: Size(320, 800),
+              textScaler: TextScaler.linear(2),
+            ),
+            child: app(
+              buildPattern(
+                topic: 'a fairly long topic name',
+                confounders: [
+                  buildConfounder(
+                    topic: 'another rather long topic',
+                    note: 'Often shows up with another rather long topic.',
+                    bothCount: 9,
+                    onlyThisCount: 1,
+                    onlyOtherCount: 4,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final noteFinder = find.text(
+          'Often shows up with another rather long topic.',
+        );
+        await tester.ensureVisible(noteFinder);
+        await tester.tap(noteFinder);
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
+
   testWidgets(
     'the footer reads singular for one occurrence and hides the lifetime '
     'count when it matches the windowed count',
