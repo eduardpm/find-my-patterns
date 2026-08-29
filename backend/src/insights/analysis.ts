@@ -25,10 +25,15 @@ import {
   MIN_COMPARISON_ENTRIES,
   MIN_LIFT,
   RECENCY_WINDOW_DAYS,
+  SEASONS,
   STRONG_LIFT,
   STRONG_MIN_OCCURRENCES,
   TIME_OF_DAY_BUCKETS,
   VALENCE_SCORE,
+  WEEKDAYS,
+  WEEKEND_START_INDEX,
+  type DayTypeKey,
+  type SeasonKey,
   type TimeOfDayKey,
 } from './constants';
 
@@ -101,6 +106,39 @@ export function timeOfDayBucket(createdAt: NaiveDateTime): TimeOfDayKey {
     }
   }
   return 'evening';
+}
+
+/** Saturday and Sunday only (#21) — `weekdayIndex` is Monday-first, so those are indices 5 and 6. */
+export function dayTypeFor(date: PlainDate): DayTypeKey {
+  return weekdayIndex(date) >= WEEKEND_START_INDEX ? 'weekend' : 'weekday';
+}
+
+/** Meteorological season from the calendar month alone (#21) — see `SEASONS` for why not the equinox. */
+export function seasonFor(date: PlainDate): SeasonKey {
+  const season = SEASONS.find((candidate) =>
+    (candidate.months as readonly number[]).includes(date.month),
+  );
+  // Every month is covered by exactly one entry in SEASONS; this is unreachable, not a real fallback.
+  return season ? season.key : 'winter';
+}
+
+/**
+ * The four passive context factors an entry carries (#21) — derived once, here, from `entry_date`
+ * and `created_at` alone, so `patterns.service.ts` and any future caller read the same four keys
+ * rather than each deriving their own. No schema change and nothing stored: this runs fresh on every
+ * `GET /insights`, exactly like the topic association it feeds into.
+ *
+ * Always exactly one key per category (`weekday:`, `daytype:`, `timeofday:`, `season:`) — the
+ * "never pair context factors with each other" rule in `patterns.service.ts#contextPatterns` depends
+ * on this list never containing two keys from the same category for one entry.
+ */
+export function contextFactorsForEntry(entryDate: PlainDate, createdAt: NaiveDateTime): string[] {
+  return [
+    `weekday:${WEEKDAYS[weekdayIndex(entryDate)].key}`,
+    `daytype:${dayTypeFor(entryDate)}`,
+    `timeofday:${timeOfDayBucket(createdAt)}`,
+    `season:${seasonFor(entryDate)}`,
+  ];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -285,6 +323,42 @@ export function inverseNarrative(
       return (
         `${head}, and in ${association.absentCount} of ${association.absentTotal} ` +
         `${plural(association.absentTotal, 'entry', 'entries')} that mention it ` +
+        `(${percent(association.absentRate ?? 0)}%).`
+      );
+  }
+}
+
+/**
+ * The context card's sentence (#21) — the same shape as `forwardNarrative`, with the topic's
+ * "mentioning X" swapped for a context factor's phrase ("on Sundays", "in the evening", …), because
+ * "mentioning on Sundays" is not English. The branching on `comparisonReason` is identical on
+ * purpose: this is the same 2×2 table, read the same way, about a different kind of "present".
+ */
+export function contextNarrative(
+  feelingLabel: string,
+  factorPhrase: string,
+  association: Association,
+  windowDays: number = RECENCY_WINDOW_DAYS,
+): string {
+  const head =
+    `You felt ${feelingLabel} in ${association.presentCount} of ${association.presentTotal} ` +
+    `${plural(association.presentTotal, 'entry', 'entries')} ${factorPhrase} in the last ` +
+    `${windowDays} days (${percent(association.presentRate ?? 0)}%)`;
+
+  switch (association.comparisonReason) {
+    case 'no_window_evidence':
+      return `You have no entries ${factorPhrase} in the last ${windowDays} days.`;
+    case 'insufficient_comparison':
+      return `${head}. There are not enough other entries to compare.`;
+    case 'no_absent_occurrences':
+      return (
+        `${head}, and in none of the other ${association.absentTotal} ` +
+        `${plural(association.absentTotal, 'entry', 'entries')}.`
+      );
+    default:
+      return (
+        `${head}, and in ${association.absentCount} of ${association.absentTotal} other ` +
+        `${plural(association.absentTotal, 'entry', 'entries')} ` +
         `(${percent(association.absentRate ?? 0)}%).`
       );
   }
