@@ -28,6 +28,7 @@ import {
   historicalNote,
   invert,
   inverseNarrative,
+  isMixedValence,
   isStrong,
   suppressedByLift,
   templateSuggestionFor,
@@ -327,6 +328,18 @@ interface LoadedEntry {
   feelingKeys: string[];
   feelingSource: string;
   topicIds: string[];
+  /**
+   * E-1b: this entry's own confirmed topic↔feeling pairings, as `${topicId} ${feelingKey}` keys.
+   *
+   * Sourced only from `CONFIRMED_FEELING_SOURCES` rows in `entry_topic_feelings` — a `suggested`
+   * row is the worker's guess (`inference/worker.ts`'s `INSERT OR IGNORE ... 'suggested'`), never a
+   * user confirmation, and counting it as one would reintroduce exactly the contamination this
+   * rule exists to remove. Empty for an entry the user never opened the pairing step on, which is
+   * indistinguishable here from one where every pairing was left unlinked — both read as "nothing
+   * confirmed for this pair" to the counting rule below, which is the conservative behaviour rule 2
+   * asks for.
+   */
+  confirmedPairs: Set<string>;
 }
 
 interface Candidate {
@@ -408,10 +421,30 @@ export class PatternsService {
           feelingKeys: [],
           feelingSource: row.feeling_source,
           topicIds: [],
+          confirmedPairs: new Set(),
         };
         byEntry.set(row.id, entry);
       }
       entry.feelingKeys.push(row.feeling_key);
+    }
+
+    // E-1b: every confirmed pairing, loaded once alongside the entries themselves rather than
+    // per pair inside `buildCandidates` — `recomputePatterns` already runs over the whole diary in
+    // one pass (C-06), and a per-pair lookup would turn that one pass into a round trip per
+    // candidate pair. A row for an entry not in `byEntry` (its own feelings were never confirmed)
+    // is simply not attached to anything; such an entry contributes no evidence at all already.
+    const pairingPlaceholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
+    for (const row of this.db
+      .prepare(
+        `SELECT entry_id, topic_id, feeling_key FROM entry_topic_feelings
+         WHERE source IN (${pairingPlaceholders})`,
+      )
+      .all(...CONFIRMED_FEELING_SOURCES) as Array<{
+      entry_id: string;
+      topic_id: string;
+      feeling_key: string;
+    }>) {
+      byEntry.get(row.entry_id)?.confirmedPairs.add(`${row.topic_id} ${row.feeling_key}`);
     }
 
     // Re-scan every eligible entry. Keyword links are derived data: remove the previous extraction
@@ -434,7 +467,7 @@ export class PatternsService {
   // Recompute
   // -------------------------------------------------------------------------------------------
 
-  async recomputePatterns(): Promise<void> {
+  async recomputePatterns(): Promise<{ excludedUnpaired: number }> {
     // Consolidation first, so the counting that follows sees one row per idea rather than three
     // fragments of it, and so a user's alias edit takes effect on this read (A4-04/A4-05).
     this.topics.mergeFragmentedTopics();
@@ -451,8 +484,15 @@ export class PatternsService {
       withinWindow(entry.entryDate, today, RECENCY_WINDOW_DAYS),
     );
 
-    const candidates = this.buildCandidates(entries, inWindow, topicNames);
-    this.storeCandidates(candidates, topicNames);
+    const valences = this.feelingValences();
+    const { candidates, excludedUnpaired } = this.buildCandidates(
+      entries,
+      inWindow,
+      topicNames,
+      valences,
+    );
+    this.storeCandidates(candidates, topicNames, valences);
+    return { excludedUnpaired };
   }
 
   /** Everything the engine decided this pass, before a single row is written. */
@@ -460,11 +500,19 @@ export class PatternsService {
     entries: LoadedEntry[],
     inWindow: LoadedEntry[],
     topicNames: Map<string, string>,
-  ): Candidate[] {
+    valences: Map<string, string>,
+  ): { candidates: Candidate[]; excludedUnpaired: number } {
     const windowTotal = inWindow.length;
 
     // Entry-level sets. An entry is either in a set or not, however many feelings it carries — a
     // verbose entry must not outvote a quiet week.
+    //
+    // E-1b: deliberately built from *every* in-window entry, contaminated or not. `entriesWithFeeling`
+    // feeds `baseRateFor` — an excluded entry still counts toward feeling base rates per the issue's
+    // rule 2 — and `entriesWithTopic` feeds `confoundersFor` (I2's collinearity annotation), which is
+    // a different question (does another topic travel with this one?) that the pairing rule has no
+    // opinion on. The pairing exclusion is applied surgically, per pair, only inside `association`
+    // below — not by shrinking these two marginal sets.
     const entriesWithTopic = new Map<string, Set<string>>();
     const entriesWithFeeling = new Map<string, Set<string>>();
     for (const entry of inWindow) {
@@ -478,13 +526,40 @@ export class PatternsService {
       }
     }
 
+    // E-1b rule 1/4: whether each entry's own feelings span both valence signs — computed once per
+    // entry (it depends only on the entry's own feelings, never on which topic or pair is being
+    // asked about) and covering every entry, not just the ones in the window, because `lifetimeCounts`
+    // below needs the same test applied to the whole diary.
+    const isMixedByEntry = new Map<string, boolean>(
+      entries.map((entry) => [
+        entry.id,
+        isMixedValence(entry.feelingKeys, (key) => valences.get(key)),
+      ]),
+    );
+
+    // E-1b rules 2/3: an entry is excluded from one specific (topicId, feelingKey) pair's counting
+    // when it is mixed-valence *and* that exact pair is not among its own confirmed pairings —
+    // whether because the user left it unlinked while confirming others, or skipped the pairing step
+    // for the whole entry (an empty `confirmedPairs` reads as "nothing confirmed" for every pair the
+    // entry could otherwise form, which is rule 2's conservative default). Single-valence entries are
+    // never excluded from anything — rule 1's "no behaviour change" for the common case.
+    const isPairExcluded = (entry: LoadedEntry, topicId: string, feelingKey: string): boolean =>
+      (isMixedByEntry.get(entry.id) ?? false) &&
+      !entry.confirmedPairs.has(`${topicId} ${feelingKey}`);
+
     // Lifetime pair evidence, which is what decides whether a pattern exists at all; the window
     // decides whether it is active (I3-03).
+    //
+    // E-1b: run over the whole diary, not just the window, so a pattern built entirely out of
+    // contaminated occurrences never reaches `MIN_OCCURRENCE_THRESHOLD` in the first place — the
+    // bug this ticket exists to fix. An excluded occurrence updates neither the count nor
+    // `lastOccurrence`; as far as this pair is concerned, the entry never happened.
     const lifetimeCounts = new Map<string, number>();
     const lastOccurrence = new Map<string, PlainDate>();
     for (const entry of entries) {
       for (const topicId of entry.topicIds) {
         for (const feelingKey of entry.feelingKeys) {
+          if (isPairExcluded(entry, topicId, feelingKey)) continue;
           const key = `${topicId} ${feelingKey}`;
           lifetimeCounts.set(key, (lifetimeCounts.get(key) ?? 0) + 1);
           const previous = lastOccurrence.get(key);
@@ -495,14 +570,62 @@ export class PatternsService {
       }
     }
 
+    // E-1b: the same exclusion, tallied per pair and scoped to the window, so `association` below
+    // can shrink one pair's table without touching the marginal sets above. Only entries that
+    // actually carry *both* topicId and feelingKey can ever be excluded from that pair (see
+    // `isPairExcluded`), so this only ever needs entries the double loop below already visits.
+    const excludedInWindowByPair = new Map<string, number>();
+    for (const entry of inWindow) {
+      if (!(isMixedByEntry.get(entry.id) ?? false)) continue;
+      for (const topicId of entry.topicIds) {
+        for (const feelingKey of entry.feelingKeys) {
+          const key = `${topicId} ${feelingKey}`;
+          if (entry.confirmedPairs.has(key)) continue;
+          excludedInWindowByPair.set(key, (excludedInWindowByPair.get(key) ?? 0) + 1);
+        }
+      }
+    }
+
+    // Acceptance criterion 5's `excludedUnpaired`: entries the pairing step was skipped for
+    // *entirely* — zero confirmed pairing rows — not entries that confirmed some pairs and left a
+    // cross combination unlinked. The §11.7 example is the reason for that distinction: an entry
+    // that confirmed (exercise, disappointed) and (family, happy) has permanently and deliberately
+    // excluded (exercise, happy) — pairing it "some more" changes nothing, because there is nothing
+    // left unresolved. Only an entry with no confirmed pairing rows at all is one where confirming
+    // *anything* would move it from counting toward nothing to counting toward whatever it
+    // confirms, which is the literal claim "not counted until you pair them" makes. An entry with
+    // no topics at all has nothing to pair and is correctly never counted here either.
+    const excludedUnpaired = inWindow.filter(
+      (entry) =>
+        (isMixedByEntry.get(entry.id) ?? false) &&
+        entry.confirmedPairs.size === 0 &&
+        entry.topicIds.length > 0,
+    ).length;
+
     const association = (topicId: string, feelingKey: string): Association => {
       const withTopic = entriesWithTopic.get(topicId) ?? new Set<string>();
       const withFeeling = entriesWithFeeling.get(feelingKey) ?? new Set<string>();
-      let presentCount = 0;
-      for (const id of withTopic) if (withFeeling.has(id)) presentCount += 1;
-      const presentTotal = withTopic.size;
-      const absentTotal = windowTotal - presentTotal;
-      const absentCount = withFeeling.size - presentCount;
+      let rawPresentCount = 0;
+      for (const id of withTopic) if (withFeeling.has(id)) rawPresentCount += 1;
+      // E-1b: computed from the *raw*, unexcluded sets, before the pair's own exclusions are
+      // subtracted below. An excluded entry always carries topicId (that is what makes it eligible
+      // for exclusion from this pair in the first place — see `isPairExcluded`), so it can never be
+      // part of the "without topicId" group; the absent side is therefore unaffected by this pair's
+      // exclusions and must not be computed from the adjusted present numbers, or an excluded entry
+      // would be silently reclassified onto the absent side instead of removed from the table.
+      const absentTotal = windowTotal - withTopic.size;
+      const absentCount = withFeeling.size - rawPresentCount;
+
+      // The pair's own table shrinks by exactly the entries excluded from it: both `presentCount`
+      // and `presentTotal` drop by the same amount, so the pair's effective denominator
+      // (`presentTotal + absentTotal`, asserted by the property test) is `windowTotal` minus this
+      // pair's exclusions — never `windowTotal` itself once anything has been excluded, and never
+      // `windowTotal` plus the exclusion (which is what computing `absentTotal` from the *adjusted*
+      // `presentTotal` would produce instead).
+      const excluded = excludedInWindowByPair.get(`${topicId} ${feelingKey}`) ?? 0;
+      const presentCount = rawPresentCount - excluded;
+      const presentTotal = withTopic.size - excluded;
+
       return associationFrom(presentCount, presentTotal, absentCount, absentTotal);
     };
 
@@ -545,8 +668,15 @@ export class PatternsService {
         lastOccurrence: lastOccurrence.get(key) ?? null,
         association: assoc,
         baseRate: baseRateFor(feelingKey),
+        // E-1b: the evidence trail must name exactly the entries `assoc.presentCount` counted, so a
+        // contaminated occurrence excluded from the count above is excluded from the list too — a
+        // card that said "3 entries" beside a fourth, unpaired one would be showing evidence for a
+        // number it did not use.
         evidenceIds: evidenceIn(
-          (entry) => entry.topicIds.includes(topicId) && entry.feelingKeys.includes(feelingKey),
+          (entry) =>
+            entry.topicIds.includes(topicId) &&
+            entry.feelingKeys.includes(feelingKey) &&
+            !isPairExcluded(entry, topicId, feelingKey),
         ),
         confounders: [],
       });
@@ -556,6 +686,13 @@ export class PatternsService {
     // Enumerated over the cross product rather than over co-occurrences, because the strongest
     // inverse pattern is the one where the topic and the feeling never appear together at all —
     // and a co-occurrence scan cannot see a pair that never co-occurs.
+    //
+    // E-1b: this calls the same `association(topicId, feelingKey)` the forward loop uses, so it
+    // inherits the pairing exclusion with no separate code path. That is also why it needs none of
+    // its own: `invert()` only swaps the four already-adjusted numbers, and the entries this loop's
+    // own `evidenceIn` predicate selects (those *without* topicId) can never be the ones excluded
+    // from this pair — `isPairExcluded` only ever removes an entry that carries both topicId and
+    // feelingKey, which by definition is on the forward side, not this one.
     const inverses: Candidate[] = [];
     for (const [topicId, topicEntries] of entriesWithTopic) {
       const topicName = topicNames.get(topicId);
@@ -631,7 +768,12 @@ export class PatternsService {
       );
     }
 
-    return candidates;
+    // E-1b acceptance criterion 5: reported top-level (not per-pattern), computed above, because
+    // the issue's own phrasing, "n entries not counted until you pair them", is a fact about the
+    // diary as a whole, not about any one card — and a per-pattern figure would have nowhere
+    // sensible to live on a pattern that never reaches the occurrence threshold in the first place,
+    // which a top-level count still accounts for correctly.
+    return { candidates, excludedUnpaired };
   }
 
   /**
@@ -715,7 +857,13 @@ export class PatternsService {
     return [...byEntry.values()];
   }
 
-  /** `key → valence`, shared by `storeCandidates` (persisted patterns) and `contextPatterns`. */
+  /**
+   * `key → valence`, shared by `buildCandidates` and `storeCandidates` (via one call in
+   * `recomputePatterns`, so both act on the same snapshot) and by `contextPatterns` (its own
+   * separate call — it never runs through `recomputePatterns`, C-06). E-1b added the first of
+   * these: `buildCandidates` needs it to decide whether an entry's own feelings are mixed-valence,
+   * the same map `directionFor`'s valence lookups already used further down the pipeline.
+   */
   private feelingValences(): Map<string, string> {
     return new Map(
       (
@@ -933,7 +1081,11 @@ export class PatternsService {
   // Storage
   // -------------------------------------------------------------------------------------------
 
-  private storeCandidates(candidates: Candidate[], topicNames: Map<string, string>): void {
+  private storeCandidates(
+    candidates: Candidate[],
+    topicNames: Map<string, string>,
+    valences: Map<string, string>,
+  ): void {
     const existing = new Map<
       string,
       {
@@ -970,8 +1122,6 @@ export class PatternsService {
     }>) {
       existing.set(`${row.kind} ${row.topic_id} ${row.feeling_key}`, row);
     }
-
-    const valences = this.feelingValences();
 
     const seen = new Set<string>();
     const now = encodeDateTime(nowUtc());

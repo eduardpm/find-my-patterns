@@ -737,7 +737,7 @@
       "name": "one entry, four feelings, two topics",
       "concern": "Multiple comparisons. Every extra feeling multiplies the pairs a single entry contributes.",
       "source": "reasoning about the multi-feeling change",
-      "verdict": "defect",
+      "verdict": "holds",
       "entries": [
         {
           "text": "Coffee and a walk before work.",
@@ -768,9 +768,9 @@
         }
       ],
       "expect": {
-        "maxPatterns": 4
+        "noPatterns": true
       },
-      "note": "Three entries produce eight insights, four of them contradicting the other four, and the view cannot rank them."
+      "note": "E-1b fixed this: energised/hopeful are positive, restless/anxious are negative, so every one of these three entries is mixed-valence, and none of them ever went through the pairing step (no `PUT .../topic-feelings` call). The conservative default (issue #26 rule 2) is that a mixed entry the user never paired contributes to no topic×feeling pair at all — not the eight cross-contaminated pairs the old code counted, and not a partial four either. Was a `defect` scenario asserting `maxPatterns: 4`; the real fix produces zero patterns from these entries, which is the stronger and more precise claim `noPatterns` makes."
     },
     {
       "name": "the same topic pointing both ways",

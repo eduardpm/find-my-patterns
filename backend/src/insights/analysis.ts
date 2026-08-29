@@ -257,6 +257,36 @@ export function invert(association: Association): Association {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Mixed-valence pairing (E-1b)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Whether an entry's own feelings span both valence signs — the trigger for the pairing rule
+ * (§11.7 engine rule #4). Only a positive feeling alongside a negative one makes an entry mixed;
+ * everything else, including a diary with only one feeling, is single-valence and untouched by
+ * the pairing rule (rule #1).
+ *
+ * Neutral counts as its own sign, never as a wildcard that could tip a mix either way: positive +
+ * neutral is not mixed, negative + neutral is not mixed, and neutral + neutral is not mixed. Only
+ * `positive` and `negative` — together, in any company — produce a mixed entry. A key this
+ * function has no valence for is skipped rather than guessed at, the same defensive posture
+ * `averageValence` takes with a score it cannot find.
+ */
+export function isMixedValence(
+  feelingKeys: string[],
+  valenceOf: (feelingKey: string) => string | undefined,
+): boolean {
+  let hasPositive = false;
+  let hasNegative = false;
+  for (const feelingKey of feelingKeys) {
+    const valence = valenceOf(feelingKey);
+    if (valence === 'positive') hasPositive = true;
+    else if (valence === 'negative') hasNegative = true;
+  }
+  return hasPositive && hasNegative;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Sentences
 // ---------------------------------------------------------------------------------------------
 
