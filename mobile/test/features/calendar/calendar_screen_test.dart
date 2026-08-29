@@ -136,6 +136,9 @@ void main() {
     expect(find.text('0.0'), findsOneWidget);
     expect(find.text('Happy'), findsNothing);
     expect(find.text('Sad'), findsNothing);
+    // CH-3's feeling-mix bar draws nothing for an empty month either — see
+    // `feeling_mix_bar_test.dart` for the rest of its coverage.
+    expect(find.byKey(const ValueKey('feelingMixBar')), findsNothing);
   });
 
   testWidgets('tapping a day opens it', (tester) async {
