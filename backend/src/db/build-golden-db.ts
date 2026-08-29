@@ -15,26 +15,32 @@ import { ALEMBIC_VERSION_STATEMENT } from './schema';
  * everything else in this repo uses to build a diary —
  *
  *  - schema and reference vocabulary come from `initDiary` (`SCHEMA_STATEMENTS`, `seed()`), so the
- *    fixture tracks future vocabulary migrations automatically instead of going stale;
+ *    fixture tracks future vocabulary migrations automatically instead of going stale — including
+ *    `guiding_questions.prompt_text`, which now reads current copy the same way a freshly created
+ *    diary does (#95: see below);
  *  - the fixture's own content — the 8 entries, 2 topics, 2 materialised patterns, and everything
  *    that hangs off them — comes from `golden-seed.json`, a plain-text, git-mergeable snapshot of
  *    exactly what the binary fixture used to contain. Two branches that each add a row now produce
  *    an ordinary JSON merge conflict, not a binary one silently resolved by picking a side.
  *
- * Two things `initDiary` cannot give us, so this file supplies them directly:
+ * One thing `initDiary` cannot give us, so this file supplies it directly:
  *
- *  - Three of the seven `guiding_questions` need **pre-#14 wording**. `seed()`/`migrate.ts` never
- *    rewrite an existing question's text (by design — an entry's `question_text_snapshot` would
- *    otherwise start lying about what the user was actually asked), and the fixture predates #14's
- *    shortened copy. `tests/contract/entries-write.test.ts` composes a new guided entry's
- *    `raw_text` from these questions and asserts the *old* wording comes back, so seeding the
- *    current copy here would break that test. `golden-seed.json`'s `guidingQuestionOverrides`
- *    carries the three old prompts, applied with `UPDATE` after `initDiary` seeds the current ones.
  *  - `alembic_version`, an inert table an earlier migration tool left behind. It is not part of
  *    this backend's schema — `initDiary`/`migrateDiary` never create it, and `assertCompatible`
  *    ignores it outright — but real diaries may carry one, and `compatibility.test.ts` needs a
  *    fixture that does too. `ALEMBIC_VERSION_STATEMENT` (`schema.ts`) is the one statement for it,
  *    kept there so that file stays the only one with DDL text.
+ *
+ * #95 removed the other thing this file used to supply: `golden-seed.json` carried a
+ * `guidingQuestionOverrides` array that force-fed three questions their **pre-#14** wording,
+ * because `migrate.ts`'s guiding-question seeding used to be insert-only and could never refresh an
+ * existing row — so the only way to reproduce the old committed binary's (stale) copy was to fake
+ * it here. Now that `migrateDiary` refreshes `prompt_text` on an existing question the same way it
+ * already refreshed `feelings.label` (#95), `initDiary`'s seed alone gives every question current
+ * copy, forever, with no override needed. Carrying a general-purpose override mechanism that
+ * nothing in this file uses would be dead weight, so it is gone rather than emptied.
+ * `tests/contract/entries-write.test.ts`, which used to assert the old wording specifically because
+ * of this override, now asserts current copy instead (see its own comment).
  *
  * The fixture-specific rows are inserted through a **raw** `better-sqlite3` connection, the same
  * way `migrate.ts` does — not the guarded connection `openDiary` returns. That is deliberate, not
@@ -54,7 +60,6 @@ import { ALEMBIC_VERSION_STATEMENT } from './schema';
 
 interface GoldenSeed {
   alembicVersion: string;
-  guidingQuestionOverrides: Array<{ key: string; promptText: string }>;
   topics: Array<{
     id: string;
     name: string;
@@ -146,19 +151,6 @@ export function buildGoldenDb(targetPath: string): void {
   db.pragma('foreign_keys = OFF');
   try {
     db.transaction(() => {
-      // Pre-#14 wording for the three questions the fixture predates (see the file doc comment).
-      const updateQuestion = db.prepare(
-        'UPDATE guiding_questions SET prompt_text = ? WHERE "key" = ?',
-      );
-      for (const override of seed.guidingQuestionOverrides) {
-        const result = updateQuestion.run(override.promptText, override.key);
-        if (result.changes !== 1) {
-          throw new Error(
-            `guidingQuestionOverrides names an unknown question key: ${override.key}`,
-          );
-        }
-      }
-
       // The inert leftover table real diaries may carry (see `ALEMBIC_VERSION_STATEMENT`'s doc
       // comment in schema.ts for why this is the one sanctioned place to run it).
       db.exec(ALEMBIC_VERSION_STATEMENT);

@@ -39,9 +39,12 @@ job, from two plain-text, git-mergeable ingredients:
   independent of this file.
 
 Both are assembled by [`../../src/db/build-golden-db.ts`](../../src/db/build-golden-db.ts) — see
-its doc comment for the two things it has to do that `initDiary` alone cannot (the pre-#14 guiding
-question wording, and the inert `alembic_version` table). See `backend/docs/golden-fixture.md` for
-how to change the fixture's contents and regenerate it by hand.
+its doc comment for the one thing it has to do that `initDiary` alone cannot (the inert
+`alembic_version` table). Guiding-question wording used to need a similar workaround — the fixture
+was forced back to pre-#14 wording because `migrate.ts` could only insert a missing question, never
+refresh an existing one's `prompt_text` — but #95 fixed the refresh itself, so the fixture now gets
+current copy straight from `initDiary`'s seed. See `backend/docs/golden-fixture.md` for how to
+change the fixture's contents and regenerate it by hand.
 
 ## `insight-scenarios.json`
 

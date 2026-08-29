@@ -19,9 +19,12 @@ import { FEELING_GROUP_SEED, FEELING_SEED } from './feeling-vocabulary';
 /**
  * The question library.
  *
- * Exported because `migrate.ts` inserts the ones an older diary is missing. `seed()` itself still
- * refuses to touch a non-empty table (FR-022), so growing an existing diary stays the deliberate
- * act the user performs, never a side effect of starting the server.
+ * Exported because `migrate.ts` inserts the questions an older diary is missing and refreshes
+ * `prompt_text` on the ones it already has (#95), so a copy change here reaches every diary once
+ * its owner runs `npm run migrate-db` — not just diaries created after the change. `seed()` itself
+ * still refuses to touch a non-empty table (FR-022), so growing or refreshing an existing diary
+ * stays the deliberate act the user performs via `migrate-db`, never a side effect of starting the
+ * server.
  */
 export const GUIDING_QUESTIONS: Array<[string, string, string, string[], boolean]> = [
   [

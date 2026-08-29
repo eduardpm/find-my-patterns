@@ -16,10 +16,12 @@ sources, every time it is needed:
    conflict — visible, resolvable — instead of a binary one git resolves by silently picking a
    side.
 
-`src/db/build-golden-db.ts` assembles the two. Read its doc comment for the two things it does that
-`initDiary` alone cannot: three of the seven `guiding_questions` need pre-#14 wording (the fixture
-predates that copy change, and `seed()`/`migrate.ts` never rewrite an existing question's text), and
-the inert `alembic_version` table needs to exist because real diaries may carry one.
+`src/db/build-golden-db.ts` assembles the two. Read its doc comment for the one thing it does that
+`initDiary` alone cannot: the inert `alembic_version` table needs to exist because real diaries may
+carry one. (It used to also force three `guiding_questions` back to their pre-#14 wording, to work
+around `migrate.ts`'s guiding-question seeding being insert-only. #95 made that seeding refresh
+`prompt_text` on an existing row, the way it already refreshed `feelings.label`, so the fixture now
+gets current copy straight from `initDiary`'s seed like any other diary.)
 
 ## When you don't need to do anything
 
@@ -50,8 +52,6 @@ fixture row to exercise it):
 1. Edit `tests/fixtures/golden-seed.json` directly. It is grouped by table (`topics`,
    `diaryEntries`, `entryFeelings`, `entryTopics`, `guidingQuestionAnswers`, `patterns`,
    `patternEntries`), each row using the same fields the corresponding table has, camelCased.
-   `guidingQuestionOverrides` is the exception — it does not name a table, it holds the pre-#14
-   prompt text for the three questions `build-golden-db.ts`'s doc comment explains.
 2. Pick a fresh id (any UUID) for anything new. **Do not reuse or renumber an existing id** —
    several tests key off specific ids directly (`tests/e2e/pairing-insights-snapshot.test.ts`'s
    `PATTERNED_ENTRY_ID`/`PATTERNED_TOPIC_ID`, most concretely), so an id that looks unused today

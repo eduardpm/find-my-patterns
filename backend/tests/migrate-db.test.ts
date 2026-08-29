@@ -13,10 +13,12 @@ import * as path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { assertCompatible } from '../src/db/compatibility';
+import { encodeBool, encodeJson } from '../src/db/codecs';
 import { openDiary } from '../src/db/database';
 import { FEELING_GROUP_SEED, FEELING_SEED } from '../src/db/feeling-vocabulary';
 import { migrateDiary } from '../src/db/migrate';
 import { SCHEMA_STATEMENTS } from '../src/db/schema';
+import { GUIDING_QUESTIONS } from '../src/db/seed';
 
 const LEGACY = path.resolve(__dirname, 'fixtures/pre-grouped-vocabulary.db');
 
@@ -311,6 +313,142 @@ describe('migrateDiary — #60: the Steady group valence split', () => {
       expect(twice).toEqual(once);
     } finally {
       fs.rmSync(preSplitDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('migrateDiary — #95: guiding-question copy refresh', () => {
+  /**
+   * A diary that predates #14's copy shortening: `general_feeling` still carries the old,
+   * long-form prompt. It also carries a `category`, `trigger_keywords` and `is_mandatory` that
+   * deliberately disagree with the current library entry, so a test can prove those three are
+   * left alone while only `prompt_text` is refreshed — the identity/presentation split #95 draws.
+   *
+   * One entry answers `general_feeling` under the old wording, exactly as a real user's diary
+   * would have one: this is what proves the fix is safe, not just that it runs.
+   */
+  const OLD_PROMPT =
+    'Since your last entry—or in the last few hours—what happened? What were you doing, where ' +
+    'were you, and who was around?';
+  const OLD_CATEGORY = 'legacy_general';
+  const OLD_KEYWORDS = ['legacy_keyword'];
+  const OLD_MANDATORY = false;
+
+  function buildPreCopyRefreshDiary(targetPath: string): { entryId: string; answerId: string } {
+    const raw = new Database(targetPath);
+    try {
+      raw.exec('BEGIN');
+      for (const statement of SCHEMA_STATEMENTS) raw.exec(statement);
+      raw.exec('COMMIT');
+
+      raw
+        .prepare(
+          `INSERT INTO guiding_questions ("key", category, prompt_text, trigger_keywords, is_mandatory)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'general_feeling',
+          OLD_CATEGORY,
+          OLD_PROMPT,
+          encodeJson(OLD_KEYWORDS),
+          encodeBool(OLD_MANDATORY),
+        );
+
+      const stamp = '2026-01-01 00:00:00.000000';
+      const entryId = 'e1';
+      raw
+        .prepare(
+          `INSERT INTO diary_entries
+             (id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source, version)
+           VALUES (?, ?, ?, '2026-01-01', 'guided', ?, NULL, 'unset', 1)`,
+        )
+        .run(entryId, stamp, stamp, `${OLD_PROMPT}\nA rough morning.`);
+
+      const answerId = 'a1';
+      raw
+        .prepare(
+          `INSERT INTO guiding_question_answers
+             (id, entry_id, question_key, question_text_snapshot, answer_text, order_index)
+           VALUES (?, ?, 'general_feeling', ?, 'A rough morning.', 0)`,
+        )
+        .run(answerId, entryId, OLD_PROMPT);
+
+      return { entryId, answerId };
+    } finally {
+      raw.close();
+    }
+  }
+
+  it('refreshes prompt_text on an existing question without touching past answers’ snapshots', () => {
+    const dirForTest = fs.mkdtempSync(path.join(os.tmpdir(), 'diary-copy-refresh-'));
+    const targetPath = path.join(dirForTest, 'diary.db');
+    try {
+      const { answerId } = buildPreCopyRefreshDiary(targetPath);
+      const currentPrompt = GUIDING_QUESTIONS.find(([key]) => key === 'general_feeling')?.[2];
+      expect(currentPrompt).toBeDefined();
+      expect(currentPrompt).not.toBe(OLD_PROMPT);
+
+      const report = migrateDiary(targetPath);
+      expect(report.guidingQuestionsUpdated).toBeGreaterThanOrEqual(1);
+
+      const db = new Database(targetPath, { readonly: true });
+      try {
+        // The question row now carries the current, shortened copy — the whole point of #95.
+        const question = db
+          .prepare(
+            'SELECT category, prompt_text, trigger_keywords, is_mandatory FROM guiding_questions WHERE "key" = ?',
+          )
+          .get('general_feeling') as {
+          category: string;
+          prompt_text: string;
+          trigger_keywords: string;
+          is_mandatory: number;
+        };
+        expect(question.prompt_text).toBe(currentPrompt);
+
+        // Category, trigger_keywords and is_mandatory are identity/behaviour, not presentation —
+        // #95 deliberately leaves them alone, so the diary's disagreeing values survive the
+        // migration unchanged.
+        expect(question.category).toBe(OLD_CATEGORY);
+        expect(JSON.parse(question.trigger_keywords)).toEqual(OLD_KEYWORDS);
+        expect(question.is_mandatory).toBe(encodeBool(OLD_MANDATORY));
+
+        // The past answer's snapshot is untouched: it still reads exactly the wording the user
+        // was actually asked under, regardless of what the question now says.
+        const answer = db
+          .prepare(
+            'SELECT question_text_snapshot, answer_text FROM guiding_question_answers WHERE id = ?',
+          )
+          .get(answerId) as { question_text_snapshot: string; answer_text: string };
+        expect(answer.question_text_snapshot).toBe(OLD_PROMPT);
+        expect(answer.answer_text).toBe('A rough morning.');
+      } finally {
+        db.close();
+      }
+    } finally {
+      fs.rmSync(dirForTest, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent — a second run leaves the refreshed copy exactly as the first left it', () => {
+    const dirForTest = fs.mkdtempSync(path.join(os.tmpdir(), 'diary-copy-refresh-idem-'));
+    const targetPath = path.join(dirForTest, 'diary.db');
+    try {
+      buildPreCopyRefreshDiary(targetPath);
+      migrateDiary(targetPath);
+
+      const db = new Database(targetPath, { readonly: true });
+      const once = db.prepare('SELECT * FROM guiding_questions ORDER BY "key"').all();
+      db.close();
+
+      migrateDiary(targetPath);
+
+      const db2 = new Database(targetPath, { readonly: true });
+      const twice = db2.prepare('SELECT * FROM guiding_questions ORDER BY "key"').all();
+      db2.close();
+      expect(twice).toEqual(once);
+    } finally {
+      fs.rmSync(dirForTest, { recursive: true, force: true });
     }
   });
 });

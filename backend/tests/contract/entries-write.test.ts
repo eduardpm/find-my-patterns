@@ -138,11 +138,14 @@ describe('POST /entries — entry_date (#36)', () => {
 
 describe('guided entries — derived values (data-model.md "Derived values")', () => {
   // This test boots on a *copy* of the golden fixture diary (`bootOnCopy`), not a fresh one --
-  // deliberately, so the composed `raw_text` below is proof of A6-02's insert-only seeding: the
-  // golden diary predates #14's shortened question copy, `seed()`/`migrate.ts` never rewrite an
-  // existing `guiding_questions` row (see `db/seed.ts` and `db/migrate.ts`), and this is the
-  // *pre-#14* wording the golden diary has always had -- exactly what it should still read back
-  // as an "existing diary" the wording change never reached.
+  // deliberately, so the composed `raw_text` below is proof that the fixture's `guiding_questions`
+  // come from the same seed a real diary gets. Before #95 this asserted the *old*, pre-#14 wording,
+  // because the fixture generator forced three questions back to their pre-#14 prompt text to work
+  // around `migrate.ts`'s guiding-question seeding being insert-only (a fixed-up copy change could
+  // never reach an existing question row). #95 made that seeding refresh `prompt_text` on an
+  // existing row the same way it already refreshed `feelings.label`, so the override is gone and
+  // this fixture -- like any diary migrated with `npm run migrate-db` -- now carries current copy.
+  // This assertion is therefore current #14 wording, not a special case.
   it('composes raw_text as one prompt/answer block per answer, blank line between', async () => {
     const body = (
       await request(server())
@@ -159,9 +162,9 @@ describe('guided entries — derived values (data-model.md "Derived values")', (
     ).body;
 
     expect(body.raw_text).toBe(
-      'Since your last entry—or in the last few hours—what happened? What were you doing, where were you, and who was around?\n' +
+      'What happened since your last entry — and who was around?\n' +
         'Sluggish after lunch\n\n' +
-        'What did you notice in your mind and body? Include thoughts, energy, tension, hunger, pain, or other sensations.\n' +
+        'What did you notice in your mind and body?\n' +
         'Low energy and a little tense',
     );
     expect(body.mode).toBe('guided');
