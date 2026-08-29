@@ -31,13 +31,15 @@ class InsightsApi {
   Future<WhenInsights> whenInsights() =>
       _client.getObject(AppConfig.insightsWhenPath, whenInsightsFromJson);
 
-  /// The daily mood series behind the Insights mood-trend chart, from
-  /// [from] to [to] inclusive.
+  /// The daily mood series behind the Insights mood-trend chart, and the
+  /// Today screen's writing streak (#40), from [from] to [to] inclusive.
   ///
   /// Always requested at day granularity: every period the chart currently
   /// offers -- 30 days, 90 days, the last year -- fits under the endpoint's
   /// day-granularity range cap, so there is nothing for a `week`/`month`
-  /// choice to buy this client yet.
+  /// choice to buy this client yet. The streak reads [MoodSeries.points]'s
+  /// dates as the set of days with at least one entry -- a day with nothing
+  /// written is simply absent from the array, never sent as a zero point.
   Future<MoodSeries> series({
     required CalendarDate from,
     required CalendarDate to,

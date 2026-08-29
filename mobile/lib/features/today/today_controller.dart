@@ -4,6 +4,7 @@ import '../../core/diary/calendar_date.dart';
 import '../../core/diary/diary_providers.dart';
 import '../../core/diary/entry.dart';
 import '../../core/diary/monthly_summary.dart';
+import '../../core/diary/writing_streak.dart';
 import '../../core/network/api_error.dart';
 
 /// One day's reading state for the Today screen.
@@ -18,6 +19,14 @@ class const TodayState(
   /// screen happens to have loaded. Null when that call has not landed, or
   /// had nothing for the day.
   final DaySummary? daySummary,
+
+  /// The current writing streak (#40): consecutive days, ending today or
+  /// yesterday, with at least one entry -- see [computeWritingStreak] for
+  /// the exact rule. Zero both while [date] is not today (the streak line
+  /// only ever shows on Today, never while paging through history) and
+  /// while nothing has loaded yet, which happens to read the same as "no
+  /// streak" and keeps the line hidden either way.
+  final int streakDays = 0,
 
   /// A reload is in flight over content that is already on screen.
   final bool isRefreshing = false,
@@ -45,6 +54,7 @@ class const TodayState(
   TodayState copyWith({
     List<Entry>? entries,
     Object? daySummary = _unset,
+    int? streakDays,
     bool? isRefreshing,
     bool? hasLoaded,
     Object? errorMessage = _unset,
@@ -54,6 +64,7 @@ class const TodayState(
     daySummary: identical(daySummary, _unset)
         ? this.daySummary
         : daySummary as DaySummary?,
+    streakDays: streakDays ?? this.streakDays,
     isRefreshing: isRefreshing ?? this.isRefreshing,
     hasLoaded: hasLoaded ?? this.hasLoaded,
     errorMessage: identical(errorMessage, _unset)
@@ -212,6 +223,44 @@ class TodayController extends Notifier<TodayState> {
     } on ApiError {
       if (generation != _generation) return;
       state = state.copyWith(daySummary: null);
+    }
+
+    await _loadStreak(date, generation);
+  }
+
+  /// Refreshes [TodayState.streakDays] (#40).
+  ///
+  /// Only fetched while [date] is today: the streak line is a fact about
+  /// today, not about whichever day the reader happens to be paging
+  /// through, so browsing history neither shows a stale number nor spends a
+  /// request re-deriving one nobody will see. A failed fetch is silent, the
+  /// same call the [TodayState.daySummary] fetch above makes -- one more
+  /// quiet number, not a second error snack bar for a backend already
+  /// reported unreachable.
+  Future<void> _loadStreak(CalendarDate date, int generation) async {
+    if (date != today) {
+      state = state.copyWith(streakDays: 0);
+      return;
+    }
+    try {
+      final series = await ref
+          .read(insightsApiProvider)
+          .series(
+            from: today.addDays(-(writingStreakQueryWindowDays - 1)),
+            to: today,
+          );
+      if (generation != _generation) return;
+      state = state.copyWith(
+        streakDays: computeWritingStreak(
+          // A day only appears in `points` when it has at least one entry,
+          // which is exactly the set the streak counts over.
+          entryDates: {for (final point in series.points) point.date},
+          today: today,
+        ),
+      );
+    } on ApiError {
+      if (generation != _generation) return;
+      state = state.copyWith(streakDays: 0);
     }
   }
 

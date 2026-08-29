@@ -58,7 +58,9 @@ abstract final class AppConfig {
   /// The time-of-day breakdown behind the Insights "when" panel.
   static const String insightsWhenPath = '/insights/when';
 
-  /// The per-day mood series behind the Insights mood-trend chart.
+  /// The per-day mood series behind the Insights mood-trend chart, and the
+  /// Today screen's writing streak (#40) -- one point per day with at least
+  /// one entry, `from`/`to` inclusive.
   static const String seriesPath = '/insights/series';
 
   /// Acknowledges a withdrawn pattern so the notice stops being shown.

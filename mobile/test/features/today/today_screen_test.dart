@@ -8,6 +8,7 @@ import 'package:find_my_patterns/core/widgets/journal.dart';
 import 'package:find_my_patterns/features/today/entry_card.dart';
 import 'package:find_my_patterns/features/today/today_controller.dart';
 import 'package:find_my_patterns/features/today/today_screen.dart';
+import 'package:find_my_patterns/features/today/writing_streak_line.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,8 +23,24 @@ void main() {
   final today = CalendarDate.today(now: fixedNow);
   final feelingsReply = FakeReply(200, body: feelingsCatalogJson());
 
-  /// One `refresh`'s worth of replies once the feelings catalog is cached.
+  /// One `refresh`'s worth of replies while showing *today*, once the
+  /// feelings catalog is cached: entries, the monthly summary, then the
+  /// writing-streak series (#40) -- see `today_controller_test.dart`'s
+  /// identically-named helper for why a load of a past day needs
+  /// [pastDayReplies] instead.
   List<FakeReply> loadReplies({
+    List<Map<String, Object?>> entries = const [],
+    List<Map<String, Object?>> days = const [],
+    List<CalendarDate> streakDays = const [],
+  }) => [
+    FakeReply(200, body: entriesJson(entries)),
+    FakeReply(200, body: monthlySummaryJson(days: days)),
+    FakeReply(200, body: seriesJson(days: streakDays)),
+  ];
+
+  /// One `refresh`'s worth of replies while showing a day other than today:
+  /// no writing-streak series call off today (#40).
+  List<FakeReply> pastDayReplies({
     List<Map<String, Object?>> entries = const [],
     List<Map<String, Object?>> days = const [],
   }) => [
@@ -79,7 +96,7 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        buildTestable(replies: [...loadReplies(), ...loadReplies()]),
+        buildTestable(replies: [...loadReplies(), ...pastDayReplies()]),
       );
       await tester.pumpAndSettle();
 
@@ -92,7 +109,7 @@ void main() {
     testWidgets('the Today button only appears once the reader has moved '
         'off today', (tester) async {
       await tester.pumpWidget(
-        buildTestable(replies: [...loadReplies(), ...loadReplies()]),
+        buildTestable(replies: [...loadReplies(), ...pastDayReplies()]),
       );
       await tester.pumpAndSettle();
       // Only the title reads "Today" -- no button by that name yet.
@@ -111,7 +128,7 @@ void main() {
     ) async {
       await tester.pumpWidget(
         buildTestable(
-          replies: [...loadReplies(), ...loadReplies(), ...loadReplies()],
+          replies: [...loadReplies(), ...pastDayReplies(), ...loadReplies()],
         ),
       );
       await tester.pumpAndSettle();
@@ -126,6 +143,69 @@ void main() {
       // again, since it only appears when it would do something.
       expect(find.text('Yesterday'), findsNothing);
       expect(find.widgetWithText(OutlinedButton, 'Today'), findsNothing);
+    });
+  });
+
+  group('writing streak (#40)', () {
+    testWidgets('shows the streak once the series call reports enough '
+        'consecutive days', (tester) async {
+      final yesterday = today.addDays(-1);
+      await tester.pumpWidget(
+        buildTestable(
+          replies: loadReplies(streakDays: [today, yesterday]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(WritingStreakLine), findsOneWidget);
+      expect(find.text('2 days writing'), findsOneWidget);
+    });
+
+    testWidgets('stays hidden for a one-day streak', (tester) async {
+      await tester.pumpWidget(
+        buildTestable(replies: loadReplies(streakDays: [today])),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(WritingStreakLine), findsNothing);
+    });
+
+    testWidgets(
+      'still shows when today is empty but yesterday was streaking -- not '
+      'broken until the day is over',
+      (tester) async {
+        final yesterday = today.addDays(-1);
+        await tester.pumpWidget(
+          buildTestable(
+            replies: loadReplies(
+              // No entry for today itself; the series call still names
+              // yesterday and the day before as written.
+              streakDays: [yesterday, yesterday.addDays(-1)],
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('2 days writing'), findsOneWidget);
+      },
+    );
+
+    testWidgets('is hidden while paging through a past day', (tester) async {
+      await tester.pumpWidget(
+        buildTestable(
+          replies: [
+            ...loadReplies(streakDays: [today, today.addDays(-1)]),
+            ...pastDayReplies(),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(WritingStreakLine), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel('Previous day'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(WritingStreakLine), findsNothing);
     });
   });
 
@@ -149,7 +229,7 @@ void main() {
 
     testWidgets('the back step moves to the previous day', (tester) async {
       await tester.pumpWidget(
-        buildTestable(replies: [...loadReplies(), ...loadReplies()]),
+        buildTestable(replies: [...loadReplies(), ...pastDayReplies()]),
       );
       await tester.pumpAndSettle();
 
@@ -166,7 +246,7 @@ void main() {
         final handle = tester.ensureSemantics();
         await tester.pumpWidget(
           buildTestable(
-            replies: [...loadReplies(), ...loadReplies(), ...loadReplies()],
+            replies: [...loadReplies(), ...pastDayReplies(), ...loadReplies()],
           ),
         );
         await tester.pumpAndSettle();
@@ -225,7 +305,7 @@ void main() {
 
     testWidgets('a past day: no write action', (tester) async {
       await tester.pumpWidget(
-        buildTestable(replies: [...loadReplies(), ...loadReplies()]),
+        buildTestable(replies: [...loadReplies(), ...pastDayReplies()]),
       );
       await tester.pumpAndSettle();
       await tester.tap(find.bySemanticsLabel('Previous day'));
@@ -318,7 +398,7 @@ void main() {
       var pressed = false;
       await tester.pumpWidget(
         buildTestable(
-          replies: [...loadReplies(), ...loadReplies(), ...loadReplies()],
+          replies: [...loadReplies(), ...pastDayReplies(), ...loadReplies()],
           onNewEntry: () => pressed = true,
         ),
       );
@@ -341,7 +421,7 @@ void main() {
     testWidgets('a rightward drag past the threshold moves to the '
         'previous day', (tester) async {
       await tester.pumpWidget(
-        buildTestable(replies: [...loadReplies(), ...loadReplies()]),
+        buildTestable(replies: [...loadReplies(), ...pastDayReplies()]),
       );
       await tester.pumpAndSettle();
 
@@ -371,6 +451,7 @@ void main() {
           replies: [
             FakeReply(500, body: {'error': 'server exploded'}),
             FakeReply(200, body: monthlySummaryJson(days: const [])),
+            FakeReply(200, body: seriesJson()),
           ],
         ),
       );

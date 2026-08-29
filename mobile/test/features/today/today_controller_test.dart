@@ -53,9 +53,26 @@ void main() {
     return (container: container, controller: controller, adapter: adapter);
   }
 
-  /// One `refresh`'s worth of replies once the feelings catalog is already
-  /// cached: entries, then the monthly summary.
+  /// One `refresh`'s worth of replies while showing *today*, once the
+  /// feelings catalog is already cached: entries, the monthly summary, then
+  /// the writing-streak series (#40) -- `_loadStreak` only makes that third
+  /// call while `date == today`, so this is only the right script for a
+  /// load that lands on today. A load of a past day needs [pastDayReplies]
+  /// instead.
   List<FakeReply> loadReplies({
+    List<Map<String, Object?>> entries = const [],
+    List<Map<String, Object?>> days = const [],
+    List<CalendarDate> streakDays = const [],
+  }) => [
+    FakeReply(200, body: entriesJson(entries)),
+    FakeReply(200, body: monthlySummaryJson(days: days)),
+    FakeReply(200, body: seriesJson(days: streakDays)),
+  ];
+
+  /// One `refresh`'s worth of replies while showing a day other than today:
+  /// entries and the monthly summary only. `_loadStreak` never queries the
+  /// series endpoint off today (#40), so there is no third reply to script.
+  List<FakeReply> pastDayReplies({
     List<Map<String, Object?>> entries = const [],
     List<Map<String, Object?>> days = const [],
   }) => [
@@ -102,6 +119,7 @@ void main() {
         final env = buildEnv([
           FakeReply(500, body: {'error': 'server exploded'}),
           FakeReply(200, body: monthlySummaryJson(days: const [])),
+          FakeReply(200, body: seriesJson()),
         ]);
 
         await env.controller.refresh();
@@ -117,6 +135,7 @@ void main() {
       final env = buildEnv([
         FakeReply(200, body: entriesJson(const [])),
         FakeReply(500, body: {'error': 'boom'}),
+        FakeReply(200, body: seriesJson()),
       ]);
 
       await env.controller.refresh();
@@ -132,6 +151,7 @@ void main() {
         ...loadReplies(entries: [entryJson()]),
         FakeReply(500, body: {'error': 'boom'}),
         FakeReply(200, body: monthlySummaryJson(days: const [])),
+        FakeReply(200, body: seriesJson()),
       ]);
       await env.controller.refresh();
       expect(env.container.read(todayControllerProvider).entries, hasLength(1));
@@ -145,11 +165,75 @@ void main() {
     });
   });
 
+  group('streakDays (#40)', () {
+    test('computes the streak from the series call\'s presence days', () async {
+      final env = buildEnv(
+        loadReplies(streakDays: [today, yesterday, yesterday.addDays(-1)]),
+      );
+
+      await env.controller.refresh();
+
+      expect(env.container.read(todayControllerProvider).streakDays, 3);
+    });
+
+    test(
+      'queries the series endpoint over the full window ending today',
+      () async {
+        final env = buildEnv(loadReplies());
+
+        await env.controller.refresh();
+
+        final from = today.addDays(-399);
+        expect(
+          env.adapter.requests.last.path,
+          '/insights/series?from=$from&to=$today&granularity=day',
+        );
+      },
+    );
+
+    test(
+      'is zero, and makes no series request, while showing a past day',
+      () async {
+        final env = buildEnv([
+          ...loadReplies(streakDays: [today, yesterday]),
+          ...pastDayReplies(),
+        ]);
+        await env.controller.refresh();
+        expect(env.container.read(todayControllerProvider).streakDays, 2);
+
+        await env.controller.showPreviousDay();
+
+        final state = env.container.read(todayControllerProvider);
+        expect(state.streakDays, 0);
+        // Exactly four requests total: feelings, then entries + monthly
+        // summary + series for today, then entries + monthly summary for
+        // yesterday -- no fifth (series) request for the past day.
+        expect(env.adapter.requests, hasLength(6));
+      },
+    );
+
+    test('resets to zero on a failed series request', () async {
+      final env = buildEnv([
+        FakeReply(200, body: entriesJson(const [])),
+        FakeReply(200, body: monthlySummaryJson(days: const [])),
+        FakeReply(500, body: {'error': 'boom'}),
+      ]);
+
+      await env.controller.refresh();
+
+      final state = env.container.read(todayControllerProvider);
+      expect(state.streakDays, 0);
+      // Silent, like a missing day summary -- no error message for a
+      // second unreachable-backend call.
+      expect(state.errorMessage, isNull);
+    });
+  });
+
   group('day navigation', () {
     test('showPreviousDay moves back a day and clears entries first', () async {
       final env = buildEnv([
         ...loadReplies(entries: [entryJson()]),
-        ...loadReplies(),
+        ...pastDayReplies(),
       ]);
       await env.controller.refresh();
       expect(env.container.read(todayControllerProvider).entries, hasLength(1));
@@ -172,11 +256,7 @@ void main() {
 
     test('canGoForward becomes true after stepping back a day, and false '
         'again once back on today', () async {
-      final env = buildEnv([
-        ...loadReplies(),
-        ...loadReplies(),
-        ...loadReplies(),
-      ]);
+      final env = buildEnv([...pastDayReplies(), ...loadReplies()]);
       expect(env.controller.canGoForward, isFalse);
 
       await env.controller.showPreviousDay();
@@ -189,7 +269,7 @@ void main() {
     });
 
     test('showToday returns from a past day to today', () async {
-      final env = buildEnv([...loadReplies(), ...loadReplies()]);
+      final env = buildEnv([...pastDayReplies(), ...loadReplies()]);
       await env.controller.showPreviousDay();
       expect(env.container.read(todayControllerProvider).date, yesterday);
 
@@ -246,7 +326,7 @@ void main() {
     );
 
     test('a day the reader chose is not swept forward by refresh', () async {
-      final env = buildEnv([...loadReplies(), ...loadReplies()]);
+      final env = buildEnv([...pastDayReplies(), ...pastDayReplies()]);
       await env.controller.showPreviousDay();
       expect(env.container.read(todayControllerProvider).date, yesterday);
 
@@ -267,9 +347,9 @@ void main() {
       await env.controller.refresh();
       await env.controller.analysisSettled;
 
-      // Only the feelings + two requests `refresh` itself made -- no poll
-      // follow-up.
-      expect(env.adapter.requests, hasLength(3));
+      // Only the feelings + three requests `refresh` itself made (entries,
+      // monthly summary, writing-streak series) -- no poll follow-up.
+      expect(env.adapter.requests, hasLength(4));
     });
 
     test('polls while an entry is pending and stops once it settles', () async {
@@ -313,8 +393,12 @@ void main() {
         expect(env.container.read(todayControllerProvider).entries, isEmpty);
 
         env.container.read(diaryWriteSignalProvider.notifier).bump();
-        // The listener's refresh is async; let it run to completion.
-        await pumpEventQueue();
+        // The listener's refresh is async; let it run to completion. Three
+        // sequential requests now hang off one refresh (entries, monthly
+        // summary, writing-streak series -- #40's third), one more hop than
+        // the default 20 rounds reliably drains alongside the rest of this
+        // suite's own pending timers, so this waits longer than the default.
+        await pumpEventQueue(times: 100);
 
         expect(
           env.container.read(todayControllerProvider).entries,
@@ -327,8 +411,8 @@ void main() {
       'a write while parked on a past day refreshes that day, not today',
       () async {
         final env = buildEnv([
-          ...loadReplies(),
-          ...loadReplies(entries: [entryJson()]),
+          ...pastDayReplies(),
+          ...pastDayReplies(entries: [entryJson()]),
         ]);
         await env.controller.showPreviousDay();
         expect(env.container.read(todayControllerProvider).date, yesterday);
@@ -348,6 +432,7 @@ void main() {
       final env = buildEnv([
         FakeReply(500, body: {'error': 'boom'}),
         FakeReply(200, body: monthlySummaryJson(days: const [])),
+        FakeReply(200, body: seriesJson()),
       ]);
       await env.controller.refresh();
       expect(
