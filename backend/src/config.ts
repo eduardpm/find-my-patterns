@@ -39,6 +39,36 @@ export interface AppConfig {
    * e2e suite, see `tests/contract/identity.test.ts`).
    */
   singleUserMode: boolean;
+  billing: BillingConfig;
+}
+
+/**
+ * M-2, #47: server-side entitlements. `googlePlay` is `undefined` whenever `manualEntitlements` is
+ * `true` — nothing constructs `GooglePlayVerifier` in that mode (`app.module.ts`), so there is
+ * nothing to validate the service-account fields for. When `manualEntitlements` is `false`,
+ * `googlePlay` is validated only lazily, the first time `POST /billing/play/verify` actually needs
+ * it — see the doc comment below on why config *loading* never fails over this.
+ */
+export interface BillingConfig {
+  /** Dev mode: `POST /billing/play/verify` always succeeds without contacting Google
+   * (`ManualPlayVerifier`, `billing/play-verifier.ts`), and `POST /billing/admin/grant` — otherwise
+   * a 404 — becomes reachable. Defaults to `false`: a deployment that never opts in must not gain a
+   * route that grants premium to anyone who can reach it. */
+  manualEntitlements: boolean;
+  googlePlay?: GooglePlayConfig;
+  /** How often the background sweep drops expired premium entitlements to free
+   * (`billing/entitlements.service.ts#sweepExpired`). Daily by default, matching the issue's
+   * "poll-on-verify plus a daily sweep is acceptable." */
+  entitlementsSweepIntervalMs: number;
+}
+
+export interface GooglePlayConfig {
+  serviceAccountEmail: string;
+  /** PEM. `.env` files and shells cannot carry a literal newline in a value without escaping, so
+   * this is unescaped here — once — rather than in `play-verifier.ts`, keeping "the environment's
+   * on-disk representation of a PEM" a `config.ts` concern the same way every other env parsing is. */
+  privateKey: string;
+  packageName: string;
 }
 
 export interface AuthConfig {
@@ -83,6 +113,38 @@ export function loadAuthConfig(): AuthConfig {
     secureCookie: parseBoolean('AUTH_SECURE_COOKIE', enabled),
     sessionHours,
   };
+}
+
+/**
+ * M-2, #47. Deliberately never throws over a missing `GOOGLE_PLAY_*` value — see `BillingConfig`'s
+ * doc comment for why that check is deferred to the first real call to `GooglePlayVerifier` instead
+ * of failing every server boot on a deployment that has not wired up Play billing yet, which is
+ * every deployment of this project so far.
+ */
+export function loadBillingConfig(): BillingConfig {
+  const manualEntitlements = parseBoolean('MANUAL_ENTITLEMENTS', false);
+
+  const serviceAccountEmail = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_EMAIL;
+  // `\n` survives most ways of putting a PEM into a single-line env var (a `.env` file, a shell
+  // export, a secrets manager's flat key/value store); a real embedded newline would too, so this
+  // only ever replaces the two-character escape sequence, never a byte that was already a newline.
+  const privateKey = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_KEY?.replace(/\\n/g, '\n');
+  const packageName = process.env.GOOGLE_PLAY_PACKAGE_NAME;
+  const googlePlay =
+    serviceAccountEmail && privateKey && packageName
+      ? { serviceAccountEmail, privateKey, packageName }
+      : undefined;
+
+  const entitlementsSweepIntervalMs = Number(
+    process.env.ENTITLEMENTS_SWEEP_INTERVAL_MS ?? 24 * 60 * 60 * 1000,
+  );
+  if (!Number.isFinite(entitlementsSweepIntervalMs) || entitlementsSweepIntervalMs < 60_000) {
+    throw new Error(
+      'ENTITLEMENTS_SWEEP_INTERVAL_MS must be a number of at least 60000 (1 minute).',
+    );
+  }
+
+  return { manualEntitlements, googlePlay, entitlementsSweepIntervalMs };
 }
 
 /**
@@ -140,5 +202,6 @@ export function loadConfig(): AppConfig {
     webDistPath: process.env.WEB_DIST_PATH ?? path.resolve(REPO_ROOT, 'web', 'dist'),
     auth: loadAuthConfig(),
     singleUserMode: parseBoolean('SINGLE_USER_MODE', true),
+    billing: loadBillingConfig(),
   };
 }

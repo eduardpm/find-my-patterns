@@ -10,6 +10,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { z } from 'zod';
+import { EntitlementsService } from '../billing/entitlements.service';
 import { parseOrThrow } from '../common/validation';
 import { AuthService, type TokenOut, type UserOut } from './identity.service';
 import { extractBearerToken } from './tokens';
@@ -40,9 +41,28 @@ const credentialsSchema = z.object({
   password: z.string().min(12, 'must be at least 12 characters').max(256),
 });
 
+/**
+ * `GET /auth/me`'s response, extended for M-2 (#47) with the caller's entitlement state. A separate
+ * interface from `UserOut` rather than adding these fields to it directly: `register` and `login`
+ * both return `UserOut` too, and neither has any business reporting a tier — `register` runs before
+ * an account can hold one, and `login`'s job is issuing a session token, not describing account
+ * state. Keeping `UserOut` unchanged means neither of those two response shapes moves.
+ */
+export interface MeOut extends UserOut {
+  tier: 'free' | 'premium';
+  /** The entitlement's own expiry (`EntitlementsService`'s `EntitlementOut`), `null` for free or
+   * for a lifetime purchase. Not to be confused with `TokenOut.expires_at` above, which is when the
+   * bearer *session* stops working — two different clocks that happen to share a field name because
+   * both are "when does this stop being true," on two unrelated things. */
+  expires_at: string | null;
+}
+
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly entitlements: EntitlementsService,
+  ) {}
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
@@ -68,9 +88,11 @@ export class AuthController {
   }
 
   @Get('me')
-  me(@Headers('authorization') authorization?: string): Promise<UserOut> {
+  async me(@Headers('authorization') authorization?: string): Promise<MeOut> {
     const token = extractBearerToken(authorization);
     if (!token) throw new UnauthorizedException('A bearer token is required.');
-    return this.auth.me(token);
+    const user = await this.auth.me(token);
+    const entitlement = this.entitlements.getEntitlement(user.id);
+    return { ...user, ...entitlement };
   }
 }
