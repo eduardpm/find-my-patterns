@@ -165,6 +165,49 @@ void main() {
     handle.dispose();
   });
 
+  testWidgets(
+    'the Month/Year toggle switches between the two grids, and back',
+    (tester) async {
+      useTallScreen(tester);
+      final handle = tester.ensureSemantics();
+      final harness = configuredHarness(
+        FakeHttpAdapter([
+          FakeReply(200, body: feelingsCatalogJson()),
+          FakeReply(200, body: monthlySummaryJson(month: '2026-08')),
+          FakeReply(
+            200,
+            body: seriesJson(
+              points: [seriesPointJson(date: '2026-08-05', score: 1)],
+            ),
+          ),
+        ]),
+      );
+      await tester.pumpWidget(app(harness));
+      await tester.pumpAndSettle();
+
+      // The month grid is on screen by default.
+      expect(find.text('August 2026'), findsOneWidget);
+      expect(find.bySemanticsLabel('Next month'), findsOneWidget);
+
+      await tester.tap(find.text('Year'));
+      await tester.pumpAndSettle();
+
+      // Switching reveals the year grid — its own switcher and its own
+      // day-score fetch — and the month grid leaves the tree entirely.
+      expect(find.text('August 2026'), findsNothing);
+      expect(find.bySemanticsLabel('Next month'), findsNothing);
+      expect(find.text('2026'), findsOneWidget);
+      expect(find.bySemanticsLabel('Next year'), findsOneWidget);
+
+      await tester.tap(find.text('Month'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('August 2026'), findsOneWidget);
+      expect(find.text('2026'), findsNothing);
+      handle.dispose();
+    },
+  );
+
   testWidgets('the month switcher moves forward and back', (tester) async {
     useTallScreen(tester);
     final handle = tester.ensureSemantics();

@@ -103,6 +103,34 @@ final class const FeelingColors({
       );
 }
 
+/// A smooth colour ramp from a negative day score through neutral to a
+/// positive one, for any chart built on the day score CH-0's `GET
+/// /insights/series` serves (`score`, on the -1..+1 scale
+/// `VALENCE_SCORE` defines in the backend's `constants.ts`).
+///
+/// Defined once here, next to the palette tokens, so every chart that reads
+/// a day score — the mood line, Year in Pixels, and later the topic
+/// sparkline — draws it through the same three-stop ramp instead of each
+/// inventing its own gradient. [FeelingColors] already carries the three
+/// stops this needs ([FeelingColors.low], [FeelingColors.steady],
+/// [FeelingColors.uplifted]), so the ramp is an extension on it rather than
+/// a fourth colour set to keep in sync.
+extension ValenceRamp on FeelingColors {
+  /// The ramp colour for [score], clamped to -1..1 before interpolating.
+  ///
+  /// A negative score interpolates between [steady] (at 0) and [low] (at
+  /// -1); a non-negative score interpolates between [steady] (at 0) and
+  /// [uplifted] (at 1). [steady] is the ramp's fixed midpoint, so a score of
+  /// exactly 0 reads identically whichever half it is approached from, and
+  /// the ramp never needs a fourth "true zero" colour of its own.
+  Color colorForScore(double score) {
+    final clamped = score.clamp(-1.0, 1.0);
+    return clamped < 0
+        ? Color.lerp(steady, low, -clamped)!
+        : Color.lerp(steady, uplifted, clamped)!;
+  }
+}
+
 /// One half of one palette: every colour the app draws with, at one
 /// lightness.
 ///
