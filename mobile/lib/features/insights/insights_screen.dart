@@ -15,6 +15,8 @@ import '../../core/widgets/status_views.dart';
 import 'charts/mood_trend_chart.dart';
 import 'insights_controller.dart';
 import 'pattern_card.dart';
+import 'pattern_ranking.dart';
+import 'weak_signal_row.dart';
 import 'when_panel.dart';
 import 'withdrawal_notice.dart';
 
@@ -241,10 +243,10 @@ class _FirstLoadState extends StatelessWidget {
 }
 
 /// The page once data has arrived at least once: any withdrawals, the
-/// pattern sections (or the insufficient-data empty state), and the "when"
-/// panel -- in that order, because the order is a requirement. See the
-/// section-by-section reasoning on [_WithdrawalsSection], [PatternCard] and
-/// [WhenPanel].
+/// ranked pattern feed (or the insufficient-data empty state), and the
+/// "when" panel -- in that order, because the order is a requirement. See
+/// the section-by-section reasoning on [_WithdrawalsSection],
+/// `rankPatterns` (`pattern_ranking.dart`) and [WhenPanel].
 class _Content extends StatelessWidget {
   const _Content({
     required this.data,
@@ -259,6 +261,7 @@ class _Content extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final ranking = rankPatterns(data.patterns);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -280,9 +283,11 @@ class _Content extends StatelessWidget {
         if (data.insufficientData || data.patterns.isEmpty)
           _InsufficientDataState(constants: data.constants)
         else ...[
-          Text('Happening now', style: theme.textTheme.titleLarge),
-          const SizedBox(height: JournalSpacing.x2),
-          for (final pattern in data.active) ...[
+          // UX-2: confirmed-lift patterns first, richest first -- see
+          // `rankPatterns`' own doc comment for the exact ordering, and
+          // `PatternCard`'s for why a "Historical" pattern still renders in
+          // full rather than being dropped once its evidence ages out.
+          for (final pattern in ranking.confirmed) ...[
             PatternCard(
               pattern: pattern,
               constants: data.constants,
@@ -290,27 +295,21 @@ class _Content extends StatelessWidget {
             ),
             const SizedBox(height: JournalSpacing.x4),
           ],
-          // Held often enough to count once, and kept -- clearly marked --
-          // rather than quietly dropped once they age out of the window.
-          if (data.historical.isNotEmpty) ...[
-            Text('No longer recent', style: theme.textTheme.titleLarge),
+          // The weak tier: an undefined or below-threshold lift, or a
+          // neutral-valence feeling with nothing to advise on either way
+          // (P0-2). Collapsed to one line each rather than given the same
+          // billing as a confirmed pattern -- still on the page, still a
+          // tap away from its full evidence, just not competing for the
+          // same attention.
+          if (ranking.weak.isNotEmpty) ...[
+            Text('Weaker signals', style: theme.textTheme.titleLarge),
             const SizedBox(height: JournalSpacing.x2),
-            Text(
-              'These held often enough to count once. They are kept, and '
-              'clearly marked, rather than quietly dropped.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: JournalSpacing.x3),
-            for (final pattern in data.historical) ...[
-              PatternCard(
+            for (final pattern in ranking.weak)
+              WeakSignalRow(
                 pattern: pattern,
                 constants: data.constants,
                 onOpenEntry: onOpenEntry,
               ),
-              const SizedBox(height: JournalSpacing.x4),
-            ],
           ],
         ],
         if (data.whenInsights case final whenInsights?)

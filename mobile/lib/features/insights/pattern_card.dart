@@ -103,6 +103,12 @@ class _PatternCardState extends State<PatternCard> {
         : topic[0].toUpperCase() + topic.substring(1);
 
     return JournalCard(
+      // UX-2: a strong card is meant to fit one screen. The default
+      // padding is generous enough for a page-level surface, not for a
+      // list of these stacked six deep -- shrinking it costs nothing a
+      // reader needs, since the hairline border already separates one
+      // card from the next.
+      contentPadding: const EdgeInsets.all(JournalSpacing.x4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -169,40 +175,32 @@ class _PatternCardState extends State<PatternCard> {
               ],
             ],
           ),
-          const SizedBox(height: JournalSpacing.x3),
+          const SizedBox(height: JournalSpacing.x2),
           Text(pattern.narrativeText, style: JournalType.prose),
-          const SizedBox(height: JournalSpacing.x3),
+          const SizedBox(height: JournalSpacing.x2),
           _StrengthPanel(pattern: pattern),
           // Where a number could not be computed, the reason takes its
           // place.
           if (pattern.comparisonNote case final note?) ...[
-            const SizedBox(height: JournalSpacing.x3),
+            const SizedBox(height: JournalSpacing.x2),
             _PatternNote(text: note),
           ],
           if (pattern.historicalNote case final note?) ...[
-            const SizedBox(height: JournalSpacing.x3),
+            const SizedBox(height: JournalSpacing.x2),
             _PatternNote(text: note, icon: Icons.history),
           ],
           // A confounder annotates a pattern, it never hides one --
           // withholding the evidence would contradict the app's own reason
           // for existing.
           for (final confounder in pattern.confounders) ...[
-            const SizedBox(height: JournalSpacing.x3),
+            const SizedBox(height: JournalSpacing.x2),
             _PatternNote(
               text: confounder.note,
               icon: Icons.link,
               container: theme.colorScheme.primaryContainer,
             ),
           ],
-          // P0-6: no badge means no tip either. Advice to keep or change something is exactly
-          // what a badge-less card has nothing to back -- whether because the feeling is neutral
-          // (P0-2) or, as of P0-6, because the lift behind it is undefined or too weak to trust.
-          // The counts and the narrative above still stand; only the advisory strip goes quiet.
-          if (badge != null) ...[
-            const SizedBox(height: JournalSpacing.x3),
-            _SuggestionBlock(text: pattern.suggestionText),
-          ],
-          const SizedBox(height: JournalSpacing.x3),
+          const SizedBox(height: JournalSpacing.x2),
           DecoratedBox(
             decoration: BoxDecoration(color: journal.hairline),
             child: const SizedBox(width: double.infinity, height: 1),
@@ -264,7 +262,7 @@ class _StrengthPanel extends StatelessWidget {
     final topic = pattern.topic;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(JournalSpacing.x4),
+      padding: const EdgeInsets.all(JournalSpacing.x3),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: JournalShapes.medium,
@@ -392,42 +390,6 @@ class _PatternNote extends StatelessWidget {
           ],
           Expanded(child: Text(text, style: theme.textTheme.bodyMedium)),
         ],
-      ),
-    );
-  }
-}
-
-/// Advice rather than fact, so it is set apart and tinted with the advisory
-/// accent.
-class _SuggestionBlock extends StatelessWidget {
-  const _SuggestionBlock({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final journal = context.journalColors;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: journal.accentContainer,
-        borderRadius: JournalShapes.medium,
-        border: Border(left: BorderSide(color: journal.accent, width: 3)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: JournalSpacing.x4,
-          vertical: JournalSpacing.x3,
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.lightbulb, size: 18, color: journal.accent),
-            const SizedBox(width: JournalSpacing.x3),
-            Expanded(
-              child: Text(text, style: Theme.of(context).textTheme.bodyMedium),
-            ),
-          ],
-        ),
       ),
     );
   }

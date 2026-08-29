@@ -22,23 +22,38 @@ void main() {
         ),
       );
 
-  testWidgets('shows the topic capitalised, the narrative and the suggestion', (
+  testWidgets('shows the topic capitalised and the narrative', (
     tester,
   ) async {
     await tester.pumpWidget(
-      app(
-        buildPattern(
-          topic: 'coffee',
-          narrativeText: 'A narrative.',
-          suggestionText: 'A suggestion.',
-        ),
-      ),
+      app(buildPattern(topic: 'coffee', narrativeText: 'A narrative.')),
     );
 
     expect(find.text('Coffee'), findsOneWidget);
     expect(find.text('A narrative.'), findsOneWidget);
-    expect(find.text('A suggestion.'), findsOneWidget);
   });
+
+  // UX-2: the template tip strip -- the same "Pay attention to how X
+  // affects your Y feeling" sentence on every card, regardless of what the
+  // card actually found -- no longer exists anywhere, badge or no badge.
+  // R-1 fills that slot later with recommendations that cite the user's own
+  // data; until then, no tip is better than a fake one.
+  testWidgets(
+    'never shows the suggestion text, even for a badged card',
+    (tester) async {
+      await tester.pumpWidget(
+        app(
+          buildPattern(
+            direction: PatternDirection.change,
+            suggestionText: 'A suggestion.',
+          ),
+        ),
+      );
+
+      expect(find.text('A suggestion.'), findsNothing);
+      expect(find.text('CONSIDER CHANGING'), findsOneWidget);
+    },
+  );
 
   testWidgets('reads "Consider changing" for a change direction', (
     tester,
