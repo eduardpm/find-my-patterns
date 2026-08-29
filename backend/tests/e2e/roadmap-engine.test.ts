@@ -464,6 +464,31 @@ describe('A3 — a pattern states how strong it is', () => {
     expect(tea.comparison_reason).toBe('insufficient_comparison');
     expect(tea.comparison_note).toContain('Not enough entries');
     expect(tea.is_strong).toBe(false);
+    // P0-6: a card that cannot state a ratio must not carry advice built on one either.
+    expect(tea.direction).toBe('none');
+  });
+
+  // P0-6 — the exact bug reported live: "Work → anxious" showed `LIFT —` (0 of 7 entries without
+  // work, a division by zero) and still carried a red CONSIDER CHANGING badge. Reproduced here as
+  // the zero-cell case (`no_absent_occurrences`), distinct from A3-SC3's too-small comparison
+  // group above: this one has plenty of entries on the other side, just none with the feeling.
+  it('never badges a card whose feeling never once occurred without the topic — P0-6', async () => {
+    for (let index = 0; index < 4; index += 1) {
+      await write(`Work again, number ${index}.`, ['anxious'], index + 1);
+    }
+    for (let index = 0; index < 5; index += 1) {
+      await write(`A quiet evening off, number ${index}.`, ['content'], index + 5);
+    }
+
+    const work = find(await insights(), 'work')!;
+    expect(work.present_count).toBe(4);
+    expect(work.absent_count).toBe(0);
+    expect(work.absent_total).toBeGreaterThanOrEqual(3);
+    expect(work.lift).toBeNull();
+    expect(work.comparison_reason).toBe('no_absent_occurrences');
+    // Without the fix this would read 'change' — anxious is a negative feeling on the forward
+    // side — despite the card's own "LIFT —" saying there is no ratio to back that advice.
+    expect(work.direction).toBe('none');
   });
 });
 
@@ -473,8 +498,13 @@ describe('I1 — what helps, not only what hurts', () => {
     for (let index = 0; index < 4; index += 1) {
       await write(`Went to the gym, session ${index}.`, ['content'], index + 1);
     }
+    // One exercise day that was sad too (P0-6): without at least one entry on this side, the
+    // ratio behind the inverse pattern is a division by zero — exactly the undefined-lift case
+    // P0-6 withholds a badge for — which would make this a test of that behaviour instead of
+    // I1-05's keep/change mapping, the thing this test is actually about.
+    await write('Went to the gym anyway, still low.', ['sad'], 5);
     for (let index = 0; index < 6; index += 1) {
-      await write(`Sat at the desk all evening, number ${index}.`, ['sad'], index + 5);
+      await write(`Sat at the desk all evening, number ${index}.`, ['sad'], index + 6);
     }
 
     const body = await insights();

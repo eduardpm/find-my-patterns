@@ -198,6 +198,18 @@ describe('from written entries to insights', () => {
   it('points a positive correlation at keeping it and a negative one at changing it', async () => {
     for (let i = 0; i < 3; i += 1) await write(LATE_COFFEE);
     for (let i = 0; i < 3; i += 1) await write(RIVER_WALK);
+    // P0-6: without these, "exhausted" only ever occurs alongside coffee and "happy" only ever
+    // occurs alongside walking — a perfectly separated table, which is a division by zero on the
+    // lift, not a weak one. One entry on each feeling's other side gives both a real, computable
+    // ratio, which is what this test is actually about.
+    await write({
+      text: 'Felt exhausted for no particular reason today.',
+      feelings: ['exhausted'],
+    });
+    await write({
+      text: 'A happy moment out of nowhere, nothing special happened.',
+      feelings: ['happy'],
+    });
 
     const found = await insights();
     const direction = (topic: string, feeling: string) =>
@@ -238,7 +250,13 @@ describe('from written entries to insights', () => {
       `You felt energised in 3 of 3 entries mentioning walking in the last ${RECENCY_WINDOW_DAYS} ` +
         `days (100%). There are not enough entries without walking to compare.`,
     );
-    expect(walking?.direction).toBe('keep');
+    // P0-6: "not enough entries ... to compare" is the sentence for a lift that could not be
+    // computed (`comparisonReason: 'insufficient_comparison'`, `lift: null`) — the same undefined
+    // ratio the reported bug showed a badge over. A three-entry diary with nothing else in it
+    // cannot both say that sentence and carry a "keep" badge without contradicting itself, so this
+    // card now carries neither badge, same as the "Work → anxious" card the ticket was filed for.
+    expect(walking?.lift).toBeNull();
+    expect(walking?.direction).toBe('none');
     expect(walking?.status).toBe('active');
   });
 

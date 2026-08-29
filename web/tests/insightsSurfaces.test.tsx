@@ -199,6 +199,65 @@ describe('PatternCard — no badge for a neutral-valence pattern (P0-2)', () => 
     expect(screen.getByText('67%')).toBeInTheDocument();
     expect(screen.getByText('6.2×')).toBeInTheDocument();
   });
+
+  // P0-6: a badge-less card carries no tip strip either — the same rule applies whether the
+  // reason is a neutral valence (here) or an undefined lift (its own describe block below).
+  it('shows no suggestion strip either, since there is no badge to back it', () => {
+    renderCard(pattern({ direction: 'none' }));
+    expect(screen.queryByText(/pay attention to how meetings affects/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('PatternCard — no badge for an undefined or below-threshold lift (P0-6)', () => {
+  // The exact bug reported live: "Work → anxious" showed `LIFT —` (0 of 7 entries without work,
+  // a division by zero) and still carried a red "Worth changing" badge — advice built on the one
+  // number the card itself prints as a dash. The backend now folds this into `direction: 'none'`
+  // (see `badgeDirectionFor` in `backend/src/insights/patterns.service.ts`), and this client reads
+  // that value unchanged, same as it already did for P0-2's neutral-valence case.
+  it('shows no badge and no suggestion strip for a card whose lift is undefined', () => {
+    const { container } = renderCard(
+      pattern({
+        topic: 'work',
+        feeling: 'anxious',
+        direction: 'none',
+        lift: null,
+        comparison_reason: 'no_absent_occurrences',
+        comparison_note:
+          'This feeling does not appear in any entry without work, so there is no ratio to state.',
+        present_count: 4,
+        present_total: 4,
+        absent_count: 0,
+        absent_total: 7,
+        present_rate: 1,
+        absent_rate: 0,
+        is_strong: false,
+      }),
+    );
+
+    expect(screen.queryByText('Worth keeping')).not.toBeInTheDocument();
+    expect(screen.queryByText('Worth changing')).not.toBeInTheDocument();
+    expect(container.querySelector('.pattern-badge')).toBeNull();
+    expect(screen.queryByText(/pay attention to how meetings affects/i)).not.toBeInTheDocument();
+
+    // The card's counts and explanation still stand — honesty stays.
+    expect(screen.getByText('4/4')).toBeInTheDocument();
+    expect(screen.getByText('0/7')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'This feeling does not appear in any entry without work, so there is no ratio to state.',
+      ),
+    ).toBeInTheDocument();
+    // A "0.0×" here would turn "the ratio could not be computed" into "there is no association".
+    expect(screen.queryByText(/0\.0×/)).not.toBeInTheDocument();
+  });
+
+  // The other half of the same rule: a lift that clears the minimum keeps its badge, per P0-2's
+  // mapping — P0-6 only withholds the badge when the lift itself gives it nothing to stand on.
+  it('keeps its badge and suggestion strip when the lift clears the minimum', () => {
+    renderCard(pattern({ direction: 'change', lift: 6.222222 }));
+    expect(screen.getByText('Worth changing')).toBeInTheDocument();
+    expect(screen.getByText(/pay attention to how meetings affects/i)).toBeInTheDocument();
+  });
 });
 
 describe('WithdrawalNotice (A2)', () => {

@@ -89,45 +89,86 @@ describe('directionFor (FR-011, I1-05)', () => {
 // `inference/worker.ts` phrasing and `db/compatibility.ts`'s startup check), this is the function
 // the wire `direction` field is computed from on every `GET /insights` read — see
 // `listPatterns()` — and it is the single place the badge's mapping is decided. Exhaustive over
-// the four kind/valence combinations plus neutral, matching the table in issue P0-2.
+// the four kind/valence combinations plus neutral, matching the table in issue P0-2. Every case
+// here passes a lift comfortably above the minimum, so none of them exercises P0-6's lift check —
+// that has its own describe block below.
 describe('badgeDirectionFor — the pattern card badge (P0-2)', () => {
+  const strongLift = 2.0;
+
   it('forward + positive: the topic coincides with feeling good — keep doing', () => {
-    expect(badgeDirectionFor('forward', 'positive')).toBe('keep');
+    expect(badgeDirectionFor('forward', 'positive', strongLift)).toBe('keep');
   });
 
   it('forward + negative: the topic coincides with feeling bad — consider changing', () => {
-    expect(badgeDirectionFor('forward', 'negative')).toBe('change');
+    expect(badgeDirectionFor('forward', 'negative', strongLift)).toBe('change');
   });
 
   // I1-05: not a mirror of the forward case. The inverse card says the feeling is likelier
   // *without* the topic, so a bad feeling on the absent side makes the topic's presence the thing
   // worth keeping — the opposite verdict from the same valence.
   it('inverse + positive: feeling good happens without the topic — consider changing', () => {
-    expect(badgeDirectionFor('inverse', 'positive')).toBe('change');
+    expect(badgeDirectionFor('inverse', 'positive', strongLift)).toBe('change');
   });
 
   it('inverse + negative: feeling bad happens without the topic — the topic reads as protective', () => {
-    expect(badgeDirectionFor('inverse', 'negative')).toBe('keep');
+    expect(badgeDirectionFor('inverse', 'negative', strongLift)).toBe('keep');
   });
 
-  // The bug this ticket fixes: a neutral-valence feeling (e.g. "neutral", "indifferent" — the two
+  // The bug P0-2 fixes: a neutral-valence feeling (e.g. "neutral", "indifferent" — the two
   // `feeling-vocabulary.ts`'s "steady" group still scores 0 after #60 split the rest of the group
   // to `positive`) has no positive signal to reinforce and no negative one to discourage, so it
   // earns no badge at all, on either side of the kind split.
   it('forward + neutral: no positive or negative signal — no badge', () => {
-    expect(badgeDirectionFor('forward', 'neutral')).toBe('none');
+    expect(badgeDirectionFor('forward', 'neutral', strongLift)).toBe('none');
   });
 
   it('inverse + neutral: no positive or negative signal — no badge', () => {
-    expect(badgeDirectionFor('inverse', 'neutral')).toBe('none');
+    expect(badgeDirectionFor('inverse', 'neutral', strongLift)).toBe('none');
   });
 
   // `directionFor` still exists for the persisted, two-valued concept, and this pins the one
   // place they intentionally disagree: `directionFor` has no `'none'` to give and collapses to
   // `'change'`, while the badge says `'none'`.
   it('directionFor collapses the neutral case badgeDirectionFor refuses to call a badge', () => {
-    expect(badgeDirectionFor('forward', 'neutral')).toBe('none');
+    expect(badgeDirectionFor('forward', 'neutral', strongLift)).toBe('none');
     expect(directionFor('forward', 'neutral')).toBe('change');
+  });
+});
+
+// P0-6: a second, independent reason for `badgeDirectionFor` to withhold the badge — a lift that
+// could not be computed, or one that cleared every other check but still fell short of the
+// minimum. This is the exact bug: "Work → anxious" showing `LIFT —` (0 of 7 entries without work,
+// so the ratio is a division by zero) while still carrying a red CONSIDER CHANGING badge.
+describe('badgeDirectionFor — no badge for an undefined or below-threshold lift (P0-6)', () => {
+  // The 2×2-with-a-zero-cell case: a `null` lift, exactly what `associationFrom` in analysis.ts
+  // returns when `absentCount === 0` — the feeling never once occurred without the topic.
+  it('a null lift (undefined ratio) withholds the badge, whatever the kind or valence', () => {
+    expect(badgeDirectionFor('forward', 'negative', null)).toBe('none');
+    expect(badgeDirectionFor('forward', 'positive', null)).toBe('none');
+    expect(badgeDirectionFor('inverse', 'negative', null)).toBe('none');
+    expect(badgeDirectionFor('inverse', 'positive', null)).toBe('none');
+  });
+
+  it('a lift below the minimum withholds the badge even with a clear valence', () => {
+    expect(badgeDirectionFor('forward', 'negative', 1.2, 1.5)).toBe('none');
+  });
+
+  // A3-04's own boundary: `suppressedByLift` treats a lift *equal to* the minimum as clearing it
+  // (`lift < minLift`, not `<=`), and the badge must not disagree about where that line falls.
+  it('a lift exactly at the minimum keeps its badge — the boundary matches suppressedByLift', () => {
+    expect(badgeDirectionFor('forward', 'negative', 1.5, 1.5)).toBe('change');
+  });
+
+  it('a lift comfortably above the minimum keeps its badge per the P0-2 mapping', () => {
+    expect(badgeDirectionFor('forward', 'negative', 6.2)).toBe('change');
+    expect(badgeDirectionFor('inverse', 'negative', 6.2)).toBe('keep');
+  });
+
+  // `directionFor` is unaffected: it has no `'none'` for a bad lift to collapse into either, so it
+  // is evaluated as if the lift always cleared the minimum and answers from kind and valence alone.
+  it('directionFor ignores the lift entirely — it never had a lift to check', () => {
+    expect(directionFor('forward', 'negative')).toBe('change');
+    expect(directionFor('forward', 'positive')).toBe('keep');
   });
 });
 

@@ -69,6 +69,79 @@ void main() {
     expect(find.text('CONSIDER CHANGING'), findsNothing);
   });
 
+  // P0-6: a badge-less card carries no tip strip either -- advice built on a
+  // ratio the card itself cannot state (or, as here, on a feeling with no
+  // signal either way) is exactly the claim-with-no-number the rest of the
+  // app refuses to make. The counts and the narrative stay untouched; only
+  // the advisory strip goes quiet.
+  testWidgets(
+    'shows no suggestion strip either when there is no badge to back it',
+    (tester) async {
+      await tester.pumpWidget(
+        app(
+          buildPattern(
+            direction: PatternDirection.none,
+            suggestionText:
+                'Pay attention to how tea affects your neutral feeling.',
+          ),
+        ),
+      );
+      expect(
+        find.text('Pay attention to how tea affects your neutral feeling.'),
+        findsNothing,
+      );
+    },
+  );
+
+  // The exact bug this ticket fixes, reproduced at the widget level: a card
+  // whose lift is undefined -- so `direction` arrives from the backend as
+  // `none`, per `badgeDirectionFor` -- shows its "LIFT —" figure, its counts
+  // and its explanation, but neither badge nor tip strip.
+  testWidgets(
+    'a card with an undefined lift keeps its counts and explanation but '
+    'shows neither badge nor suggestion strip',
+    (tester) async {
+      await tester.pumpWidget(
+        app(
+          buildPattern(
+            topic: 'work',
+            direction: PatternDirection.none,
+            lift: null,
+            presentCount: 4,
+            presentTotal: 4,
+            absentCount: 0,
+            absentTotal: 7,
+            presentRate: 1.0,
+            absentRate: 0.0,
+            comparisonReason: 'no_absent_occurrences',
+            comparisonNote: 'This feeling does not appear in any entry without work, so there is no ratio to state.',
+            suggestionText:
+                'Pay attention to how work affects your anxious feeling.',
+          ),
+        ),
+      );
+
+      // The badge and the tip are gone.
+      expect(find.text('KEEP DOING'), findsNothing);
+      expect(find.text('CONSIDER CHANGING'), findsNothing);
+      expect(
+        find.text('Pay attention to how work affects your anxious feeling.'),
+        findsNothing,
+      );
+
+      // Everything the card can actually state stays on screen.
+      expect(find.text('4/4'), findsOneWidget);
+      expect(find.text('0/7'), findsOneWidget);
+      expect(find.text('—'), findsOneWidget); // the lift figure itself
+      expect(
+        find.text(
+          'This feeling does not appear in any entry without work, so there is no ratio to state.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets(
     'shows "Without it" for an inverse pattern and swaps the strength labels',
     (
