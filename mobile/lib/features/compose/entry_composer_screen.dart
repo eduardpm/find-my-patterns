@@ -110,6 +110,7 @@ class EntryComposerScreen extends ConsumerWidget {
                 groups: state.feelingGroups,
                 constants: state.constants,
                 isSaving: state.isSaving,
+                isPollingSuggestions: state.isPollingSuggestions,
                 onConfirm: (feelings, intensities) async {
                   final finished = await controller.confirmFeelings(
                     entryId: entry.id,
@@ -256,6 +257,7 @@ class _ConfirmFeelingStep extends StatefulWidget {
     required this.groups,
     required this.constants,
     required this.isSaving,
+    required this.isPollingSuggestions,
     required this.onConfirm,
   });
 
@@ -263,6 +265,13 @@ class _ConfirmFeelingStep extends StatefulWidget {
   final List<FeelingGroup> groups;
   final EngineConstants constants;
   final bool isSaving;
+
+  /// True while the analyser's verdict is still being polled for -- see
+  /// `EntryComposerController._pollForSuggestions`. Shows a lightweight
+  /// "Reading your entry…" banner without disabling anything: the manual
+  /// picker below is fully usable the whole time, so someone who would
+  /// rather just pick is never made to wait on the worker.
+  final bool isPollingSuggestions;
   final void Function(List<Feeling> feelings, Map<String, int> intensities)
   onConfirm;
 
@@ -295,6 +304,20 @@ class _ConfirmFeelingStepState extends State<_ConfirmFeelingStep> {
         _selected = _seedSelected();
         _intensities = Map.of(widget.entry.feelingIntensities);
       });
+      return;
+    }
+
+    // The analyser's suggestion can land after this step is already on
+    // screen -- see `EntryComposerController._pollForSuggestions` -- as a
+    // later build carrying the *same* entry id with `suggestedFeelings` now
+    // populated. Pre-select it, but only while nothing has been chosen yet:
+    // once the picker holds a manual pick (or an earlier suggestion the
+    // user already edited), a late-arriving suggestion must not clobber it.
+    final suggestionsArrived =
+        oldWidget.entry.suggestedFeelings.isEmpty &&
+        widget.entry.suggestedFeelings.isNotEmpty;
+    if (suggestionsArrived && _selected.isEmpty) {
+      setState(() => _selected = _seedSelected());
     }
   }
 
@@ -318,6 +341,10 @@ class _ConfirmFeelingStepState extends State<_ConfirmFeelingStep> {
           const SizedBox(height: JournalSpacing.x1),
           Text('How did that feel?', style: theme.textTheme.headlineSmall),
           const SizedBox(height: JournalSpacing.x2),
+          if (widget.isPollingSuggestions) ...[
+            const _ReadingEntryBanner(),
+            const SizedBox(height: JournalSpacing.x2),
+          ],
           Text(
             subtitle,
             textAlign: TextAlign.center,
@@ -373,6 +400,49 @@ class _ConfirmFeelingStepState extends State<_ConfirmFeelingStep> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// "Reading your entry…" -- shown above the manual picker while
+/// [EntryComposerController] polls for the analyser's verdict.
+///
+/// A status line beside the picker, not a screen that replaces it: the
+/// manual picker is never blocked on this, so this is decoration for
+/// someone willing to wait a moment, not a gate for someone who isn't.
+/// Announced as a live region for the same reason
+/// `VoiceAnswerRecorder`'s status text is -- the wait is silent otherwise.
+class _ReadingEntryBanner extends StatelessWidget {
+  const _ReadingEntryBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      liveRegion: true,
+      label: 'Reading your entry…',
+      child: ExcludeSemantics(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(width: JournalSpacing.x2),
+            Text(
+              'Reading your entry…',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

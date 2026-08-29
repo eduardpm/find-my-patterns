@@ -53,6 +53,17 @@ class const ComposerState({
   final int guidedStepIndex = 0,
   final String freeformText = '',
   final bool isSaving = false,
+
+  /// True while [ConfirmFeelingStage] is waiting on a background poll for
+  /// the analyser's verdict on the entry it holds.
+  ///
+  /// Distinct from the entry's own `analysisPending` (`Entry.analysisPending`):
+  /// that field is a snapshot from whichever response last carried it, and
+  /// would otherwise leave the "Reading your entry…" banner stuck forever
+  /// once the poll gives up — this flag is explicitly cleared when the poll
+  /// settles, whether that is because a verdict arrived or because it timed
+  /// out, so the manual picker is never gated on it.
+  final bool isPollingSuggestions = false,
   final String? errorMessage,
 }) {
   /// A sentinel distinguishing "leave [errorMessage] alone" from "clear
@@ -73,6 +84,7 @@ class const ComposerState({
     int? guidedStepIndex,
     String? freeformText,
     bool? isSaving,
+    bool? isPollingSuggestions,
     Object? errorMessage = _unset,
   }) => ComposerState(
     stage: stage ?? this.stage,
@@ -83,6 +95,7 @@ class const ComposerState({
     guidedStepIndex: guidedStepIndex ?? this.guidedStepIndex,
     freeformText: freeformText ?? this.freeformText,
     isSaving: isSaving ?? this.isSaving,
+    isPollingSuggestions: isPollingSuggestions ?? this.isPollingSuggestions,
     errorMessage: identical(errorMessage, _unset)
         ? this.errorMessage
         : errorMessage as String?,
@@ -97,7 +110,17 @@ class const ComposerState({
 /// feelings-catalog lookup almost always reuses the cache the feelings load
 /// just primed, instead of racing it for a second request.
 class EntryComposerController extends Notifier<ComposerState> {
+  /// How long between one poll for the analyser's verdict and the next.
+  static const Duration _suggestionPollInterval = Duration(seconds: 1);
+
+  /// How many polls [_pollForSuggestions] makes before giving up. At
+  /// [_suggestionPollInterval] that is ~12 seconds — inside the ~10-15s
+  /// window a suggestion is expected in, and short enough that giving up
+  /// never reads as a stuck app.
+  static const int _maxSuggestionPollAttempts = 12;
+
   late Future<void> _ready;
+  Future<void>? _suggestionPoll;
 
   /// Resolves once the three background loads in [build] have all settled
   /// (each swallows its own [ApiError], so this never throws).
@@ -108,6 +131,21 @@ class EntryComposerController extends Notifier<ComposerState> {
   /// instead of pumping the event queue and hoping enough ticks have
   /// passed for three chained network calls to settle.
   Future<void> get ready => _ready;
+
+  /// Resolves once a background poll for the analyser's suggestion --
+  /// started after entering [ConfirmFeelingStage] for an entry whose
+  /// analysis was still pending -- has settled, whether that is because a
+  /// verdict arrived or because it timed out.
+  ///
+  /// Exposed as a test seam the same way [ready] is; production code never
+  /// awaits this. Resolves immediately when no poll is running.
+  Future<void> get suggestionPollSettled => _suggestionPoll ?? Future.value();
+
+  /// Injected into the suggestion poll loop below, so a test never waits on
+  /// a real clock -- mirrors `TranscriptionsApi.transcribe`'s `delay` seam.
+  /// Mutable purely as a test seam; production code never touches this
+  /// after construction.
+  Future<void> Function(Duration) pollDelay = Future.delayed;
 
   @override
   ComposerState build() {
@@ -213,10 +251,7 @@ class EntryComposerController extends Notifier<ComposerState> {
     try {
       final entry = await ref.read(entriesApiProvider).createGuided(answers);
       if (!ref.mounted) return;
-      state = state.copyWith(
-        isSaving: false,
-        stage: ConfirmFeelingStage(entry),
-      );
+      _enterConfirmStage(entry);
     } on ApiError catch (error) {
       if (!ref.mounted) return;
       state = state.copyWith(isSaving: false, errorMessage: error.message);
@@ -232,13 +267,83 @@ class EntryComposerController extends Notifier<ComposerState> {
           .read(entriesApiProvider)
           .createFreeform(text.trim());
       if (!ref.mounted) return;
-      state = state.copyWith(
-        isSaving: false,
-        stage: ConfirmFeelingStage(entry),
-      );
+      _enterConfirmStage(entry);
     } on ApiError catch (error) {
       if (!ref.mounted) return;
       state = state.copyWith(isSaving: false, errorMessage: error.message);
+    }
+  }
+
+  /// Moves to [ConfirmFeelingStage] for the just-saved [entry], and -- when
+  /// the backend says its analysis is still running -- starts a background
+  /// poll for the analyser's verdict.
+  ///
+  /// The suggest/confirm flow only has something to offer if the "How did
+  /// that feel?" step can see the suggestion, and the worker that produces
+  /// it (a separate local-inference process) has not necessarily finished
+  /// by the time the entry was saved -- often it has barely started. Rather
+  /// than the step reading a stale, empty `entry.suggestedFeelings` forever,
+  /// this polls `GET /entries/{id}` for a fresh copy until one arrives.
+  void _enterConfirmStage(Entry entry) {
+    state = state.copyWith(
+      isSaving: false,
+      stage: ConfirmFeelingStage(entry),
+      isPollingSuggestions: entry.analysisPending,
+    );
+    _suggestionPoll = entry.analysisPending
+        ? _pollForSuggestions(entry.id)
+        : null;
+  }
+
+  /// Whether [ConfirmFeelingStage] is still showing the entry [entryId] --
+  /// i.e. whether a poll for it is still worth continuing.
+  ///
+  /// False once the user has confirmed feelings and moved on (the stage
+  /// changed) or, in principle, once a second save somehow landed a
+  /// different entry in the same stage -- either way, a poll racing against
+  /// a screen the user has left has nothing useful left to update.
+  bool _stillWaitingOn(String entryId) {
+    final stage = state.stage;
+    return stage is ConfirmFeelingStage && stage.entry.id == entryId;
+  }
+
+  /// Polls `GET /entries/{entryId}` for the analyser's verdict, at most
+  /// [_maxSuggestionPollAttempts] times [_suggestionPollInterval] apart.
+  ///
+  /// Stops as soon as the entry's analysis is no longer pending -- whether
+  /// or not it ended up with a suggestion, since a "no feeling worth
+  /// proposing" verdict is still a verdict -- and stops early, without
+  /// touching [ComposerState], if the user has already left
+  /// [ConfirmFeelingStage] for this entry. Running out of attempts or
+  /// hitting a network error both degrade the same way as a real timeout:
+  /// [ComposerState.isPollingSuggestions] is cleared and the manual picker,
+  /// which was never blocked on this succeeding, is what is left on screen.
+  /// Nothing here ever touches [ComposerState.errorMessage] -- a failed or
+  /// exhausted poll is silent, not a user-facing error.
+  Future<void> _pollForSuggestions(String entryId) async {
+    for (var attempt = 0; attempt < _maxSuggestionPollAttempts; attempt++) {
+      await pollDelay(_suggestionPollInterval);
+      if (!ref.mounted || !_stillWaitingOn(entryId)) return;
+
+      Entry updated;
+      try {
+        updated = await ref.read(entriesApiProvider).getById(entryId);
+      } on ApiError {
+        continue; // Transient failure -- try again until attempts run out.
+      }
+      if (!ref.mounted || !_stillWaitingOn(entryId)) return;
+
+      if (!updated.analysisPending) {
+        state = state.copyWith(
+          stage: ConfirmFeelingStage(updated),
+          isPollingSuggestions: false,
+        );
+        return;
+      }
+    }
+
+    if (ref.mounted && _stillWaitingOn(entryId)) {
+      state = state.copyWith(isPollingSuggestions: false);
     }
   }
 
