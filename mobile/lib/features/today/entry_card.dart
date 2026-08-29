@@ -6,6 +6,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/theme/journal_typography.dart';
 import '../../core/widgets/feeling_accent.dart';
+import '../../core/widgets/feeling_chips.dart';
 import '../../core/widgets/journal.dart';
 
 /// One entry in the day's list.
@@ -87,25 +88,9 @@ class EntryCard extends StatelessWidget {
                                   runSpacing: JournalSpacing.x1,
                                   children: [
                                     for (final feeling in entry.feelings)
-                                      Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          FeelingDot(
-                                            color: feeling.accent(journal),
-                                          ),
-                                          const SizedBox(
-                                            width: JournalSpacing.x2,
-                                          ),
-                                          Text(
-                                            feeling.label,
-                                            style: theme.textTheme.bodyMedium
-                                                ?.copyWith(
-                                                  color: feeling.accent(
-                                                    journal,
-                                                  ),
-                                                ),
-                                          ),
-                                        ],
+                                      FeelingChip(
+                                        label: feeling.label,
+                                        color: feeling.accent(journal),
                                       ),
                                   ],
                                 ),

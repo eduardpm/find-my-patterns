@@ -43,11 +43,6 @@ class const Feeling(
   /// never by this client.
   final String groupKey,
 ) {
-  /// The emoji shown for this feeling. Presentation only — the backend
-  /// deliberately does not serve one — so it stays client-side in
-  /// [FeelingEmoji], keyed off [key] with a safe fallback.
-  String get emoji => FeelingEmoji.forKey(key);
-
   @override
   bool operator ==(Object other) =>
       other is Feeling &&
@@ -96,57 +91,6 @@ bool _listEquals<T>(List<T> a, List<T> b) {
     if (a[i] != b[i]) return false;
   }
   return true;
-}
-
-/// Client-side emoji for each feeling key.
-///
-/// Purely presentational (see [Feeling.emoji]); an unknown key — a feeling
-/// the backend gained after this build shipped — falls back rather than
-/// failing, so the feeling set stays backend-owned.
-abstract final class FeelingEmoji {
-  /// The emoji shown for a key this build does not recognise.
-  static const String fallback = '🙂';
-
-  static const Map<String, String> _byKey = {
-    // Uplifted
-    'happy': '😊',
-    'excited': '🤩',
-    'grateful': '🙏',
-    'proud': '😌',
-    'hopeful': '🌱',
-    'energised': '⚡',
-    'affectionate': '🤗',
-    'playful': '😄',
-    // Steady
-    'neutral': '😐',
-    'calm': '🌊',
-    'content': '🙂',
-    'relaxed': '😎',
-    'focused': '🎯',
-    'curious': '🤔',
-    'indifferent': '😶',
-    // Tense
-    'stressed': '😖',
-    'anxious': '😰',
-    'overwhelmed': '😵',
-    'frustrated': '😤',
-    'irritable': '😠',
-    'angry': '😡',
-    'restless': '😬',
-    'guilty': '😞',
-    // Low
-    'sad': '😢',
-    'depressed': '😔',
-    'lonely': '🥺',
-    'disappointed': '😞',
-    'hopeless': '😩',
-    'numb': '😑',
-    'sleepy': '😴',
-    'exhausted': '🥱',
-  };
-
-  /// The emoji for [key], or [fallback] when this build has none.
-  static String forKey(String key) => _byKey[key] ?? fallback;
 }
 
 /// An immutable snapshot of the backend-served feeling set, in the

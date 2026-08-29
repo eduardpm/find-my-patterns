@@ -96,10 +96,8 @@ void main() {
         summary: const DaySummary(date, [anxious]),
       );
 
-      // Feeling badges render upper-cased for display; the natural-case
-      // label is what reaches the accessibility tree.
-      expect(find.textContaining('ANXIOUS'), findsWidgets);
-      expect(find.textContaining('GRATEFUL'), findsNothing);
+      expect(find.text('Anxious'), findsOneWidget);
+      expect(find.text('Grateful'), findsNothing);
     });
 
     testWidgets('falls back to the entries when no roll-up has arrived', (
@@ -112,7 +110,7 @@ void main() {
         ],
       );
 
-      expect(find.textContaining('GRATEFUL'), findsWidgets);
+      expect(find.text('Grateful'), findsOneWidget);
     });
 
     testWidgets('says "1 entry", not "1 entries"', (tester) async {

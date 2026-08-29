@@ -5,6 +5,7 @@ import 'package:find_my_patterns/core/network/network_providers.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
 import 'package:find_my_patterns/core/widgets/journal.dart';
+import 'package:find_my_patterns/features/today/entry_card.dart';
 import 'package:find_my_patterns/features/today/today_controller.dart';
 import 'package:find_my_patterns/features/today/today_screen.dart';
 import 'package:flutter/material.dart';
@@ -230,7 +231,16 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('A long day at work.'), findsOneWidget);
-      expect(find.text('Happy'), findsOneWidget);
+      // "Happy" also appears in the day summary card above the entry list,
+      // which reads the same feeling off the same entry — so this looks
+      // for it inside the entry card specifically.
+      expect(
+        find.descendant(
+          of: find.byType(EntryCard),
+          matching: find.text('Happy'),
+        ),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('A long day at work.'));
 

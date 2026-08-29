@@ -6,6 +6,8 @@ import '../../core/diary/pattern.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/theme/journal_typography.dart';
+import '../../core/widgets/feeling_accent.dart';
+import '../../core/widgets/feeling_chips.dart';
 import '../../core/widgets/journal.dart';
 
 /// One detected pattern, and the entries behind it.
@@ -524,23 +526,9 @@ class _EvidenceRow extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     for (final feeling in entry.feelings)
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.surfaceContainerHighest,
-                          borderRadius: JournalShapes.full,
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: JournalSpacing.x3,
-                            vertical: 2,
-                          ),
-                          child: Text(
-                            '${feeling.emoji} ${feeling.label}',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
+                      FeelingChip(
+                        label: feeling.label,
+                        color: feeling.accent(journal),
                       ),
                     TextButton(
                       onPressed: onOpen,

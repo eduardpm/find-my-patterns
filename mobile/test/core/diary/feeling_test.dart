@@ -17,66 +17,9 @@ void main() {
   });
 
   group('Feeling', () {
-    test('emoji is looked up by key', () {
-      const feeling = Feeling('happy', 'Happy', Valence.positive, 'uplifted');
-      expect(feeling.emoji, '😊');
-    });
-
     test('toString names the key, for debugging', () {
       const feeling = Feeling('happy', 'Happy', Valence.positive, 'uplifted');
       expect(feeling.toString(), 'Feeling(happy)');
-    });
-
-    test('emoji falls back for an unknown key', () {
-      const feeling = Feeling('brand_new', 'New', Valence.unknown, '');
-      expect(feeling.emoji, FeelingEmoji.fallback);
-    });
-  });
-
-  group('FeelingEmoji', () {
-    test('forKey resolves every one of the 31 seeded keys', () {
-      const expected = {
-        'happy': '😊',
-        'excited': '🤩',
-        'grateful': '🙏',
-        'proud': '😌',
-        'hopeful': '🌱',
-        'energised': '⚡',
-        'affectionate': '🤗',
-        'playful': '😄',
-        'neutral': '😐',
-        'calm': '🌊',
-        'content': '🙂',
-        'relaxed': '😎',
-        'focused': '🎯',
-        'curious': '🤔',
-        'indifferent': '😶',
-        'stressed': '😖',
-        'anxious': '😰',
-        'overwhelmed': '😵',
-        'frustrated': '😤',
-        'irritable': '😠',
-        'angry': '😡',
-        'restless': '😬',
-        'guilty': '😞',
-        'sad': '😢',
-        'depressed': '😔',
-        'lonely': '🥺',
-        'disappointed': '😞',
-        'hopeless': '😩',
-        'numb': '😑',
-        'sleepy': '😴',
-        'exhausted': '🥱',
-      };
-      expect(expected.length, 31);
-      for (final entry in expected.entries) {
-        expect(FeelingEmoji.forKey(entry.key), entry.value);
-      }
-    });
-
-    test('forKey falls back for an unrecognised key', () {
-      expect(FeelingEmoji.forKey('nope'), FeelingEmoji.fallback);
-      expect(FeelingEmoji.fallback, '🙂');
     });
   });
 
