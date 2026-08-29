@@ -137,6 +137,12 @@ describe('POST /entries — entry_date (#36)', () => {
 });
 
 describe('guided entries — derived values (data-model.md "Derived values")', () => {
+  // This test boots on a *copy* of the golden fixture diary (`bootOnCopy`), not a fresh one --
+  // deliberately, so the composed `raw_text` below is proof of A6-02's insert-only seeding: the
+  // golden diary predates #14's shortened question copy, `seed()`/`migrate.ts` never rewrite an
+  // existing `guiding_questions` row (see `db/seed.ts` and `db/migrate.ts`), and this is the
+  // *pre-#14* wording the golden diary has always had -- exactly what it should still read back
+  // as an "existing diary" the wording change never reached.
   it('composes raw_text as one prompt/answer block per answer, blank line between', async () => {
     const body = (
       await request(server())
