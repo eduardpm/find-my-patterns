@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/diary_providers.dart';
+import 'package:find_my_patterns/core/diary/digest.dart';
 import 'package:find_my_patterns/core/diary/insights_api.dart';
 import 'package:find_my_patterns/core/diary/mood_series.dart';
 import 'package:find_my_patterns/core/diary/pattern.dart';
@@ -13,7 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// A double over [InsightsApi] whose only implemented method is [series] --
-/// the mood-trend chart never calls the other three, so a call to any of
+/// the mood-trend chart never calls the other four, so a call to any of
 /// them here is itself a bug worth failing loudly on.
 class _FakeInsightsApi implements InsightsApi {
   _FakeInsightsApi(this._respond);
@@ -44,6 +45,9 @@ class _FakeInsightsApi implements InsightsApi {
 
   @override
   Future<void> acknowledgeWithdrawals() => throw UnimplementedError();
+
+  @override
+  Future<Digest> digest() => throw UnimplementedError();
 }
 
 void main() {

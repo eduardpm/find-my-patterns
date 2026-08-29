@@ -29,6 +29,8 @@ import { GuidedDraftsController } from './entries/guided-drafts.controller';
 import { ExportController } from './entries/export.controller';
 import { ExportService } from './entries/export.service';
 import { InsightsController } from './insights/insights.controller';
+import { DigestController } from './insights/digest.controller';
+import { DigestService } from './insights/digest.service';
 import { EchoService } from './insights/echo.service';
 import { ProgressService } from './insights/progress.service';
 import { PatternsService } from './insights/patterns.service';
@@ -88,6 +90,7 @@ export class AppModule {
         FeelingsController,
         GuidingQuestionsController,
         InsightsController,
+        DigestController,
         QuestionYieldController,
         ExperimentsController,
         TopicsController,
@@ -141,6 +144,7 @@ export class AppModule {
         EntriesService,
         TopicsService,
         PatternsService,
+        DigestService,
         ExperimentsService,
         WhenInsightsService,
         SeriesService,

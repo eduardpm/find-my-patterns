@@ -1,3 +1,4 @@
+import 'package:find_my_patterns/core/notifications/digest_schedule.dart';
 import 'package:find_my_patterns/core/notifications/reminder_schedule.dart';
 import 'package:find_my_patterns/core/notifications/reminder_service.dart';
 import 'package:flutter/foundation.dart';
@@ -182,6 +183,113 @@ void main() {
     });
   });
 
+  group('scheduleDigest', () {
+    test(
+      'schedules under the fixed digest id with a weekly day/time match',
+      () async {
+        await service.scheduleDigest(const DigestSlot(DateTime.sunday, 18, 0));
+
+        expect(plugin.scheduledCalls, hasLength(1));
+        final call = plugin.scheduledCalls.single;
+        expect(
+          call.matchDateTimeComponents,
+          DateTimeComponents.dayOfWeekAndTime,
+        );
+        expect(
+          call.androidScheduleMode,
+          AndroidScheduleMode.exactAllowWhileIdle,
+        );
+        // Never a valid `ReminderSlot.id` (0..1439) and never
+        // `_firstPatternNotificationId`'s -1.
+        expect(call.id, isNot(inInclusiveRange(0, 1439)));
+        expect(call.id, isNot(-1));
+      },
+    );
+
+    test('the payload is neither a reminder slot id nor the first-pattern '
+        'sentinel', () async {
+      await service.scheduleDigest(const DigestSlot(DateTime.sunday, 18, 0));
+
+      final payload = plugin.scheduledCalls.single.payload;
+      expect(int.tryParse(payload), isNull);
+      expect(payload, isNot('first_pattern'));
+    });
+
+    test(
+      'the scheduled id never collides with a real reminder slot id or the '
+      'first-pattern id',
+      () async {
+        await service.scheduleAll(slots: _testSlots);
+        await service.showFirstPatternNotification(
+          title: 'Your first pattern is ready',
+          body: 'Evidence.',
+        );
+        await service.scheduleDigest(const DigestSlot(DateTime.sunday, 18, 0));
+
+        final reminderIds = _testSlots.map((slot) => slot.id).toSet();
+        final firstPatternId = plugin.showCalls.single.id;
+        final digestCall = plugin.scheduledCalls.last;
+        expect(reminderIds.contains(digestCall.id), isFalse);
+        expect(digestCall.id, isNot(firstPatternId));
+      },
+    );
+
+    test(
+      'replaces the previous digest schedule rather than adding a second one',
+      () async {
+        await service.scheduleDigest(const DigestSlot(DateTime.sunday, 18, 0));
+        await service.scheduleDigest(const DigestSlot(DateTime.monday, 9, 0));
+
+        // `flutter_local_notifications` replaces a schedule by id itself;
+        // this only proves both calls asked for the same id, which is what
+        // makes that replacement happen.
+        expect(
+          plugin.scheduledCalls.map((call) => call.id).toSet(),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'falls back to an inexact schedule when the exact one is refused',
+      () async {
+        plugin.nextZonedScheduleError = PlatformException(
+          code: 'exact_alarms_not_permitted',
+        );
+
+        await service.scheduleDigest(const DigestSlot(DateTime.sunday, 18, 0));
+
+        expect(plugin.scheduledCalls, hasLength(1));
+        expect(
+          plugin.scheduledCalls.single.androidScheduleMode,
+          AndroidScheduleMode.inexactAllowWhileIdle,
+        );
+      },
+    );
+  });
+
+  group('cancelDigest', () {
+    test(
+      'cancels only the digest notification, not every notification',
+      () async {
+        await service.cancelDigest();
+
+        expect(plugin.cancelledIds, hasLength(1));
+        expect(plugin.cancelAllCallCount, 0);
+      },
+    );
+
+    test(
+      'the cancelled id matches the id scheduleDigest scheduled under',
+      () async {
+        await service.scheduleDigest(const DigestSlot(DateTime.sunday, 18, 0));
+        await service.cancelDigest();
+
+        expect(plugin.cancelledIds.single, plugin.scheduledCalls.single.id);
+      },
+    );
+  });
+
   group('requestPermission', () {
     test('requests the Android permission on Android', () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -311,8 +419,26 @@ void main() {
       },
     );
 
-    test('is null for a payload that is neither a slot id nor the '
-        'first-pattern sentinel', () async {
+    test(
+      'detects a cold start from the weekly digest notification (R-2)',
+      () async {
+        plugin.launchDetails = const NotificationAppLaunchDetails(
+          true,
+          notificationResponse: NotificationResponse(
+            notificationResponseType:
+                NotificationResponseType.selectedNotification,
+            payload: 'weekly_digest',
+          ),
+        );
+
+        final tap = await service.launchTap();
+
+        expect(tap, const DigestTap());
+      },
+    );
+
+    test('is null for a payload that is neither a slot id nor a fixed '
+        'sentinel', () async {
       plugin.launchDetails = const NotificationAppLaunchDetails(
         true,
         notificationResponse: NotificationResponse(
@@ -356,6 +482,22 @@ void main() {
       );
 
       expect(await future, const FirstPatternTap());
+    });
+
+    test('emits DigestTap for the weekly digest notification\'s own payload '
+        '(R-2)', () async {
+      await service.initialize();
+
+      final future = service.taps.first;
+      plugin.fireTap(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: 'weekly_digest',
+        ),
+      );
+
+      expect(await future, const DigestTap());
     });
   });
 }

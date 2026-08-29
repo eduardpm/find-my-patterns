@@ -632,3 +632,55 @@ export function trajectorySignal(entry: {
   // strongly it was felt — intensity scales a direction, it does not invent one.
   return direction * (entry.intensity / MAX_INTENSITY);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Weekly digest (R-2)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * R-2-01: the digest's "one pattern" sentence.
+ *
+ * States this week's own count first — the fact that is actually new since last week's digest —
+ * then appends the pattern's already-decided narrative (`forwardNarrative`/`inverseNarrative`,
+ * composed once in `patterns.service.ts#listPatterns` and carried on `PatternOut.narrative_text`)
+ * for the lifetime ratio behind it. Deliberately not a second sentence built from the association
+ * numbers again: that would risk drifting from the wording `narrative_text` already committed to,
+ * the same duplication risk R-1's `recommendationSentenceFor` avoids by composing in one place.
+ */
+export function digestHighlightSentenceFor(
+  topic: string,
+  weekCount: number,
+  narrativeText: string,
+): string {
+  return (
+    `${topic} came up in ${weekCount} ${plural(weekCount, 'entry', 'entries')} this week. ` +
+    narrativeText
+  );
+}
+
+/**
+ * R-2-03: the digest's "one movement" sentence — a week-over-week delta for a single feeling,
+ * stated with both raw counts, never a bare percentage or an unstated "more/less" (A3-06/C-05's
+ * rule, extended past the 30-day recency window to a week boundary). `feelingLabel` is the feeling
+ * key itself, not a separate lookup — `patterns.service.ts` makes the same call when it hands
+ * `candidate.feelingKey` straight to `forwardNarrative`/`inverseNarrative`.
+ *
+ * Movement counts **feelings**, not topic×feeling pairs (see `digest.service.ts`'s doc comment for
+ * why) — so #26/#109's pairing-exclusion rules, which only ever touch pair-level counting, cannot
+ * put a thumb on this number either way.
+ */
+export function movementSentenceFor(
+  feelingLabel: string,
+  currentCount: number,
+  previousCount: number,
+): string {
+  const currentPhrase = `${currentCount} ${plural(currentCount, 'entry', 'entries')}`;
+  if (currentCount === previousCount) {
+    return `${feelingLabel} appeared in ${currentPhrase} this week, the same as last week.`;
+  }
+  const trend = currentCount > previousCount ? 'up' : 'down';
+  return (
+    `${feelingLabel} appeared in ${currentPhrase} this week, ${trend} from ${previousCount} ` +
+    `last week.`
+  );
+}

@@ -53,6 +53,9 @@ class FakeNotificationsPlugin implements NotificationsPlugin {
   /// Incremented on every `cancelAll` call.
   int cancelAllCallCount = 0;
 
+  /// Every id handed to `cancel`, in order.
+  final List<int> cancelledIds = [];
+
   /// Set to make the next `zonedSchedule` call throw, standing in for the
   /// exact-alarm permission being revoked.
   PlatformException? nextZonedScheduleError;
@@ -112,6 +115,11 @@ class FakeNotificationsPlugin implements NotificationsPlugin {
   @override
   Future<void> cancelAll() async {
     cancelAllCallCount++;
+  }
+
+  @override
+  Future<void> cancel({required int id}) async {
+    cancelledIds.add(id);
   }
 
   @override

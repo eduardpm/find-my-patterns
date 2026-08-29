@@ -105,3 +105,34 @@ class OpenInsightsSignal extends Notifier<int> {
 final openInsightsSignalProvider = NotifierProvider<OpenInsightsSignal, int>(
   OpenInsightsSignal.new,
 );
+
+/// A monotonic count of taps on the weekly digest notification (R-2), cold
+/// or warm -- the same counter shape [OpenComposerSignal] and
+/// [OpenInsightsSignal] use, and for the same reason: a second tap must
+/// still act even if the digest sheet the first tap opened is still on
+/// screen.
+class OpenDigestSignal extends Notifier<int> {
+  @override
+  int build() {
+    final subscription = ref.watch(reminderServiceProvider).taps.listen((tap) {
+      if (tap is DigestTap) state++;
+    });
+    ref.onDispose(subscription.cancel);
+    return 0;
+  }
+
+  /// Checks whether the digest notification cold-started the app and, if so,
+  /// signals the app shell to open the digest sheet for it. Call this once,
+  /// from the app shell, right after [ReminderService.initialize] -- see
+  /// [OpenComposerSignal.checkLaunchTap] for why a cold start needs its own
+  /// explicit read.
+  Future<void> checkLaunchTap() async {
+    final tap = await ref.read(reminderServiceProvider).launchTap();
+    if (tap is DigestTap) state++;
+  }
+}
+
+/// The signal the app shell watches to know when to open the digest sheet.
+final openDigestSignalProvider = NotifierProvider<OpenDigestSignal, int>(
+  OpenDigestSignal.new,
+);

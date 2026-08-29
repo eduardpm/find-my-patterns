@@ -2,6 +2,7 @@ import 'package:find_my_patterns/app.dart';
 import 'package:find_my_patterns/core/config/app_config.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/features/auth/login_screen.dart';
+import 'package:find_my_patterns/features/insights/digest_screen.dart';
 import 'package:find_my_patterns/features/insights/insights_screen.dart';
 import 'package:find_my_patterns/features/shell/app_shell.dart';
 import 'package:find_my_patterns/features/today/today_screen.dart';
@@ -209,6 +210,119 @@ void main() {
         expect(find.text('New entry'), findsOneWidget);
       },
     );
+  });
+
+  group('weekly digest notification tap-through (R-2)', () {
+    final digestJson = {
+      'empty': false,
+      'week': '2026-08-24',
+      'entry_count': 3,
+      'highlight': {
+        'pattern_ref': 'p1',
+        'kind': 'forward',
+        'topic': 'reading',
+        'week_count': 3,
+        'lift': 1.5,
+        'sentence': 'reading came up in 3 entries this week.',
+      },
+    };
+
+    testWidgets(
+      'a warm tap fetches the digest and opens the sheet for it',
+      (tester) async {
+        final harness = Harness(
+          settings: configured,
+          adapter: FakeHttpAdapter.always(FakeReply(200, body: digestJson)),
+        );
+        await tester.pumpWidget(harness.scope(const FindMyPatternsApp()));
+        await tester.pumpAndSettle();
+        expect(find.byType(DigestScreen), findsNothing);
+
+        harness.remindersPlugin.fireTap(
+          const NotificationResponse(
+            notificationResponseType:
+                NotificationResponseType.selectedNotification,
+            payload: 'weekly_digest',
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byType(DigestScreen), findsOneWidget);
+        expect(
+          find.text('reading came up in 3 entries this week.'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'a cold-start launch tap fetches the digest and opens the sheet for it',
+      (tester) async {
+        final harness = Harness(
+          settings: configured,
+          adapter: FakeHttpAdapter.always(FakeReply(200, body: digestJson)),
+        );
+        harness.remindersPlugin.launchDetails =
+            const NotificationAppLaunchDetails(
+              true,
+              notificationResponse: NotificationResponse(
+                notificationResponseType:
+                    NotificationResponseType.selectedNotification,
+                payload: 'weekly_digest',
+              ),
+            );
+
+        await tester.pumpWidget(harness.scope(const FindMyPatternsApp()));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(DigestScreen), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'an unreachable backend opens Insights instead of a broken sheet '
+      '(task 2\'s own words: never show stale content as fresh)',
+      (tester) async {
+        final harness = Harness(
+          settings: configured,
+          adapter: FakeHttpAdapter.always(const FakeReply.networkError()),
+        );
+        await tester.pumpWidget(harness.scope(const FindMyPatternsApp()));
+        await tester.pumpAndSettle();
+
+        harness.remindersPlugin.fireTap(
+          const NotificationResponse(
+            notificationResponseType:
+                NotificationResponseType.selectedNotification,
+            payload: 'weekly_digest',
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byType(DigestScreen), findsNothing);
+        expect(find.byType(InsightsScreen), findsOneWidget);
+      },
+    );
+
+    testWidgets('a reminder tap opens the composer, not the digest sheet', (
+      tester,
+    ) async {
+      final harness = Harness();
+      await tester.pumpWidget(harness.scope(const FindMyPatternsApp()));
+      await tester.pumpAndSettle();
+
+      harness.remindersPlugin.fireTap(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: '540',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DigestScreen), findsNothing);
+      expect(find.text('New entry'), findsOneWidget);
+    });
   });
 
   group('SplashScreen', () {

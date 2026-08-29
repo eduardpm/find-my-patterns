@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../settings/settings.dart';
 import '../settings/settings_controller.dart';
+import 'digest_settings_controller.dart';
 import 'reminder_providers.dart';
 import 'reminder_schedule.dart';
 
@@ -82,6 +83,15 @@ class RemindersController extends AsyncNotifier<bool> {
     if (slots.isNotEmpty) {
       await service.scheduleAll(slots: slots);
     }
+    // R-2: `cancelAll` above is `flutter_local_notifications`' only
+    // cancellation broad enough to guarantee a removed reminder's alarm is
+    // really gone (see the comment above it) — but it cancels *every*
+    // scheduled notification, including the weekly digest, which is armed
+    // independently of this reminder list under its own id. Re-arming it
+    // here immediately closes that gap; without this call the digest would
+    // stay silently cancelled until the app's next cold start
+    // (`app.dart#_restore` re-arms it too, but only then).
+    await ref.read(digestSettingsControllerProvider.notifier).rearm();
   }
 }
 

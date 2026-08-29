@@ -240,6 +240,119 @@ void main() {
     });
   });
 
+  group('DigestTime (R-2)', () {
+    test('defaults to off', () {
+      expect(
+        const DigestTime(weekday: DateTime.sunday, hour: 18, minute: 0).enabled,
+        isFalse,
+      );
+    });
+
+    test('copyWith replaces only what it is given', () {
+      const schedule = DigestTime(
+        weekday: DateTime.sunday,
+        hour: 18,
+        minute: 0,
+      );
+      expect(
+        schedule.copyWith(weekday: DateTime.monday),
+        const DigestTime(weekday: DateTime.monday, hour: 18, minute: 0),
+      );
+      expect(
+        schedule.copyWith(hour: 9),
+        const DigestTime(weekday: DateTime.sunday, hour: 9, minute: 0),
+      );
+      expect(
+        schedule.copyWith(minute: 30),
+        const DigestTime(weekday: DateTime.sunday, hour: 18, minute: 30),
+      );
+      expect(
+        schedule.copyWith(enabled: true),
+        const DigestTime(
+          weekday: DateTime.sunday,
+          hour: 18,
+          minute: 0,
+          enabled: true,
+        ),
+      );
+      expect(schedule.copyWith(), schedule);
+    });
+
+    test('equality and hashCode cover every field', () {
+      const a = DigestTime(
+        weekday: DateTime.sunday,
+        hour: 18,
+        minute: 0,
+        enabled: true,
+      );
+      expect(
+        a,
+        const DigestTime(
+          weekday: DateTime.sunday,
+          hour: 18,
+          minute: 0,
+          enabled: true,
+        ),
+      );
+      expect(
+        a.hashCode,
+        const DigestTime(
+          weekday: DateTime.sunday,
+          hour: 18,
+          minute: 0,
+          enabled: true,
+        ).hashCode,
+      );
+      expect(
+        a,
+        isNot(
+          const DigestTime(
+            weekday: DateTime.monday,
+            hour: 18,
+            minute: 0,
+            enabled: true,
+          ),
+        ),
+      );
+      expect(
+        a,
+        isNot(
+          const DigestTime(
+            weekday: DateTime.sunday,
+            hour: 9,
+            minute: 0,
+            enabled: true,
+          ),
+        ),
+      );
+      expect(
+        a,
+        isNot(
+          const DigestTime(
+            weekday: DateTime.sunday,
+            hour: 18,
+            minute: 5,
+            enabled: true,
+          ),
+        ),
+      );
+      expect(
+        a,
+        isNot(const DigestTime(weekday: DateTime.sunday, hour: 18, minute: 0)),
+      );
+      expect(a, isNot(const Object()));
+    });
+  });
+
+  group('kDefaultDigestSchedule', () {
+    test('is Sunday 18:00, off (issue #42\'s own default)', () {
+      expect(kDefaultDigestSchedule.weekday, DateTime.sunday);
+      expect(kDefaultDigestSchedule.hour, 18);
+      expect(kDefaultDigestSchedule.minute, 0);
+      expect(kDefaultDigestSchedule.enabled, isFalse);
+    });
+  });
+
   group('AppSettings', () {
     test('defaults to the default palette', () {
       expect(const AppSettings().palette, JournalPalette.defaultPalette);
@@ -247,6 +360,10 @@ void main() {
 
     test('defaults to the default reminder suggestions', () {
       expect(const AppSettings().reminders, kDefaultReminders);
+    });
+
+    test('defaults to the default digest schedule (R-2)', () {
+      expect(const AppSettings().digest, kDefaultDigestSchedule);
     });
 
     test('copyWith replaces only what it is given', () {
@@ -269,6 +386,24 @@ void main() {
       expect(
         settings.copyWith(reminders: const []).reminders,
         isEmpty,
+      );
+      expect(
+        settings
+            .copyWith(
+              digest: const DigestTime(
+                weekday: DateTime.monday,
+                hour: 8,
+                minute: 30,
+                enabled: true,
+              ),
+            )
+            .digest,
+        const DigestTime(
+          weekday: DateTime.monday,
+          hour: 8,
+          minute: 30,
+          enabled: true,
+        ),
       );
       expect(settings.copyWith(), settings);
     });
@@ -319,6 +454,21 @@ void main() {
             themeMode: ThemeModeSetting.dark,
             palette: JournalPalette.sage,
             reminders: const [ReminderTime(hour: 1, minute: 1)],
+          ),
+        ),
+      );
+      expect(
+        a,
+        isNot(
+          const AppSettings(
+            themeMode: ThemeModeSetting.dark,
+            palette: JournalPalette.sage,
+            digest: DigestTime(
+              weekday: DateTime.monday,
+              hour: 8,
+              minute: 0,
+              enabled: true,
+            ),
           ),
         ),
       );
@@ -410,6 +560,41 @@ void main() {
       () async {
         SharedPreferences.setMockInitialValues({'test.reminders': '{}'});
         expect((await store.load()).reminders, kDefaultReminders);
+      },
+    );
+
+    test(
+      'load returns the default digest schedule on a fresh install (R-2)',
+      () async {
+        expect((await store.load()).digest, kDefaultDigestSchedule);
+      },
+    );
+
+    test('round-trips a digest schedule, including the enabled flag', () async {
+      const schedule = DigestTime(
+        weekday: DateTime.wednesday,
+        hour: 7,
+        minute: 45,
+        enabled: true,
+      );
+      await store.saveDigestSchedule(schedule);
+      expect((await store.load()).digest, schedule);
+    });
+
+    test(
+      'unreadable stored digest JSON falls back to the default schedule',
+      () async {
+        SharedPreferences.setMockInitialValues({'test.digest': 'not json'});
+        expect((await store.load()).digest, kDefaultDigestSchedule);
+      },
+    );
+
+    test(
+      'a stored digest value that is not a JSON map falls back to the '
+      'default schedule',
+      () async {
+        SharedPreferences.setMockInitialValues({'test.digest': '[]'});
+        expect((await store.load()).digest, kDefaultDigestSchedule);
       },
     );
 

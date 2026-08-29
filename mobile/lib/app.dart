@@ -8,7 +8,11 @@ import 'core/auth/auth_controller.dart';
 import 'core/config/app_config.dart';
 import 'core/config/config_providers.dart';
 import 'core/diary/calendar_date.dart';
+import 'core/diary/diary_providers.dart';
+import 'core/diary/digest.dart';
+import 'core/network/api_error.dart';
 import 'core/network/network_providers.dart';
+import 'core/notifications/digest_settings_controller.dart';
 import 'core/notifications/reminder_providers.dart';
 import 'core/notifications/reminder_schedule.dart';
 import 'core/settings/settings.dart';
@@ -20,6 +24,7 @@ import 'features/calendar/day_entries_screen.dart';
 import 'features/compose/entry_composer_screen.dart';
 import 'features/entry/entry_detail_screen.dart';
 import 'features/experiments/experiment_results_screen.dart';
+import 'features/insights/digest_screen.dart';
 import 'features/insights/insights_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/shell/app_shell.dart';
@@ -141,6 +146,18 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: SettingsScreen.topicsRoute,
         builder: (context, state) => TopicsScreen(onClose: () => context.pop()),
       ),
+      GoRoute(
+        // R-2: the digest sheet a tap on the weekly digest notification
+        // opens. Keyed on nothing -- unlike `/entry/:entryId/:entryDate`,
+        // there is only ever "this week's" digest -- and fed the [Digest]
+        // already fetched by `_FindMyPatternsAppState._openDigest` through
+        // `extra`, rather than fetching its own: see `DigestScreen`'s own
+        // doc comment for why the fetch has to happen before this route is
+        // even pushed.
+        path: '/digest',
+        builder: (context, state) =>
+            DigestScreen(digest: state.extra! as Digest),
+      ),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
     ],
   );
@@ -202,6 +219,12 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
     if (slots.isNotEmpty) {
       await service.scheduleAll(slots: slots);
     }
+    // R-2: re-arms the weekly digest from stored settings, the same
+    // survives-a-restart guarantee `scheduleAll` above gives reminders.
+    // `DigestSettingsController.rearm` also cancels it outright when the
+    // digest is off, so this is safe to call unconditionally rather than
+    // branching on `AppSettings.digest.enabled` here too.
+    await ref.read(digestSettingsControllerProvider.notifier).rearm();
     if (!mounted) return;
     await ref.read(openComposerSignalProvider.notifier).checkLaunchTap();
     if (!mounted) return;
@@ -209,6 +232,36 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
     // is read the same way a reminder's cold start is -- see
     // `OpenInsightsSignal.checkLaunchTap`'s doc comment.
     await ref.read(openInsightsSignalProvider.notifier).checkLaunchTap();
+    if (!mounted) return;
+    // R-2: same cold-start handling for the weekly digest notification.
+    // `_openDigest` (not a plain counter bump) is what turns this into
+    // either the digest sheet or, on an unreachable backend, Insights --
+    // see its own doc comment.
+    await ref.read(openDigestSignalProvider.notifier).checkLaunchTap();
+  }
+
+  /// Fetches the current digest and opens the sheet for it, or falls back to
+  /// Insights when the backend cannot answer.
+  ///
+  /// Task 2's own words: "if the digest API is unreachable at fire time, the
+  /// notification simply opens Insights (never show stale content as
+  /// fresh)." The fetch happens *before* navigating anywhere, specifically
+  /// so this method — not [DigestScreen] — is the one place that decides
+  /// which of the two destinations a tap actually leads to; a screen that
+  /// tried to render its own fetch failure would either show a spinner
+  /// forever or flash something digest-shaped before falling back, both of
+  /// which are exactly the "stale content shown as fresh" task 2 forbids.
+  Future<void> _openDigest() async {
+    final Digest digest;
+    try {
+      digest = await ref.read(insightsApiProvider).digest();
+    } on ApiError {
+      if (!mounted) return;
+      ref.read(routerProvider).go(AppConfig.insightsPath);
+      return;
+    }
+    if (!mounted) return;
+    unawaited(ref.read(routerProvider).push('/digest', extra: digest));
   }
 
   @override
@@ -235,6 +288,15 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
     ref.listen(openInsightsSignalProvider, (previous, next) {
       if (previous == next) return;
       ref.read(routerProvider).go(AppConfig.insightsPath);
+    });
+
+    // Tapping the weekly digest notification (R-2) opens the digest sheet --
+    // or, when the backend cannot be reached to fetch it, Insights instead.
+    // See [_openDigest]'s own doc comment for why that decision is made here
+    // rather than left to the sheet to render its way out of.
+    ref.listen(openDigestSignalProvider, (previous, next) {
+      if (previous == next) return;
+      unawaited(_openDigest());
     });
 
     return MaterialApp.router(

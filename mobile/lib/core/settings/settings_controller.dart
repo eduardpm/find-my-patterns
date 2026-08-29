@@ -67,6 +67,18 @@ class SettingsController extends AsyncNotifier<AppSettings> {
     state = AsyncData(_current.copyWith(reminders: reminders));
   }
 
+  /// Saves [schedule] as the weekly digest's day, time and on/off state
+  /// (R-2).
+  ///
+  /// Persistence only, the same split [saveReminders] draws with
+  /// `RemindersController` — requesting the notification permission and
+  /// (re)scheduling the alarm is `DigestSettingsController`'s job
+  /// (`core/notifications/digest_settings_controller.dart`).
+  Future<void> saveDigestSchedule(DigestTime schedule) async {
+    await ref.read(settingsStoreProvider).saveDigestSchedule(schedule);
+    state = AsyncData(_current.copyWith(digest: schedule));
+  }
+
   AppSettings get _current => state.value ?? const AppSettings();
 }
 

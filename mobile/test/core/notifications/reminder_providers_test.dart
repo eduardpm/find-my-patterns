@@ -214,4 +214,125 @@ void main() {
       });
     });
   });
+
+  group('openDigestSignalProvider (R-2)', () {
+    test('starts at zero', () {
+      expect(container.read(openDigestSignalProvider), 0);
+    });
+
+    test('increments on a digest tap reported while running', () async {
+      container.listen(openDigestSignalProvider, (_, _) {});
+      await container.read(reminderServiceProvider).initialize();
+
+      plugin.fireTap(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: 'weekly_digest',
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(container.read(openDigestSignalProvider), 1);
+    });
+
+    test('a second tap increments again rather than staying at one', () async {
+      container.listen(openDigestSignalProvider, (_, _) {});
+      await container.read(reminderServiceProvider).initialize();
+
+      for (var i = 0; i < 2; i++) {
+        plugin.fireTap(
+          const NotificationResponse(
+            notificationResponseType:
+                NotificationResponseType.selectedNotification,
+            payload: 'weekly_digest',
+          ),
+        );
+        await pumpEventQueue();
+      }
+
+      expect(container.read(openDigestSignalProvider), 2);
+    });
+
+    test('a reminder tap does not open the digest', () async {
+      container.listen(openDigestSignalProvider, (_, _) {});
+      await container.read(reminderServiceProvider).initialize();
+
+      plugin.fireTap(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: '540',
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(container.read(openDigestSignalProvider), 0);
+    });
+
+    test('a first-pattern tap does not open the digest', () async {
+      container.listen(openDigestSignalProvider, (_, _) {});
+      await container.read(reminderServiceProvider).initialize();
+
+      plugin.fireTap(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: 'first_pattern',
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(container.read(openDigestSignalProvider), 0);
+    });
+
+    group('checkLaunchTap', () {
+      test(
+        'increments when the digest notification cold-started the app',
+        () async {
+          plugin.launchDetails = const NotificationAppLaunchDetails(
+            true,
+            notificationResponse: NotificationResponse(
+              notificationResponseType:
+                  NotificationResponseType.selectedNotification,
+              payload: 'weekly_digest',
+            ),
+          );
+
+          await container
+              .read(openDigestSignalProvider.notifier)
+              .checkLaunchTap();
+
+          expect(container.read(openDigestSignalProvider), 1);
+        },
+      );
+
+      test('a reminder launch tap does not open the digest', () async {
+        plugin.launchDetails = const NotificationAppLaunchDetails(
+          true,
+          notificationResponse: NotificationResponse(
+            notificationResponseType:
+                NotificationResponseType.selectedNotification,
+            payload: '540',
+          ),
+        );
+
+        await container
+            .read(openDigestSignalProvider.notifier)
+            .checkLaunchTap();
+
+        expect(container.read(openDigestSignalProvider), 0);
+      });
+
+      test('does nothing when nothing launched the app', () async {
+        plugin.launchDetails = const NotificationAppLaunchDetails(false);
+
+        await container
+            .read(openDigestSignalProvider.notifier)
+            .checkLaunchTap();
+
+        expect(container.read(openDigestSignalProvider), 0);
+      });
+    });
+  });
 }

@@ -224,6 +224,58 @@ const List<ReminderTime> kDefaultReminders = [
   ReminderTime(hour: 21, minute: 0),
 ];
 
+/// [R-2] The weekly digest's schedule: a day of the week, a wall-clock time,
+/// and whether it is currently armed.
+///
+/// The settings-layer twin of `core/notifications/digest_schedule.dart`'s
+/// `DigestSlot`, the same split [ReminderTime]/`ReminderSlot` already draw:
+/// [enabled] is what only Settings and the Digest card need to know, and the
+/// schedule computation only ever sees the bare weekday, hour and minute, as
+/// a `DigestSlot` built from this at the one call site that schedules it.
+///
+/// [weekday] uses [DateTime]'s convention (`1`..`7`, Monday first) — see
+/// `DigestSlot`'s own doc comment for why.
+class const DigestTime({
+  required final int weekday,
+  required final int hour,
+  required final int minute,
+  final bool enabled = false,
+}) {
+  /// A copy of this schedule with the given fields replaced.
+  DigestTime copyWith({int? weekday, int? hour, int? minute, bool? enabled}) =>
+      DigestTime(
+        weekday: weekday ?? this.weekday,
+        hour: hour ?? this.hour,
+        minute: minute ?? this.minute,
+        enabled: enabled ?? this.enabled,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is DigestTime &&
+      other.weekday == weekday &&
+      other.hour == hour &&
+      other.minute == minute &&
+      other.enabled == enabled;
+
+  @override
+  int get hashCode => Object.hash(weekday, hour, minute, enabled);
+
+  @override
+  String toString() =>
+      'DigestTime(weekday: $weekday, $hour:'
+      '${minute.toString().padLeft(2, '0')}'
+      '${enabled ? ', on' : ', off'})';
+}
+
+/// The digest schedule a fresh install starts with: Sunday at 18:00, off
+/// until the user turns it on (issue #42's own default).
+const DigestTime kDefaultDigestSchedule = DigestTime(
+  weekday: DateTime.sunday,
+  hour: 18,
+  minute: 0,
+);
+
 /// Everything this device remembers between runs.
 ///
 /// Where the backend is, how the app should look, and when it should remind
@@ -235,6 +287,10 @@ class const AppSettings({
   final ThemeModeSetting themeMode = ThemeModeSetting.system,
   final JournalPalette palette = JournalPalette.defaultPalette,
   final List<ReminderTime> reminders = kDefaultReminders,
+
+  /// R-2's weekly digest schedule. Singular, unlike [reminders] — there is
+  /// one toggle and one day/time, not a user-managed list.
+  final DigestTime digest = kDefaultDigestSchedule,
 }) {
   /// A copy of these settings with the given fields replaced.
   AppSettings copyWith({
@@ -242,11 +298,13 @@ class const AppSettings({
     ThemeModeSetting? themeMode,
     JournalPalette? palette,
     List<ReminderTime>? reminders,
+    DigestTime? digest,
   }) => AppSettings(
     backend: backend ?? this.backend,
     themeMode: themeMode ?? this.themeMode,
     palette: palette ?? this.palette,
     reminders: reminders ?? this.reminders,
+    digest: digest ?? this.digest,
   );
 
   @override
@@ -255,11 +313,17 @@ class const AppSettings({
       other.backend == backend &&
       other.themeMode == themeMode &&
       other.palette == palette &&
-      listEquals(other.reminders, reminders);
+      listEquals(other.reminders, reminders) &&
+      other.digest == digest;
 
   @override
-  int get hashCode =>
-      Object.hash(backend, themeMode, palette, Object.hashAll(reminders));
+  int get hashCode => Object.hash(
+    backend,
+    themeMode,
+    palette,
+    Object.hashAll(reminders),
+    digest,
+  );
 }
 
 /// Reads and writes [AppSettings].
@@ -288,6 +352,12 @@ abstract interface class SettingsStore {
   /// it), and a whole-list write is what lets removing a reminder persist
   /// as an empty list rather than needing a separate delete operation.
   Future<void> saveReminders(List<ReminderTime> reminders);
+
+  /// Persists [schedule] as the digest's day, time and on/off state (R-2),
+  /// replacing whatever was stored before. Singular, like [saveThemeMode] and
+  /// [savePalette] — there is one digest schedule, not a list to add to or
+  /// remove from the way [saveReminders] manages.
+  Future<void> saveDigestSchedule(DigestTime schedule);
 }
 
 /// The default [SettingsStore], backed by `SharedPreferences`.
@@ -309,6 +379,7 @@ class SharedPreferencesSettingsStore implements SettingsStore {
   String get _themeKey => '$prefix.theme_mode';
   String get _paletteKey => '$prefix.appearance_palette';
   String get _remindersKey => '$prefix.reminders';
+  String get _digestKey => '$prefix.digest';
 
   @override
   Future<AppSettings> load() async {
@@ -322,6 +393,7 @@ class SharedPreferencesSettingsStore implements SettingsStore {
       themeMode: ThemeModeSetting.fromId(prefs.getString(_themeKey)),
       palette: JournalPalette.fromId(prefs.getString(_paletteKey)),
       reminders: _decodeReminders(prefs.getString(_remindersKey)),
+      digest: _decodeDigestSchedule(prefs.getString(_digestKey)),
     );
   }
 
@@ -349,6 +421,39 @@ class SharedPreferencesSettingsStore implements SettingsStore {
   Future<void> saveReminders(List<ReminderTime> reminders) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_remindersKey, _encodeReminders(reminders));
+  }
+
+  @override
+  Future<void> saveDigestSchedule(DigestTime schedule) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_digestKey, _encodeDigestSchedule(schedule));
+  }
+
+  String _encodeDigestSchedule(DigestTime schedule) => jsonEncode({
+    'weekday': schedule.weekday,
+    'hour': schedule.hour,
+    'minute': schedule.minute,
+    'enabled': schedule.enabled,
+  });
+
+  /// Decodes a stored digest schedule, or falls back to
+  /// [kDefaultDigestSchedule] — for [raw] being `null` (nothing saved yet, a
+  /// fresh install) or unreadable JSON, the same two cases
+  /// [_decodeReminders] falls back for.
+  DigestTime _decodeDigestSchedule(String? raw) {
+    if (raw == null) return kDefaultDigestSchedule;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return kDefaultDigestSchedule;
+      return DigestTime(
+        weekday: (decoded['weekday'] as num?)?.toInt() ?? DateTime.sunday,
+        hour: (decoded['hour'] as num?)?.toInt() ?? 18,
+        minute: (decoded['minute'] as num?)?.toInt() ?? 0,
+        enabled: decoded['enabled'] as bool? ?? false,
+      );
+    } on FormatException {
+      return kDefaultDigestSchedule;
+    }
   }
 
   String _encodeReminders(List<ReminderTime> reminders) => jsonEncode([
