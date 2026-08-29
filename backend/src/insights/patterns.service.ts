@@ -11,6 +11,7 @@ import {
   serializeDate,
   serializeDateTime,
   todayLocal,
+  type NaiveDateTime,
   type PlainDate,
 } from '../db/codecs';
 import { DIARY_DB } from '../db/database.provider';
@@ -20,6 +21,8 @@ import { TopicsService } from '../topics/topics.service';
 import {
   associationFrom,
   confounderSplit,
+  contextFactorsForEntry,
+  contextNarrative,
   daysBetween,
   forwardNarrative,
   historicalNote,
@@ -34,6 +37,8 @@ import {
 } from './analysis';
 import {
   CONFIRMED_FEELING_SOURCES,
+  CONTEXT_FACTORS,
+  MAX_CONTEXT_PATTERNS,
   MAX_INVERSE_PATTERNS,
   MAX_WITHDRAWAL_RECORDS,
   MIN_COMPARISON_ENTRIES,
@@ -77,7 +82,14 @@ export function observationFor(
   return forwardNarrative(feelingKey, topic, association, RECENCY_WINDOW_DAYS);
 }
 
-export type PatternKind = 'forward' | 'inverse';
+/**
+ * `'context'` is #21's addition: a pattern whose "present" side is a passive context factor
+ * (`weekday:sunday`, `timeofday:evening`, …) rather than an extracted topic. It is deliberately a
+ * third value on the same type, not a separate one — `badgeDirectionFor`/`directionFor` switch on
+ * `kind`, and a context pattern must fall through their `!== 'inverse'` branch unchanged rather than
+ * forking the badge logic for a third time.
+ */
+export type PatternKind = 'forward' | 'inverse' | 'context';
 export type PatternStatus = 'active' | 'historical';
 /**
  * Why a pattern stopped qualifying — a fixed set decided by data, never by a model (A2-02).
@@ -142,6 +154,44 @@ export interface PatternOut {
   confounders: ConfounderOut[];
   evidence: EvidenceOut[];
   last_updated_at: string;
+}
+
+/**
+ * A passive context pattern (#21) — deliberately a leaner shape than `PatternOut`. There is no
+ * `suggestion_text` (nothing is phrased by the LLM for these — the worker never sees them),
+ * no `confounders` (that annotation is about topic entanglement, and context factors are never
+ * paired with each other or checked for entanglement — task 4's flooding guard), and no
+ * `last_updated_at` (nothing here is stored, so there is no "last changed" moment to report — every
+ * field is recomputed fresh on every `GET /insights`, same as `WhenInsights`).
+ */
+export interface ContextPatternOut {
+  /** Deterministic, not random (contrast `PatternOut.id`) — the same `factor`+`feeling` always
+   *  produces the same id, because nothing persists this row for a client to key off instead. */
+  id: string;
+  kind: 'context';
+  /** e.g. `weekday:sunday`, `timeofday:evening` — see `CONTEXT_FACTORS` for the full set. */
+  factor: string;
+  factor_category: 'weekday' | 'daytype' | 'timeofday' | 'season';
+  /** e.g. `Sunday`, `Evening` — the display label from `CONTEXT_FACTORS`. */
+  factor_label: string;
+  feeling: string;
+  occurrence_count: number;
+  lifetime_count: number;
+  status: PatternStatus;
+  direction: PatternDirection;
+  narrative_text: string;
+  present_count: number;
+  present_total: number;
+  absent_count: number;
+  absent_total: number;
+  present_rate: number | null;
+  absent_rate: number | null;
+  base_rate: number;
+  lift: number | null;
+  comparison_reason: string | null;
+  comparison_note: string | null;
+  is_strong: boolean;
+  evidence: EvidenceOut[];
 }
 
 export interface WithdrawalOut {
@@ -249,6 +299,27 @@ export function comparisonNoteFor(
   }
 }
 
+/**
+ * `comparisonNoteFor`'s counterpart for a context pattern (#21).
+ *
+ * Not a fork of the same wording with a topic swapped in: `comparisonNoteFor`'s phrasing depends on
+ * `kind` to say "without work" vs "mentioning work", and neither reads naturally for a context
+ * factor ("without Sundays"). The reason codes and their meaning are identical — this only changes
+ * how each is put into words.
+ */
+export function contextComparisonNoteFor(reason: string | null): string | null {
+  switch (reason) {
+    case 'insufficient_comparison':
+      return 'Not enough other entries to compare — this is an observation, not yet evidence.';
+    case 'no_absent_occurrences':
+      return 'This feeling does not appear in any other entry, so there is no ratio to state.';
+    case 'no_window_evidence':
+      return `Nothing in the last ${RECENCY_WINDOW_DAYS} days to compare — this pattern is historical.`;
+    default:
+      return null;
+  }
+}
+
 interface LoadedEntry {
   id: string;
   entryDate: PlainDate;
@@ -271,6 +342,24 @@ interface Candidate {
   baseRate: number;
   evidenceIds: string[];
   confounders: ConfounderSplit[];
+}
+
+/** #21: what `contextPatterns` needs from an entry — no topics, no raw text, no side effects. */
+interface ContextLoadedEntry {
+  id: string;
+  entryDate: PlainDate;
+  createdAt: NaiveDateTime;
+  feelingKeys: string[];
+}
+
+/** #21: one `(contextFactor, feelingKey)` candidate, before the lift cap and the top-N-by-lift cut. */
+interface ContextCandidate {
+  factor: string;
+  feelingKey: string;
+  lifetimeCount: number;
+  association: Association;
+  baseRate: number;
+  evidenceIds: string[];
 }
 
 @Injectable()
@@ -584,6 +673,259 @@ export class PatternsService {
   }
 
   // -------------------------------------------------------------------------------------------
+  // Context patterns (#21)
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * Every confirmed entry's date and time, with nothing else loaded — no topic extraction, no raw
+   * text. Unlike `loadEvidenceEntries`, this has no side effect on the database: context factors are
+   * derived, not extracted, so there is nothing here to re-scan on every call.
+   */
+  private loadContextEntries(): ContextLoadedEntry[] {
+    const placeholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT e.id, e.entry_date, e.created_at, ef.feeling_key
+         FROM diary_entries e
+         JOIN entry_feelings ef ON ef.entry_id = e.id
+         WHERE e.feeling_source IN (${placeholders})
+         ORDER BY e.entry_date, e.id, ef.position`,
+      )
+      .all(...CONFIRMED_FEELING_SOURCES) as Array<{
+      id: string;
+      entry_date: string;
+      created_at: string;
+      feeling_key: string;
+    }>;
+
+    const byEntry = new Map<string, ContextLoadedEntry>();
+    for (const row of rows) {
+      let entry = byEntry.get(row.id);
+      if (!entry) {
+        entry = {
+          id: row.id,
+          entryDate: decodeDate(row.entry_date),
+          createdAt: decodeDateTime(row.created_at),
+          feelingKeys: [],
+        };
+        byEntry.set(row.id, entry);
+      }
+      entry.feelingKeys.push(row.feeling_key);
+    }
+    return [...byEntry.values()];
+  }
+
+  /** `key → valence`, shared by `storeCandidates` (persisted patterns) and `contextPatterns`. */
+  private feelingValences(): Map<string, string> {
+    return new Map(
+      (
+        this.db.prepare('SELECT "key", valence FROM feelings').all() as Array<{
+          key: string;
+          valence: string;
+        }>
+      ).map((row) => [row.key, row.valence]),
+    );
+  }
+
+  /**
+   * Task 1–4 of #21: weekday/day-type/time-of-day/season, run through the exact same 2×2 + lift
+   * machinery `buildCandidates` uses for topics — `associationFrom`, `suppressedByLift`,
+   * `MIN_OCCURRENCE_THRESHOLD`, `MIN_LIFT`, all imported unchanged from `analysis.ts`/`constants.ts`.
+   *
+   * Two differences from the topic side, both deliberate:
+   *
+   *  - **Forward-only.** There is no context "inverse" here (I1's absent-side view) and no
+   *    confounder annotation (I2's entanglement check) — a context factor's absence is a fact about
+   *    every *other* factor in its category at once (an entry not on Sunday is on one of six other
+   *    days), which is not the single well-defined complement a topic's absence is. Extending both
+   *    is explicitly future work, not attempted here.
+   *  - **Never stored.** Nothing here touches `patterns`, `pattern_entries` or
+   *    `pattern_withdrawals` — recomputed whole on every call, so there is no persisted state a
+   *    pattern could be "withdrawn" from. A context pattern that no longer qualifies simply does not
+   *    appear in the next response; that *is* this feature's withdrawal semantics (task 2).
+   */
+  contextPatterns(): ContextPatternOut[] {
+    const entries = this.loadContextEntries();
+    const today = todayLocal();
+    const inWindow = entries.filter((entry) =>
+      withinWindow(entry.entryDate, today, RECENCY_WINDOW_DAYS),
+    );
+    const windowTotal = inWindow.length;
+
+    // Entry-level sets, exactly as `buildCandidates` keeps them for topics — an entry with three
+    // feelings must not outvote a quiet week any more here than it does there.
+    const entriesWithFactor = new Map<string, Set<string>>();
+    const entriesWithFeeling = new Map<string, Set<string>>();
+    for (const entry of inWindow) {
+      for (const factor of contextFactorsForEntry(entry.entryDate, entry.createdAt)) {
+        if (!entriesWithFactor.has(factor)) entriesWithFactor.set(factor, new Set());
+        entriesWithFactor.get(factor)!.add(entry.id);
+      }
+      for (const feelingKey of entry.feelingKeys) {
+        if (!entriesWithFeeling.has(feelingKey)) entriesWithFeeling.set(feelingKey, new Set());
+        entriesWithFeeling.get(feelingKey)!.add(entry.id);
+      }
+    }
+
+    // Lifetime counts decide whether a pattern exists at all; the window decides whether it is
+    // active — the same split `buildCandidates` makes for topics (I3-03).
+    const lifetimeCounts = new Map<string, number>();
+    for (const entry of entries) {
+      for (const factor of contextFactorsForEntry(entry.entryDate, entry.createdAt)) {
+        for (const feelingKey of entry.feelingKeys) {
+          const key = `${factor} ${feelingKey}`;
+          lifetimeCounts.set(key, (lifetimeCounts.get(key) ?? 0) + 1);
+        }
+      }
+    }
+
+    const association = (factor: string, feelingKey: string): Association => {
+      const withFactor = entriesWithFactor.get(factor) ?? new Set<string>();
+      const withFeeling = entriesWithFeeling.get(feelingKey) ?? new Set<string>();
+      let presentCount = 0;
+      for (const id of withFactor) if (withFeeling.has(id)) presentCount += 1;
+      const presentTotal = withFactor.size;
+      const absentTotal = windowTotal - presentTotal;
+      const absentCount = withFeeling.size - presentCount;
+      return associationFrom(presentCount, presentTotal, absentCount, absentTotal);
+    };
+
+    const baseRateFor = (feelingKey: string): number =>
+      windowTotal === 0 ? 0 : (entriesWithFeeling.get(feelingKey)?.size ?? 0) / windowTotal;
+
+    const evidenceIn = (predicate: (entry: ContextLoadedEntry) => boolean): string[] =>
+      inWindow
+        .filter(predicate)
+        // A1-04, applied here too: oldest first, ties broken by id.
+        .sort(
+          (a, b) =>
+            daysBetween(b.entryDate, a.entryDate) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        )
+        .map((entry) => entry.id);
+
+    const candidates: ContextCandidate[] = [];
+    for (const [key, lifetimeCount] of lifetimeCounts) {
+      if (lifetimeCount < MIN_OCCURRENCE_THRESHOLD) continue;
+      const [factor, feelingKey] = key.split(' ');
+      const assoc = association(factor, feelingKey);
+      // A3-04, unchanged: only a computed lift can suppress a candidate.
+      if (suppressedByLift(assoc)) continue;
+
+      candidates.push({
+        factor,
+        feelingKey,
+        lifetimeCount,
+        association: assoc,
+        baseRate: baseRateFor(feelingKey),
+        evidenceIds: evidenceIn(
+          (entry) =>
+            contextFactorsForEntry(entry.entryDate, entry.createdAt).includes(factor) &&
+            entry.feelingKeys.includes(feelingKey),
+        ),
+      });
+    }
+
+    // Task 4's flooding guard: ranked by lift and cut to `MAX_CONTEXT_PATTERNS`, the same shape
+    // I1-06 already uses for inverse patterns — except a null lift here sorts *last*, not first.
+    // An inverse pattern's null lift means "no counter-example at all", the strongest finding a
+    // diary can hold; a context factor's null lift usually just means too few entries outside a
+    // 30-day window to compare against (`insufficient_comparison`), which is weaker evidence, not
+    // stronger, and ranking it above a computed 4× lift would flood the cap with exactly the
+    // candidates it exists to hold back.
+    const rank = (candidate: ContextCandidate): string =>
+      `${candidate.factor} ${candidate.feelingKey}`;
+    candidates.sort(
+      (a, b) =>
+        (b.association.lift ?? Number.NEGATIVE_INFINITY) -
+          (a.association.lift ?? Number.NEGATIVE_INFINITY) ||
+        b.association.presentCount - a.association.presentCount ||
+        rank(a).localeCompare(rank(b)),
+    );
+
+    const valences = this.feelingValences();
+    const factorInfo = new Map(CONTEXT_FACTORS.map((factor) => [factor.key, factor]));
+
+    return candidates.slice(0, MAX_CONTEXT_PATTERNS).map((candidate): ContextPatternOut => {
+      const info = factorInfo.get(candidate.factor)!;
+      const assoc = candidate.association;
+      const kind: PatternKind = 'context';
+      const status: PatternStatus =
+        assoc.presentCount >= MIN_OCCURRENCE_THRESHOLD ? 'active' : 'historical';
+
+      return {
+        id: `context:${candidate.factor}:${candidate.feelingKey}`,
+        kind,
+        factor: candidate.factor,
+        factor_category: info.category,
+        factor_label: info.label,
+        feeling: candidate.feelingKey,
+        occurrence_count: assoc.presentCount,
+        lifetime_count: candidate.lifetimeCount,
+        status,
+        // #21's explicit instruction: go through the one function the badge is decided by, not a
+        // fork of it. `kind: 'context'` falls through its `!== 'inverse'` branch, unchanged.
+        direction: badgeDirectionFor(kind, valences.get(candidate.feelingKey) ?? 'neutral'),
+        narrative_text: contextNarrative(candidate.feelingKey, info.phrase, assoc),
+        present_count: assoc.presentCount,
+        present_total: assoc.presentTotal,
+        absent_count: assoc.absentCount,
+        absent_total: assoc.absentTotal,
+        present_rate: assoc.presentRate,
+        absent_rate: assoc.absentRate,
+        base_rate: candidate.baseRate,
+        lift: assoc.lift,
+        comparison_reason: assoc.comparisonReason,
+        comparison_note: contextComparisonNoteFor(assoc.comparisonReason),
+        is_strong: isStrong(assoc, assoc.presentCount),
+        evidence: this.evidenceRows(candidate.evidenceIds),
+      };
+    });
+  }
+
+  /** The evidence trail for a set of entry ids, in the shape `PatternOut`/`ContextPatternOut` share. */
+  private evidenceRows(entryIds: string[]): EvidenceOut[] {
+    if (entryIds.length === 0) return [];
+    const placeholders = entryIds.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT e.id, e.entry_date, e.raw_text, e.feeling_source
+         FROM diary_entries e WHERE e.id IN (${placeholders})`,
+      )
+      .all(...entryIds) as Array<{
+      id: string;
+      entry_date: string;
+      raw_text: string;
+      feeling_source: string;
+    }>;
+
+    const feelingsByEntry = new Map<string, string[]>();
+    if (rows.length > 0) {
+      for (const row of this.db
+        .prepare(
+          `SELECT entry_id, feeling_key FROM entry_feelings WHERE entry_id IN (${placeholders})
+           ORDER BY entry_id, position`,
+        )
+        .all(...entryIds) as Array<{ entry_id: string; feeling_key: string }>) {
+        if (!feelingsByEntry.has(row.entry_id)) feelingsByEntry.set(row.entry_id, []);
+        feelingsByEntry.get(row.entry_id)!.push(row.feeling_key);
+      }
+    }
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    // Preserve the caller's order (`evidenceIn`'s oldest-first sort) rather than the SQL's.
+    return entryIds
+      .map((id) => byId.get(id))
+      .filter((row): row is (typeof rows)[number] => row !== undefined)
+      .map((row) => ({
+        entry_id: row.id,
+        entry_date: serializeDate(decodeDate(row.entry_date)),
+        raw_text: row.raw_text,
+        feeling_keys: feelingsByEntry.get(row.id) ?? [],
+        feeling_source: row.feeling_source,
+      }));
+  }
+
+  // -------------------------------------------------------------------------------------------
   // Storage
   // -------------------------------------------------------------------------------------------
 
@@ -621,14 +963,7 @@ export class PatternsService {
       existing.set(`${row.kind} ${row.topic_id} ${row.feeling_key}`, row);
     }
 
-    const valences = new Map(
-      (
-        this.db.prepare('SELECT "key", valence FROM feelings').all() as Array<{
-          key: string;
-          valence: string;
-        }>
-      ).map((row) => [row.key, row.valence]),
-    );
+    const valences = this.feelingValences();
 
     const seen = new Set<string>();
     const now = encodeDateTime(nowUtc());

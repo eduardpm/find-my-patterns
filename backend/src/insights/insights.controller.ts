@@ -1,6 +1,11 @@
 import { Controller, Get, HttpCode, HttpException, HttpStatus, Post, Query } from '@nestjs/common';
 import { engineConstants, type EngineConstants } from './constants';
-import { PatternsService, type PatternOut, type WithdrawalOut } from './patterns.service';
+import {
+  PatternsService,
+  type ContextPatternOut,
+  type PatternOut,
+  type WithdrawalOut,
+} from './patterns.service';
 import {
   InvalidSeriesRangeError,
   SeriesService,
@@ -15,6 +20,15 @@ export interface InsightsOut {
   new_withdrawal_count: number;
   insufficient_data: boolean;
   constants: EngineConstants;
+  /**
+   * #21: passive weekday/day-type/time-of-day/season patterns, in their own array so an existing
+   * client — this API predates it and both `web/` and `mobile/` decode this payload — reads exactly
+   * the fields it already knew about and silently ignores this one until its own UI ticket lands.
+   * `insufficient_data` is unaffected by this array on purpose: it is still computed from `patterns`
+   * alone, the same as before #21 (a diary with only context patterns and no topic ones was already
+   * "not enough topic evidence" before this array existed, and stays that way).
+   */
+  context_patterns: ContextPatternOut[];
 }
 
 @Controller('insights')
@@ -51,6 +65,10 @@ export class InsightsController {
       // The client branches on this flag, not on array length.
       insufficient_data: patterns.length === 0,
       constants: engineConstants(),
+      // #21: computed fresh on every read, same as `patterns` — but never persisted, so there is no
+      // recompute step for it to depend on. Ordering after `recomputePatterns()` regardless, so a
+      // request that also just wrote entries sees the same up-to-date `diary_entries` rows.
+      context_patterns: this.patterns.contextPatterns(),
     };
   }
 

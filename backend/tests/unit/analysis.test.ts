@@ -11,13 +11,17 @@ import {
   associationFrom,
   averageValence,
   confounderSplit,
+  contextFactorsForEntry,
+  contextNarrative,
   daysBetween,
+  dayTypeFor,
   forwardNarrative,
   historicalNote,
   invert,
   inverseNarrative,
   isStrong,
   percent,
+  seasonFor,
   suppressedByLift,
   timeOfDayBucket,
   trajectorySignal,
@@ -205,5 +209,65 @@ describe('trajectory signal (I6-05)', () => {
 
   it('contributes nothing at all for an entry with no feeling — not recorded is not neutral', () => {
     expect(trajectorySignal({ valence: null, intensity: 3 })).toBeNull();
+  });
+});
+
+describe('passive context factors (#21)', () => {
+  it('calls only Saturday and Sunday a weekend', () => {
+    expect(dayTypeFor({ year: 2026, month: 8, day: 24 })).toBe('weekday'); // Monday
+    expect(dayTypeFor({ year: 2026, month: 8, day: 28 })).toBe('weekday'); // Friday
+    expect(dayTypeFor({ year: 2026, month: 8, day: 29 })).toBe('weekend'); // Saturday
+    expect(dayTypeFor({ year: 2026, month: 8, day: 30 })).toBe('weekend'); // Sunday
+  });
+
+  it('files every month into exactly one meteorological season', () => {
+    expect(seasonFor({ year: 2026, month: 1, day: 15 })).toBe('winter');
+    expect(seasonFor({ year: 2026, month: 4, day: 15 })).toBe('spring');
+    expect(seasonFor({ year: 2026, month: 7, day: 15 })).toBe('summer');
+    expect(seasonFor({ year: 2026, month: 10, day: 15 })).toBe('autumn');
+    expect(seasonFor({ year: 2026, month: 12, day: 15 })).toBe('winter');
+  });
+
+  it('derives exactly one key per category, from the date and time alone', () => {
+    const factors = contextFactorsForEntry({ year: 2026, month: 8, day: 30 }, at(21));
+    expect(factors).toEqual([
+      'weekday:sunday',
+      'daytype:weekend',
+      'timeofday:evening',
+      'season:summer',
+    ]);
+  });
+
+  it('never derives a second key in the same category for one entry', () => {
+    const categories = (factor: string) => factor.split(':')[0];
+    for (const [entryDate, createdAt] of [
+      [{ year: 2026, month: 1, day: 5 }, at(6)],
+      [{ year: 2026, month: 8, day: 24 }, at(13)],
+      [{ year: 2026, month: 12, day: 31 }, at(0)],
+    ] as const) {
+      const factors = contextFactorsForEntry(entryDate, createdAt);
+      expect(new Set(factors.map(categories)).size).toBe(factors.length);
+    }
+  });
+
+  it('reads like the topic sentence, with the context phrase in place of "mentioning X"', () => {
+    const text = contextNarrative('anxious', 'on Sundays', associationFrom(8, 12, 3, 28));
+    expect(text).toBe(
+      'You felt anxious in 8 of 12 entries on Sundays in the last 30 days (67%), ' +
+        'and in 3 of 28 other entries (11%).',
+    );
+    expect(text).not.toMatch(/\brecent\b/i);
+  });
+
+  it('says so plainly when the comparison could not be made, same as the topic card', () => {
+    expect(contextNarrative('anxious', 'on Sundays', associationFrom(4, 4, 0, 0))).toContain(
+      'There are not enough other entries to compare.',
+    );
+  });
+
+  it('states plainly when the window holds nothing for this factor at all', () => {
+    expect(contextNarrative('anxious', 'on Sundays', associationFrom(0, 0, 4, 20))).toBe(
+      'You have no entries on Sundays in the last 30 days.',
+    );
   });
 });

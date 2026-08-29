@@ -119,6 +119,76 @@ export const WEEKDAYS = [
   { key: 'sunday', label: 'Sunday' },
 ] as const;
 
+/** #21: `weekdayIndex` ≥ this is Saturday or Sunday — the only two days `dayTypeFor` calls a weekend. */
+export const WEEKEND_START_INDEX = 5;
+
+export const DAY_TYPES = [
+  { key: 'weekday', label: 'Weekday' },
+  { key: 'weekend', label: 'Weekend' },
+] as const;
+export type DayTypeKey = (typeof DAY_TYPES)[number]['key'];
+
+/**
+ * #21: which months fall in which meteorological season, northern-hemisphere convention — the same
+ * one implied everywhere else a season word already appears in the product's copy. Astronomical
+ * boundaries (equinox/solstice dates) were rejected: they move by a day or two each year, which
+ * would make the same calendar date file under a different season depending on when the diary is
+ * read, and this engine's whole premise is that a number is reproducible from the diary alone.
+ */
+export const SEASONS = [
+  { key: 'winter', label: 'Winter', months: [12, 1, 2] },
+  { key: 'spring', label: 'Spring', months: [3, 4, 5] },
+  { key: 'summer', label: 'Summer', months: [6, 7, 8] },
+  { key: 'autumn', label: 'Autumn', months: [9, 10, 11] },
+] as const;
+export type SeasonKey = (typeof SEASONS)[number]['key'];
+
+/**
+ * #21: the passive context factors an entry carries, purely from `entry_date` and `created_at` — no
+ * schema change, no stored rows (see `analysis.ts#contextFactorsForEntry`, the only place these keys
+ * are derived). `phrase` is the fragment `analysis.ts#contextNarrative` drops into "You felt X in N
+ * of M entries {phrase} …", so every context pattern's wording comes from this one table rather than
+ * a switch statement client code and server code could each write differently.
+ */
+export const CONTEXT_FACTORS: ReadonlyArray<{
+  key: string;
+  category: 'weekday' | 'daytype' | 'timeofday' | 'season';
+  label: string;
+  phrase: string;
+}> = [
+  ...WEEKDAYS.map((day) => ({
+    key: `weekday:${day.key}`,
+    category: 'weekday' as const,
+    label: day.label,
+    phrase: `on ${day.label}s`,
+  })),
+  ...DAY_TYPES.map((dayType) => ({
+    key: `daytype:${dayType.key}`,
+    category: 'daytype' as const,
+    label: dayType.label,
+    phrase: `on ${dayType.label.toLowerCase()}s`,
+  })),
+  ...TIME_OF_DAY_BUCKETS.map((bucket) => ({
+    key: `timeofday:${bucket.key}`,
+    category: 'timeofday' as const,
+    label: bucket.label,
+    phrase: `in the ${bucket.label.toLowerCase()}`,
+  })),
+  ...SEASONS.map((season) => ({
+    key: `season:${season.key}`,
+    category: 'season' as const,
+    label: season.label,
+    phrase: `in ${season.label.toLowerCase()}`,
+  })),
+];
+
+/**
+ * I1-06's counterpart for context patterns (#21 task 4): with 16 candidate factors × every
+ * confirmed feeling, an unranked list could show more "time of day" cards than topic ones. Ranked
+ * by lift, same as `MAX_INVERSE_PATTERNS`, and for the same reason.
+ */
+export const MAX_CONTEXT_PATTERNS = 8;
+
 /** Only a feeling the user acted on is evidence — a mere suggestion is not a fact (FR-012, C-04). */
 export const CONFIRMED_FEELING_SOURCES = ['confirmed', 'overridden'];
 
