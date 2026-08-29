@@ -162,102 +162,118 @@ class EntryComposerScreen extends ConsumerWidget {
         body: Stack(
           children: [
             const Positioned.fill(child: JournalPageWash()),
-            Padding(
-              padding: const EdgeInsets.all(JournalSpacing.x5),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (state.isBackdated) ...[
-                    _TargetDateChip(date: state.targetDate),
-                    const SizedBox(height: JournalSpacing.x4),
-                  ],
-                  if (state.restoredDraftAt case final savedAt?) ...[
-                    _RestoredDraftNotice(
-                      savedAt: savedAt,
-                      onDismiss: controller.dismissDraftNotice,
-                      onStartFresh: () => unawaited(controller.discardDraft()),
-                    ),
-                    const SizedBox(height: JournalSpacing.x4),
-                  ],
-                  Expanded(
-                    child: switch (state.stage) {
-                      GuidedStage() => GuidedQuestionFlow(
-                        library: state.guidingQuestions,
-                        answers: state.guidedAnswers,
-                        stepIndex: state.guidedStepIndex,
-                        onAnswerChange: controller.updateGuidedAnswer,
-                        onStepChange: controller.updateGuidedStep,
-                        onBypassToFreeform: controller.switchToFreeform,
-                        onComplete: controller.saveGuided,
-                        recorder: recorder,
-                        transcriptionDelay: transcriptionDelay,
+            // `top: false` -- unlike every full-bleed `ListView` screen in
+            // this app, this one sits under an [AppBar], which already
+            // wraps itself in its own `SafeArea(bottom: false)` (see the
+            // framework's `AppBar` build method) and reserves the status
+            // bar inset as part of its own height. Re-adding the top inset
+            // here would double it. The bottom, left and right insets are
+            // not spoken for by anything else on this screen -- there is no
+            // bottom nav bar under a pushed route like this one -- so a
+            // system gesture bar or a landscape display cutout would
+            // otherwise sit on top of whichever stage's own bottom button
+            // (`Save entry`, `Confirm`, `Done`) happens to be on screen.
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(JournalSpacing.x5),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (state.isBackdated) ...[
+                      _TargetDateChip(date: state.targetDate),
+                      const SizedBox(height: JournalSpacing.x4),
+                    ],
+                    if (state.restoredDraftAt case final savedAt?) ...[
+                      _RestoredDraftNotice(
+                        savedAt: savedAt,
+                        onDismiss: controller.dismissDraftNotice,
+                        onStartFresh: () =>
+                            unawaited(controller.discardDraft()),
                       ),
-                      FreeformStage() => _FreeformStep(
-                        text: state.freeformText,
-                        onTextChange: controller.updateFreeformText,
-                        onBackToGuided: controller.switchToGuided,
-                        onSave: controller.saveFreeform,
-                        isSaving: state.isSaving,
-                        recorder: recorder,
-                        transcriptionDelay: transcriptionDelay,
-                      ),
-                      ConfirmFeelingStage(:final entry) => _ConfirmFeelingStep(
-                        entry: entry,
-                        groups: state.feelingGroups,
-                        constants: state.constants,
-                        isSaving: state.isSaving,
-                        isPollingSuggestions: state.isPollingSuggestions,
-                        onConfirm: (feelings, intensities) async {
-                          final finished = await controller.confirmFeelings(
-                            entryId: entry.id,
-                            version: entry.version,
-                            feelings: feelings,
-                            intensities: intensities,
-                          );
-                          if (finished) done();
-                        },
-                      ),
-                      PairingStage(:final entry) => PairingStep(
-                        entry: entry,
-                        isSaving: state.isSaving,
-                        onConfirm: (pairings) async {
-                          final finished = await controller.confirmPairing(
-                            entryId: entry.id,
-                            pairings: pairings,
-                          );
-                          if (finished) done();
-                        },
-                        onSkip: () async {
-                          final finished = await controller.skipPairing(
-                            entry.id,
-                          );
-                          if (finished) done();
-                        },
-                      ),
-                      EchoStage(
-                        :final echoes,
-                        :final celebratedPattern,
-                        :final progress,
-                      ) =>
-                        _EchoStep(
-                          echoes: echoes,
-                          celebratedPattern: celebratedPattern,
-                          progress: progress,
-                          onDone: done,
-                          onCelebrationTap: () {
-                            // Same destination a tap on the first-pattern
-                            // notification reaches (#38) -- one signal, one
-                            // `app.dart` listener, whether the tap came
-                            // from this in-app card or from the OS.
-                            ref
-                                .read(openInsightsSignalProvider.notifier)
-                                .bump();
-                            done();
+                      const SizedBox(height: JournalSpacing.x4),
+                    ],
+                    Expanded(
+                      child: switch (state.stage) {
+                        GuidedStage() => GuidedQuestionFlow(
+                          library: state.guidingQuestions,
+                          answers: state.guidedAnswers,
+                          stepIndex: state.guidedStepIndex,
+                          onAnswerChange: controller.updateGuidedAnswer,
+                          onStepChange: controller.updateGuidedStep,
+                          onBypassToFreeform: controller.switchToFreeform,
+                          onComplete: controller.saveGuided,
+                          recorder: recorder,
+                          transcriptionDelay: transcriptionDelay,
+                        ),
+                        FreeformStage() => _FreeformStep(
+                          text: state.freeformText,
+                          onTextChange: controller.updateFreeformText,
+                          onBackToGuided: controller.switchToGuided,
+                          onSave: controller.saveFreeform,
+                          isSaving: state.isSaving,
+                          recorder: recorder,
+                          transcriptionDelay: transcriptionDelay,
+                        ),
+                        ConfirmFeelingStage(:final entry) =>
+                          _ConfirmFeelingStep(
+                            entry: entry,
+                            groups: state.feelingGroups,
+                            constants: state.constants,
+                            isSaving: state.isSaving,
+                            isPollingSuggestions: state.isPollingSuggestions,
+                            onConfirm: (feelings, intensities) async {
+                              final finished = await controller.confirmFeelings(
+                                entryId: entry.id,
+                                version: entry.version,
+                                feelings: feelings,
+                                intensities: intensities,
+                              );
+                              if (finished) done();
+                            },
+                          ),
+                        PairingStage(:final entry) => PairingStep(
+                          entry: entry,
+                          isSaving: state.isSaving,
+                          onConfirm: (pairings) async {
+                            final finished = await controller.confirmPairing(
+                              entryId: entry.id,
+                              pairings: pairings,
+                            );
+                            if (finished) done();
+                          },
+                          onSkip: () async {
+                            final finished = await controller.skipPairing(
+                              entry.id,
+                            );
+                            if (finished) done();
                           },
                         ),
-                    },
-                  ),
-                ],
+                        EchoStage(
+                          :final echoes,
+                          :final celebratedPattern,
+                          :final progress,
+                        ) =>
+                          _EchoStep(
+                            echoes: echoes,
+                            celebratedPattern: celebratedPattern,
+                            progress: progress,
+                            onDone: done,
+                            onCelebrationTap: () {
+                              // Same destination a tap on the first-pattern
+                              // notification reaches (#38) -- one signal, one
+                              // `app.dart` listener, whether the tap came
+                              // from this in-app card or from the OS.
+                              ref
+                                  .read(openInsightsSignalProvider.notifier)
+                                  .bump();
+                              done();
+                            },
+                          ),
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
             if (state.isSaving && state.stage is! ConfirmFeelingStage)
