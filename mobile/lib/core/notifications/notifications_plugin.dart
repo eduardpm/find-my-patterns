@@ -57,6 +57,23 @@ abstract interface class NotificationsPlugin {
   ///
   /// `null` on any platform other than Darwin ones.
   Future<bool?> requestDarwinNotificationsPermission();
+
+  /// Whether this app can currently post notifications, without prompting.
+  ///
+  /// Unlike [requestAndroidNotificationsPermission], this never shows the
+  /// system dialog — it just reads the current answer, which is what lets a
+  /// returning user see an accurate "notifications are off" note on the
+  /// Reminders card without the OS asking them again on every visit.
+  ///
+  /// `null` on any platform other than Android, where there is no equivalent
+  /// read-only check.
+  Future<bool?> areNotificationsEnabled();
+
+  /// Opens the OS notification-settings screen for this app.
+  ///
+  /// Returns whether an activity could be launched. `null` on any platform
+  /// other than Android.
+  Future<bool?> openNotificationSettings();
 }
 
 /// The real [NotificationsPlugin], backed by the plugin's own singleton.
@@ -121,4 +138,18 @@ class const DefaultNotificationsPlugin() implements NotificationsPlugin {
         IOSFlutterLocalNotificationsPlugin
       >()
       ?.requestPermissions(alert: true, badge: true, sound: true);
+
+  @override
+  Future<bool?> areNotificationsEnabled() async => await _plugin
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >()
+      ?.areNotificationsEnabled();
+
+  @override
+  Future<bool?> openNotificationSettings() async => await _plugin
+      .resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin
+      >()
+      ?.openAppNotificationSettings();
 }

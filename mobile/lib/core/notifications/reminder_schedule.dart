@@ -1,7 +1,10 @@
-/// A daily check-in reminder's fixed clock time.
+/// A daily check-in reminder's wall-clock time.
 ///
-/// Ported from `ReminderScheduler.REMINDER_TIMES` (Kotlin) — see
-/// [kReminderTimes].
+/// Originally ported from `ReminderScheduler.REMINDER_TIMES` (Kotlin), which
+/// fixed every device to the same four slots. Reminders are now user
+/// configured — see `ReminderTime` in `core/settings/settings.dart`, which
+/// pairs an hour and minute like this one with whether the user has turned
+/// it on — so this type stays the bare, schedulable value the two share.
 final class const ReminderSlot(final int hour, final int minute) {
   /// A stable id for this slot, used as both the scheduled-notification id
   /// and the payload that identifies which slot a tap came from.
@@ -25,16 +28,6 @@ final class const ReminderSlot(final int hour, final int minute) {
       '${hour.toString().padLeft(2, '0')}:'
       '${minute.toString().padLeft(2, '0')}';
 }
-
-/// The four fixed daily reminder times, in order.
-///
-/// Ported from `ReminderScheduler.REMINDER_TIMES`.
-const List<ReminderSlot> kReminderTimes = [
-  ReminderSlot(9, 0),
-  ReminderSlot(12, 0),
-  ReminderSlot(18, 0),
-  ReminderSlot(21, 0),
-];
 
 /// The next moment [slot] occurs at or after [now]: later today if the slot's
 /// clock time has not happened yet, otherwise tomorrow.

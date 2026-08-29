@@ -179,9 +179,74 @@ void main() {
     });
   });
 
+  group('ReminderTime', () {
+    test('defaults to off', () {
+      expect(const ReminderTime(hour: 9, minute: 0).enabled, isFalse);
+    });
+
+    test('copyWith replaces only what it is given', () {
+      const reminder = ReminderTime(hour: 9, minute: 0);
+      expect(
+        reminder.copyWith(hour: 10),
+        const ReminderTime(hour: 10, minute: 0),
+      );
+      expect(
+        reminder.copyWith(minute: 30),
+        const ReminderTime(hour: 9, minute: 30),
+      );
+      expect(
+        reminder.copyWith(enabled: true),
+        const ReminderTime(hour: 9, minute: 0, enabled: true),
+      );
+      expect(reminder.copyWith(), reminder);
+    });
+
+    test('equality and hashCode cover every field', () {
+      const a = ReminderTime(hour: 9, minute: 0, enabled: true);
+      expect(a, const ReminderTime(hour: 9, minute: 0, enabled: true));
+      expect(
+        a.hashCode,
+        const ReminderTime(hour: 9, minute: 0, enabled: true).hashCode,
+      );
+      expect(a, isNot(const ReminderTime(hour: 10, minute: 0, enabled: true)));
+      expect(a, isNot(const ReminderTime(hour: 9, minute: 5, enabled: true)));
+      expect(a, isNot(const ReminderTime(hour: 9, minute: 0)));
+      expect(a, isNot(const Object()));
+    });
+
+    test('reads as a zero-padded time with its on/off state', () {
+      expect(
+        const ReminderTime(hour: 9, minute: 0, enabled: true).toString(),
+        '09:00 (on)',
+      );
+      expect(
+        const ReminderTime(hour: 21, minute: 5).toString(),
+        '21:05 (off)',
+      );
+    });
+
+    test('maxCount is six', () {
+      expect(ReminderTime.maxCount, 6);
+    });
+  });
+
+  group('kDefaultReminders', () {
+    test('suggests a morning and an evening slot, both off', () {
+      expect(kDefaultReminders, [
+        const ReminderTime(hour: 9, minute: 0),
+        const ReminderTime(hour: 21, minute: 0),
+      ]);
+      expect(kDefaultReminders.every((r) => !r.enabled), isTrue);
+    });
+  });
+
   group('AppSettings', () {
     test('defaults to the default palette', () {
       expect(const AppSettings().palette, JournalPalette.defaultPalette);
+    });
+
+    test('defaults to the default reminder suggestions', () {
+      expect(const AppSettings().reminders, kDefaultReminders);
     });
 
     test('copyWith replaces only what it is given', () {
@@ -200,6 +265,10 @@ void main() {
       expect(
         settings.copyWith(palette: JournalPalette.sage).palette,
         JournalPalette.sage,
+      );
+      expect(
+        settings.copyWith(reminders: const []).reminders,
+        isEmpty,
       );
       expect(settings.copyWith(), settings);
     });
@@ -240,6 +309,16 @@ void main() {
           const AppSettings(
             themeMode: ThemeModeSetting.dark,
             palette: JournalPalette.dusk,
+          ),
+        ),
+      );
+      expect(
+        a,
+        isNot(
+          AppSettings(
+            themeMode: ThemeModeSetting.dark,
+            palette: JournalPalette.sage,
+            reminders: const [ReminderTime(hour: 1, minute: 1)],
           ),
         ),
       );
@@ -285,6 +364,54 @@ void main() {
       });
       expect((await store.load()).palette, JournalPalette.defaultPalette);
     });
+
+    test(
+      'load returns the default reminder suggestions on a fresh install',
+      () async {
+        expect((await store.load()).reminders, kDefaultReminders);
+      },
+    );
+
+    test(
+      'round-trips a list of reminders, including the enabled flag',
+      () async {
+        const reminders = [
+          ReminderTime(hour: 7, minute: 15, enabled: true),
+          ReminderTime(hour: 13, minute: 0),
+          ReminderTime(hour: 22, minute: 45, enabled: true),
+        ];
+        await store.saveReminders(reminders);
+        expect((await store.load()).reminders, reminders);
+      },
+    );
+
+    test(
+      'an empty saved list is read back as empty, not the default '
+      'suggestions',
+      () async {
+        await store.saveReminders(const []);
+        expect((await store.load()).reminders, isEmpty);
+      },
+    );
+
+    test(
+      'unreadable stored JSON falls back to the default suggestions',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'test.reminders': 'not json',
+        });
+        expect((await store.load()).reminders, kDefaultReminders);
+      },
+    );
+
+    test(
+      'a stored value that is not a JSON list falls back to the default '
+      'suggestions',
+      () async {
+        SharedPreferences.setMockInitialValues({'test.reminders': '{}'});
+        expect((await store.load()).reminders, kDefaultReminders);
+      },
+    );
 
     test('the prefix keeps two apps apart on one device', () async {
       const other = SharedPreferencesSettingsStore(prefix: 'other');

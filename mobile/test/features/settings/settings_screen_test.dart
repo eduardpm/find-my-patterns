@@ -19,13 +19,15 @@ void main() {
   }
 
   testWidgets(
-    'shows appearance, topics, advanced and about sections, in that order',
+    'shows appearance, reminders, topics, advanced and about sections, in '
+    'that order',
     (tester) async {
       useTallScreen(tester);
       await tester.pumpWidget(Harness().scope(_app()));
       await tester.pumpAndSettle();
 
       expect(find.text('Appearance'), findsOneWidget);
+      expect(find.text('Reminders'), findsOneWidget);
       expect(find.text('Topics and aliases'), findsOneWidget);
       expect(find.text('Advanced'), findsOneWidget);
       expect(find.text('About'), findsOneWidget);
@@ -35,10 +37,12 @@ void main() {
       );
 
       final appearanceTop = tester.getTopLeft(find.text('Appearance')).dy;
+      final remindersTop = tester.getTopLeft(find.text('Reminders')).dy;
       final topicsTop = tester.getTopLeft(find.text('Topics and aliases')).dy;
       final advancedTop = tester.getTopLeft(find.text('Advanced')).dy;
       final aboutTop = tester.getTopLeft(find.text('About')).dy;
-      expect(appearanceTop, lessThan(topicsTop));
+      expect(appearanceTop, lessThan(remindersTop));
+      expect(remindersTop, lessThan(topicsTop));
       expect(topicsTop, lessThan(advancedTop));
       expect(advancedTop, lessThan(aboutTop));
     },

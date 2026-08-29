@@ -17,6 +17,9 @@ class FakeSettingsStore implements SettingsStore {
   /// Every palette handed to [savePalette], in order.
   final List<JournalPalette> savedPalettes = [];
 
+  /// Every reminder list handed to [saveReminders], in order.
+  final List<List<ReminderTime>> savedReminders = [];
+
   /// Set to make [load] fail, standing in for unreadable storage.
   Object? loadError;
 
@@ -42,5 +45,11 @@ class FakeSettingsStore implements SettingsStore {
   Future<void> savePalette(JournalPalette palette) async {
     savedPalettes.add(palette);
     _settings = _settings.copyWith(palette: palette);
+  }
+
+  @override
+  Future<void> saveReminders(List<ReminderTime> reminders) async {
+    savedReminders.add(reminders);
+    _settings = _settings.copyWith(reminders: reminders);
   }
 }

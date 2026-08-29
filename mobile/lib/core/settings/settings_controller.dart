@@ -56,6 +56,17 @@ class SettingsController extends AsyncNotifier<AppSettings> {
     state = AsyncData(_current.copyWith(palette: palette));
   }
 
+  /// Saves [reminders] as the full set of configured reminders.
+  ///
+  /// Persistence only — requesting the notification permission and
+  /// (re)scheduling the enabled slots is `RemindersController`'s job
+  /// (`core/notifications/reminder_settings_controller.dart`), which calls
+  /// this as one step of a save rather than duplicating the write here.
+  Future<void> saveReminders(List<ReminderTime> reminders) async {
+    await ref.read(settingsStoreProvider).saveReminders(reminders);
+    state = AsyncData(_current.copyWith(reminders: reminders));
+  }
+
   AppSettings get _current => state.value ?? const AppSettings();
 }
 

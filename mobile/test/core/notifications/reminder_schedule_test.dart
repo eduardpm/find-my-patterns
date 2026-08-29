@@ -2,21 +2,6 @@ import 'package:find_my_patterns/core/notifications/reminder_schedule.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('kReminderTimes', () {
-    test('contains exactly the four spec-required daily times, in order', () {
-      expect(kReminderTimes, [
-        const ReminderSlot(9, 0),
-        const ReminderSlot(12, 0),
-        const ReminderSlot(18, 0),
-        const ReminderSlot(21, 0),
-      ]);
-    });
-
-    test('ids are minute-of-day, so they stay stable across releases', () {
-      expect(kReminderTimes.map((slot) => slot.id), [540, 720, 1080, 1260]);
-    });
-  });
-
   group('nextOccurrence', () {
     test(
       'returns today\'s trigger time when the target has not passed yet',
@@ -134,6 +119,13 @@ void _slotValueSemantics() {
     test('reads as a zero-padded wall-clock time', () {
       expect(const ReminderSlot(9, 0).toString(), '09:00');
       expect(const ReminderSlot(21, 5).toString(), '21:05');
+    });
+
+    test('id is minute-of-day, so it stays stable across releases', () {
+      expect(const ReminderSlot(9, 0).id, 540);
+      expect(const ReminderSlot(12, 0).id, 720);
+      expect(const ReminderSlot(18, 0).id, 1080);
+      expect(const ReminderSlot(21, 5).id, 1265);
     });
   });
 }

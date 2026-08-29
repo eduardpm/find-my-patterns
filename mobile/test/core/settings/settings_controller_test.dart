@@ -140,4 +140,30 @@ void main() {
       );
     });
   });
+
+  group('saveReminders', () {
+    test('stores the reminders and updates the state', () async {
+      final container = containerWith(store);
+      await container.read(settingsProvider.future);
+
+      const reminders = [
+        ReminderTime(hour: 7, minute: 30, enabled: true),
+        ReminderTime(hour: 22, minute: 0),
+      ];
+      await container.read(settingsProvider.notifier).saveReminders(reminders);
+
+      expect(store.savedReminders.single, reminders);
+      expect(container.read(settingsProvider).value?.reminders, reminders);
+    });
+
+    test('an empty list is stored and read back as empty', () async {
+      final container = containerWith(store);
+      await container.read(settingsProvider.future);
+
+      await container.read(settingsProvider.notifier).saveReminders(const []);
+
+      expect(store.savedReminders.single, isEmpty);
+      expect(container.read(settingsProvider).value?.reminders, isEmpty);
+    });
+  });
 }
