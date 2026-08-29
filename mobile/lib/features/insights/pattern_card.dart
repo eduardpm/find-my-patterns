@@ -48,6 +48,26 @@ class PatternCard extends StatefulWidget {
   State<PatternCard> createState() => _PatternCardState();
 }
 
+/// Which badge, if any, a pattern card shows for [pattern] (P0-2).
+///
+/// The single place this decision is made, so ticket P0-6 -- which adds a
+/// second reason to show no badge, an undefined or below-threshold lift --
+/// has one obvious function to extend rather than a scatter of conditions
+/// across the widget tree: an early `return null` here, ahead of the switch
+/// below, once [Pattern.lift] is available to check.
+///
+/// [Pattern.direction] already resolves keep/change/no-opinion on the
+/// backend, from the pattern's kind and its feeling's valence -- this only
+/// translates that resolved value into what the badge shows. It never
+/// re-derives keep or change from [Pattern.kind] or the feeling itself; the
+/// backend owns that logic (see `badgeDirectionFor` in
+/// `backend/src/insights/patterns.service.ts`).
+PatternDirection? patternBadgeFor(Pattern pattern) =>
+    switch (pattern.direction) {
+      PatternDirection.none => null,
+      final badge => badge,
+    };
+
 class _PatternCardState extends State<PatternCard> {
   bool _showEvidence = false;
 
@@ -67,7 +87,8 @@ class _PatternCardState extends State<PatternCard> {
     final pattern = widget.pattern;
     final journal = context.journalColors;
     final theme = Theme.of(context);
-    final isChange = pattern.direction == PatternDirection.change;
+    final badge = patternBadgeFor(pattern);
+    final isChange = badge == PatternDirection.change;
     final isHistorical = pattern.status == PatternStatus.historical;
     final isInverse = pattern.kind == PatternKind.inverse;
     final badgeColor = isChange
@@ -129,18 +150,23 @@ class _PatternCardState extends State<PatternCard> {
                   ],
                 ),
               ),
-              const SizedBox(width: JournalSpacing.x3),
-              // Direction is carried by an arrow icon and a word, never by
-              // colour alone, so the card survives greyscale.
-              StatusBadge(
-                isChange ? 'Consider changing' : 'Keep doing',
-                contentColor: badgeColor,
-                containerColor: badgeContainer,
-                leading: Icon(
-                  isChange ? Icons.trending_down : Icons.trending_up,
-                  size: 14,
+              // A neutral-valence pattern (P0-2) carries no badge at all --
+              // neither colour has anything to say about it -- so nothing
+              // renders here rather than defaulting to either one.
+              if (badge != null) ...[
+                const SizedBox(width: JournalSpacing.x3),
+                // Direction is carried by an arrow icon and a word, never by
+                // colour alone, so the card survives greyscale.
+                StatusBadge(
+                  isChange ? 'Consider changing' : 'Keep doing',
+                  contentColor: badgeColor,
+                  containerColor: badgeContainer,
+                  leading: Icon(
+                    isChange ? Icons.trending_down : Icons.trending_up,
+                    size: 14,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
           const SizedBox(height: JournalSpacing.x3),

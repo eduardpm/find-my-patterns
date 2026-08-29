@@ -15,6 +15,7 @@ import {
 } from '../db/codecs';
 import { DIARY_DB } from '../db/database.provider';
 import type { DiaryDatabase } from '../db/database';
+import type { PatternDirection } from '../domain/types';
 import { TopicsService } from '../topics/topics.service';
 import {
   associationFrom,
@@ -120,7 +121,8 @@ export interface PatternOut {
   occurrence_count: number;
   lifetime_count: number;
   status: PatternStatus;
-  direction: string;
+  /** The badge this card shows — see `badgeDirectionFor`, computed fresh on every read. */
+  direction: PatternDirection;
   narrative_text: string;
   suggestion_text: string;
   present_count: number;
@@ -178,18 +180,43 @@ export function qualifyingPairs(
 }
 
 /**
- * Which way the insight points.
+ * Which badge a pattern card shows (P0-2) — the single function this decision is made by, so a
+ * card and its neighbour covering the same topic can never disagree about it.
  *
- * FR-011 for forward pairs: a positive feeling is worth keeping, anything else prompts a change —
- * neutral is grouped with "change" because there is no positive signal to reinforce.
+ * FR-011 for forward pairs: a positive feeling is worth keeping, a negative one prompts a change.
+ * A neutral feeling has no positive signal to reinforce and no negative one to discourage — it is
+ * not "leaning change", it is nothing to advise, so it gets `'none'` rather than being folded into
+ * "change" the way it used to be. A card that read "you felt calm around walking — consider
+ * changing it" was that fold showing through.
  *
- * I1-05 extends it to the inverse card, and the extension is not a mirror. An inverse pattern says
- * the feeling is likelier *without* the topic. When that feeling is a bad one, the topic's absence
- * is what coincides with feeling bad, so the topic itself is the thing worth keeping.
+ * I1-05 extends the forward/inverse split to the inverse card, and the extension is not a mirror.
+ * An inverse pattern says the feeling is likelier *without* the topic. When that feeling is a bad
+ * one, the topic's absence is what coincides with feeling bad, so the topic itself is the thing
+ * worth keeping.
+ *
+ * Extending this for another reason to show no badge (P0-6: an undefined or below-threshold lift)
+ * is one more early return here, ahead of the kind/valence switch — the callers below (and the
+ * client) go on reading whatever this function returns without change.
  */
-export function directionFor(kind: PatternKind, valence: string): 'keep' | 'change' {
+export function badgeDirectionFor(kind: PatternKind, valence: string): PatternDirection {
+  if (valence !== 'positive' && valence !== 'negative') return 'none';
   if (kind === 'inverse') return valence === 'negative' ? 'keep' : 'change';
   return valence === 'positive' ? 'keep' : 'change';
+}
+
+/**
+ * The two-valued direction persisted per pattern (FR-011, I1-05) — distinct from the badge
+ * (`badgeDirectionFor`) that reads the same kind and valence.
+ *
+ * This one feeds `inference/worker.ts`'s suggestion-phrasing prompt and is validated by
+ * `db/compatibility.ts` on every startup, `['keep', 'change'].includes(...)` and nothing else.
+ * Neither has a "no opinion" state to spend, so unlike the badge, a neutral-valence pattern here
+ * still collapses to `'change'` — exactly what it did before the badge grew a `'none'` state, and
+ * changing it would mean teaching both of those a third state they have no use for.
+ */
+export function directionFor(kind: PatternKind, valence: string): 'keep' | 'change' {
+  const badge = badgeDirectionFor(kind, valence);
+  return badge === 'none' ? 'change' : badge;
 }
 
 /** The sentence a missing lift is replaced by — never a number (A3-02, A3-05). */
@@ -840,11 +867,14 @@ export class PatternsService {
   listPatterns(): PatternOut[] {
     const rows = this.db
       .prepare(
-        `SELECT p.id, t.name AS topic, p.feeling_key, p.occurrence_count, p.direction,
+        `SELECT p.id, t.name AS topic, p.feeling_key, p.occurrence_count,
                 p.narrative_text, p.suggestion_text, p.last_updated_at, p.kind, p.lifetime_count,
                 p.status, p.last_occurrence_date, p.present_count, p.present_total, p.absent_count,
-                p.absent_total, p.lift, p.comparison_reason, p.base_rate, p.is_strong, p.confounders
-         FROM patterns p JOIN topics t ON t.id = p.topic_id`,
+                p.absent_total, p.lift, p.comparison_reason, p.base_rate, p.is_strong, p.confounders,
+                f.valence
+         FROM patterns p
+         JOIN topics t ON t.id = p.topic_id
+         JOIN feelings f ON f.key = p.feeling_key`,
       )
       .all() as Array<Record<string, unknown>>;
 
@@ -872,7 +902,10 @@ export class PatternsService {
         occurrence_count: Number(r.occurrence_count),
         lifetime_count: Number(r.lifetime_count),
         status,
-        direction: String(r.direction),
+        // Computed fresh from kind + valence on every read, not echoed from the persisted
+        // `direction` column — that column is a different, two-valued concept (see
+        // `directionFor`'s doc comment) and re-serving it here is the exact bug this fixes.
+        direction: badgeDirectionFor(kind, String(r.valence)),
         narrative_text: String(r.narrative_text),
         suggestion_text: String(r.suggestion_text),
         present_count: presentCount,

@@ -718,8 +718,8 @@
     {
       "name": "a neutral feeling",
       "concern": "Neutral has no positive signal, so the direction is 'change' — advice to alter something that was fine.",
-      "source": "directionForValence",
-      "verdict": "defect",
+      "source": "badgeDirectionFor",
+      "verdict": "holds",
       "entries": [
         {
           "text": "Tea and a quiet evening.",
@@ -745,7 +745,7 @@
           "tea"
         ]
       },
-      "note": "'You felt neutral 3 times around tea - consider changing it.' Nothing needs changing."
+      "note": "P0-2: a neutral-valence feeling now gets no badge ('none') instead of being folded into 'change'. 'You felt neutral 3 times around tea - consider changing it.' Nothing needs changing."
     },
     {
       "name": "written in another language",
