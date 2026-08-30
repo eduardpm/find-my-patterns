@@ -389,17 +389,6 @@ final coreWidgets = ScreenArea(
       name: 'FeelingChips',
       source: 'core/widgets/feeling_chips.dart',
       build: _feelingChipsScreen,
-      // `_GroupChip`'s label ("Uplifted") silently breaks mid-word at
-      // 320dp/2x once all four real groups share one row and the badge is
-      // active: needs 224px, given 182px. The mechanical fix (the same
-      // `Wrap`+`IntrinsicWidth` shape #176 fixed `FeelingChip` with) works
-      // here too but grows every active group chip's height enough,
-      // stacked across four of them, to overflow `feeling_chips_test.dart`'s
-      // own non-scrollable harness by 157px -- a design call between fixing
-      // that widget differently and giving the dedicated test a scrollable
-      // ancestor to match how every real screen renders it, not a
-      // mechanical Row-to-Wrap swap. See #181.
-      knownFailures: const {'320x2.0': '#181'},
     ),
   ],
   unswept: const {

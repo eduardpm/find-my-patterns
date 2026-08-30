@@ -105,15 +105,28 @@ class _HarnessState extends State<_Harness> {
   @override
   Widget build(BuildContext context) => MaterialApp(
     home: Scaffold(
-      body: FeelingChips(
-        groups: widget.groups,
-        selected: selected,
-        max: widget.max,
-        suggestedKeys: widget.suggestedKeys,
-        onSelectionChange: (next) {
-          widget.onChangeSpy?.call(next);
-          setState(() => selected = next);
-        },
+      // A `SingleChildScrollView`, not a bare body: both real screens that
+      // render `FeelingChips` scroll it -- `entry_composer_screen.dart:697`
+      // wraps its whole confirm-feeling step this way, and
+      // `entry_detail_screen.dart:743` renders it inside its own scrolling
+      // layout. A bare `Scaffold.body` gives this widget an unscrollable
+      // viewport no real screen ever does, which is exactly the #163/#179
+      // shape: a dedicated test's own harness disagreeing with production.
+      // It went unnoticed here specifically because it *saved* space rather
+      // than costing it -- a fixed ceiling only bites when content grows
+      // past it, and every case in this file predates #181's four-active-
+      // groups content being tall enough to reach that ceiling.
+      body: SingleChildScrollView(
+        child: FeelingChips(
+          groups: widget.groups,
+          selected: selected,
+          max: widget.max,
+          suggestedKeys: widget.suggestedKeys,
+          onSelectionChange: (next) {
+            widget.onChangeSpy?.call(next);
+            setState(() => selected = next);
+          },
+        ),
       ),
     ),
   );

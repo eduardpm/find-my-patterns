@@ -612,71 +612,90 @@ class _GroupChip extends StatelessWidget {
     final accent = group.accent(journal);
     final active = chosenCount > 0;
 
-    final content = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        FeelingDot(color: accent),
-        const SizedBox(width: JournalSpacing.x2),
-        // `Flexible` rather than a bare `Text`, for the same reason as
-        // `FeelingChip` (#111): two group chips sharing a `Wrap` row can be
-        // offered less width than a label needs at a high text scale, and
-        // the count badge below eats into that width further whenever the
-        // group is active. Group labels are short ("Uplifted" is the
-        // longest), so this is a defensive match with `FeelingChip` rather
-        // than a fix for an observed overflow here.
-        //
-        // #176's own `FeelingChip.build` fix (a `Wrap` isolating the label
-        // from its own fixed trailing siblings) was tried here too, on the
-        // same reasoning -- "Uplifted" needed 224px but was given 190px at
-        // 320dp/2x with all four groups active and sharing a row, the
-        // identical mechanism #176 traced. It was reverted: `Wrap` does not
-        // shrink-wrap to its content's width the way this `Row` does, and
-        // wrapping it in `IntrinsicWidth` to compensate (as `FeelingChip`
-        // now does) grew every active group chip enough, stacked across up
-        // to four of them, to overflow `feeling_chips_test.dart`'s own
-        // "no overflow ... with a count badge visible" case by 157px on the
-        // bottom -- that test's `_Harness` renders `FeelingChips` in a bare
-        // `Scaffold.body`, never a scrollable ancestor the way every real
-        // screen wraps it, so it has no give left to absorb the extra
-        // height. Filed as #181 rather than fixed here; the label's
-        // `Flexible` below is unchanged and still correct on its own.
-        Flexible(
-          child: Text(
-            group.label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              fontWeight: active ? FontWeight.bold : FontWeight.w500,
-            ),
+    // `Wrap`, not the fixed-size `Row` this used to be -- the same #176
+    // shape `FeelingChip.build` above was fixed for. "Uplifted" silently
+    // broke mid-word (needed 224px, given 190px) at 320dp/2x once all four
+    // real groups shared a `Wrap` row with the count badge active: the
+    // label was already `Flexible` (see the nested `Row`'s own note below),
+    // but the count badge sat in the *same* `Row` as an unprotected
+    // sibling, so its width came off the top of what the label could use
+    // regardless of need -- exactly the mechanism #176 traced. Isolating
+    // the dot+label pair from the badge the same way fixes it here too.
+    //
+    // `IntrinsicWidth` around it, for the same reason as `FeelingChip.build`
+    // above: `Wrap` does not shrink-wrap to its content's width the way
+    // `Row(mainAxisSize: MainAxisSize.min)` did, so without this every
+    // group chip reported the full available width as its own size and
+    // reopened #111/#117's "chip claims a whole row" defect from a new
+    // direction.
+    //
+    // This was tried once already and reverted (#181): applying it grew
+    // every *active* group chip's height enough that, stacked across up to
+    // four of them, it overflowed `feeling_chips_test.dart`'s own bare-
+    // `Scaffold.body` harness by 157px. That harness was the bug, not this
+    // fix -- both real screens that render `FeelingChips`
+    // (`entry_composer_screen.dart:697`, `entry_detail_screen.dart:743`)
+    // scroll it, and the dedicated test now does too, so #181 is closed
+    // rather than deferred.
+    final content = IntrinsicWidth(
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: JournalSpacing.x2,
+        runSpacing: JournalSpacing.x1,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FeelingDot(color: accent),
+              const SizedBox(width: JournalSpacing.x2),
+              // `Flexible` rather than a bare `Text`, for the same reason
+              // as `FeelingChip` (#111): two group chips sharing a `Wrap`
+              // row can be offered less width than a label needs at a high
+              // text scale. Group labels are short ("Uplifted" is the
+              // longest), so on its own this remains a defensive match
+              // with `FeelingChip` rather than a fix for an overflow this
+              // nested `Row` alone produces -- it is the badge sitting
+              // outside this `Row` now (see #176/#181) that made the
+              // difference.
+              Flexible(
+                child: Text(
+                  group.label,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: active ? FontWeight.bold : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ),
-        if (active) ...[
-          const SizedBox(width: JournalSpacing.x2),
-          Container(
-            // A minimum rather than a fixed 20x20: at 1.0x this renders
-            // identically to the old fixed size (a single digit's natural
-            // size plus this padding already clears 20dp), but a fixed
-            // size doesn't grow with text scale, and a single digit
-            // ('1'-'4', kMaxFeelingsPerEntry's own ceiling) needed 24px at
-            // 2x -- 4px more than the box had. Sized by its own content
-            // instead, like every other fixed badge this ticket has
-            // touched. Unlike the `Row`-vs-`Wrap` question above, this part
-            // of the fix is safe: it only changes how big the badge is
-            // allowed to grow, never whether the chip claims a whole row.
-            constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
-            padding: const EdgeInsets.all(2),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: accent),
-            // Already spoken as the chip's own `value`; left in the tree it
-            // would be read a second time.
-            child: Text(
-              '$chosenCount',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.surface,
-                fontWeight: FontWeight.bold,
+          if (active)
+            Container(
+              // A minimum rather than a fixed 20x20: at 1.0x this renders
+              // identically to the old fixed size (a single digit's
+              // natural size plus this padding already clears 20dp), but a
+              // fixed size doesn't grow with text scale, and a single
+              // digit ('1'-'4', kMaxFeelingsPerEntry's own ceiling) needed
+              // 24px at 2x -- 4px more than the box had. Sized by its own
+              // content instead, like every other fixed badge this ticket
+              // has touched.
+              constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+              padding: const EdgeInsets.all(2),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: accent,
+              ),
+              // Already spoken as the chip's own `value`; left in the tree
+              // it would be read a second time.
+              child: Text(
+                '$chosenCount',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.surface,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-          ),
         ],
-      ],
+      ),
     );
 
     return Semantics(
