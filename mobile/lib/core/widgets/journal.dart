@@ -87,14 +87,27 @@ class PageHeader extends StatelessWidget {
         title,
         if (actionWidgets != null && actionWidgets.isNotEmpty) ...[
           const SizedBox(height: JournalSpacing.x4),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < actionWidgets.length; i++) ...[
-                if (i > 0) const SizedBox(width: JournalSpacing.x2),
-                actionWidgets[i],
-              ],
-            ],
+          // `Wrap`, not the fixed-size `Row` this used to be. `actions` is a
+          // public `List<Widget>`, not a fixed pair of icon buttons or a
+          // single badge -- the two shapes every current caller actually
+          // passes (`day_entries_screen.dart`'s two 48dp chevron buttons,
+          // `experiment_results_screen.dart`'s one `StatusBadge`), neither
+          // of which is wide enough to trouble a `Row` at any cell this
+          // sweep checks. No current caller overflows; this hardens an API
+          // that permits one to -- a `Row(mainAxisSize: MainAxisSize.min)`
+          // has no way to give ground once a future caller's actions
+          // outgrow the header, the same shape already fixed for
+          // `IntensityDials` and `FeelingChips` per `ACCESSIBILITY.md` §3.
+          // `Wrap` costs nothing on the shapes that exist today -- it lays
+          // out identically to the `Row` it replaces whenever everything
+          // fits on one line -- and keeps every action at its full size,
+          // dropping to a second line instead of overflowing, on any shape
+          // that does not.
+          Wrap(
+            spacing: JournalSpacing.x2,
+            runSpacing: JournalSpacing.x2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: actionWidgets,
           ),
         ],
         Padding(

@@ -136,51 +136,89 @@ class FeelingChip extends StatelessWidget {
     final textColor = on ? color : theme.colorScheme.onSurface;
     final fontWeight = on ? FontWeight.bold : FontWeight.w500;
 
-    final content = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        FeelingDot(color: color),
-        const SizedBox(width: JournalSpacing.x2),
-        // `Flexible` rather than a bare `Text`: two chips sharing a `Wrap`
-        // row (the fix this file exists for, #111) means each one can be
-        // offered less width than its longest word needs once a reader's
-        // text scale is turned up -- "Affectionate" or "Disappointed" at
-        // 2x can outgrow the space left after the dot and padding. `Row`
-        // gives `Flexible`'s child the leftover width rather than its own
-        // unbounded natural size, so the label wraps onto a second line
-        // and the pill grows taller instead of painting past its own
-        // border -- the label still reads in full, just never truncated
-        // or clipped, which an `Expanded`/ellipsis would each have done.
-        Flexible(
-          child: Text(
-            label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: textColor,
-              fontWeight: fontWeight,
+    // `Wrap`, not the fixed-size `Row` this used to be (#176): the dot and
+    // label already sat behind a `Flexible` (#111 -- see the note on that
+    // nested `Row` below, which still needs it), but `intensityLabel`,
+    // `suggested`'s note and the removable "×" were plain, unprotected
+    // `Text` siblings in the *same* `Row`. `Row`'s layout measures every
+    // non-flex child at its own natural width before the `Flexible` label
+    // gets whatever is left, so those siblings' combined width came off the
+    // top regardless of what the label needed -- a chip that was both
+    // `suggested` and `removable`, in `_ChosenFeelings`' real confirm-
+    // feeling row, overflowed by 29px at 320dp/2x even though "happy" is
+    // one of this app's shortest feeling words, because the fixed siblings
+    // alone already outgrew the chip. Wrapping the whole content in `Wrap`
+    // instead keeps the dot+label pair as one unit (still `Flexible`
+    // inside its own nested `Row`, so it wraps rather than overflows if it
+    // alone cannot share a line) and lets `intensityLabel`/"suggested"/"×"
+    // drop to their own line the same way any other fixed-size sibling set
+    // does in this codebase (`ACCESSIBILITY.md` §3) instead of competing
+    // for the label's `Flexible` share.
+    //
+    // `IntrinsicWidth` around it, because `Wrap` -- unlike `Row(mainAxisSize:
+    // MainAxisSize.min)` -- does not shrink-wrap to its content's actual
+    // width; given a bounded max, it reports that whole max as its own
+    // size regardless of how little of it a short chip like "Sad" needs,
+    // which reopened #111/#117's original "chip claims a whole row" defect
+    // (this time from `Wrap` itself rather than from `Container`'s
+    // `alignment`) the first time this fix was written -- a `Container`'s
+    // `Center(widthFactor: 1)` around `content` mirrors back whatever size
+    // its child reports, and a plain `Wrap` was reporting the full
+    // available width. `IntrinsicWidth` asks `Wrap` for its own single-run
+    // natural width first and passes that back down as a tight constraint,
+    // which is small enough here (a handful of chip-internal children, not
+    // a long list) that the usual O(n²) intrinsic-layout cost this widget
+    // is not free of does not matter.
+    final content = IntrinsicWidth(
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: JournalSpacing.x2,
+        runSpacing: JournalSpacing.x1,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FeelingDot(color: color),
+              const SizedBox(width: JournalSpacing.x2),
+              // `Flexible` rather than a bare `Text`: this nested `Row`'s own
+              // incoming width is bounded by the outer `Wrap`'s available
+              // width (itself bounded by two chips sharing a `Wrap` row, the
+              // #111 case this file exists for), and without `Flexible` this
+              // `Row` would report its natural, unwrapped width to that outer
+              // `Wrap` instead of respecting the bound -- "Affectionate" or
+              // "Disappointed" at 2x can outgrow the space available once a
+              // reader's text scale is turned up. `Flexible` gives the label
+              // the bound instead of its own unconstrained size, so it wraps
+              // onto a second line and the pill grows taller instead of
+              // painting past its own border -- the label still reads in
+              // full, just never truncated or clipped, which an
+              // `Expanded`/ellipsis would each have done.
+              Flexible(
+                child: Text(
+                  label,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: textColor,
+                    fontWeight: fontWeight,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (intensityLabel case final intensityLabel?)
+            Text(
+              intensityLabel,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
-          ),
-        ),
-        if (intensityLabel case final intensityLabel?) ...[
-          const SizedBox(width: JournalSpacing.x2),
-          Text(
-            intensityLabel,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+          if (suggested) Text('suggested', style: theme.textTheme.labelSmall),
+          if (removable)
+            Text(
+              '×',
+              style: theme.textTheme.labelLarge?.copyWith(color: textColor),
             ),
-          ),
         ],
-        if (suggested) ...[
-          const SizedBox(width: JournalSpacing.x2),
-          Text('suggested', style: theme.textTheme.labelSmall),
-        ],
-        if (removable) ...[
-          const SizedBox(width: JournalSpacing.x2),
-          Text(
-            '×',
-            style: theme.textTheme.labelLarge?.copyWith(color: textColor),
-          ),
-        ],
-      ],
+      ),
     );
 
     final chip = Container(
@@ -574,45 +612,90 @@ class _GroupChip extends StatelessWidget {
     final accent = group.accent(journal);
     final active = chosenCount > 0;
 
-    final content = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        FeelingDot(color: accent),
-        const SizedBox(width: JournalSpacing.x2),
-        // `Flexible` rather than a bare `Text`, for the same reason as
-        // `FeelingChip` (#111): two group chips sharing a `Wrap` row can be
-        // offered less width than a label needs at a high text scale, and
-        // the count badge below eats into that width further whenever the
-        // group is active. Group labels are short ("Uplifted" is the
-        // longest), so this is a defensive match with `FeelingChip` rather
-        // than a fix for an observed overflow here.
-        Flexible(
-          child: Text(
-            group.label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              fontWeight: active ? FontWeight.bold : FontWeight.w500,
-            ),
+    // `Wrap`, not the fixed-size `Row` this used to be -- the same #176
+    // shape `FeelingChip.build` above was fixed for. "Uplifted" silently
+    // broke mid-word (needed 224px, given 190px) at 320dp/2x once all four
+    // real groups shared a `Wrap` row with the count badge active: the
+    // label was already `Flexible` (see the nested `Row`'s own note below),
+    // but the count badge sat in the *same* `Row` as an unprotected
+    // sibling, so its width came off the top of what the label could use
+    // regardless of need -- exactly the mechanism #176 traced. Isolating
+    // the dot+label pair from the badge the same way fixes it here too.
+    //
+    // `IntrinsicWidth` around it, for the same reason as `FeelingChip.build`
+    // above: `Wrap` does not shrink-wrap to its content's width the way
+    // `Row(mainAxisSize: MainAxisSize.min)` did, so without this every
+    // group chip reported the full available width as its own size and
+    // reopened #111/#117's "chip claims a whole row" defect from a new
+    // direction.
+    //
+    // This was tried once already and reverted (#181): applying it grew
+    // every *active* group chip's height enough that, stacked across up to
+    // four of them, it overflowed `feeling_chips_test.dart`'s own bare-
+    // `Scaffold.body` harness by 157px. That harness was the bug, not this
+    // fix -- both real screens that render `FeelingChips`
+    // (`entry_composer_screen.dart:697`, `entry_detail_screen.dart:743`)
+    // scroll it, and the dedicated test now does too, so #181 is closed
+    // rather than deferred.
+    final content = IntrinsicWidth(
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: JournalSpacing.x2,
+        runSpacing: JournalSpacing.x1,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FeelingDot(color: accent),
+              const SizedBox(width: JournalSpacing.x2),
+              // `Flexible` rather than a bare `Text`, for the same reason
+              // as `FeelingChip` (#111): two group chips sharing a `Wrap`
+              // row can be offered less width than a label needs at a high
+              // text scale. Group labels are short ("Uplifted" is the
+              // longest), so on its own this remains a defensive match
+              // with `FeelingChip` rather than a fix for an overflow this
+              // nested `Row` alone produces -- it is the badge sitting
+              // outside this `Row` now (see #176/#181) that made the
+              // difference.
+              Flexible(
+                child: Text(
+                  group.label,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: active ? FontWeight.bold : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ),
-        if (active) ...[
-          const SizedBox(width: JournalSpacing.x2),
-          Container(
-            width: 20,
-            height: 20,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: accent),
-            // Already spoken as the chip's own `value`; left in the tree it
-            // would be read a second time.
-            child: Text(
-              '$chosenCount',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.surface,
-                fontWeight: FontWeight.bold,
+          if (active)
+            Container(
+              // A minimum rather than a fixed 20x20: at 1.0x this renders
+              // identically to the old fixed size (a single digit's
+              // natural size plus this padding already clears 20dp), but a
+              // fixed size doesn't grow with text scale, and a single
+              // digit ('1'-'4', kMaxFeelingsPerEntry's own ceiling) needed
+              // 24px at 2x -- 4px more than the box had. Sized by its own
+              // content instead, like every other fixed badge this ticket
+              // has touched.
+              constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+              padding: const EdgeInsets.all(2),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: accent,
+              ),
+              // Already spoken as the chip's own `value`; left in the tree
+              // it would be read a second time.
+              child: Text(
+                '$chosenCount',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.surface,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-          ),
         ],
-      ],
+      ),
     );
 
     return Semantics(
