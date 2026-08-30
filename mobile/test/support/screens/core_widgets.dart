@@ -1,12 +1,95 @@
+import 'package:find_my_patterns/core/diary/feeling.dart';
 import 'package:find_my_patterns/core/theme/app_theme.dart';
 import 'package:find_my_patterns/core/theme/journal_metrics.dart';
 import 'package:find_my_patterns/core/widgets/feature_placeholder.dart';
+import 'package:find_my_patterns/core/widgets/feeling_chips.dart';
 import 'package:find_my_patterns/core/widgets/journal.dart';
 import 'package:find_my_patterns/core/widgets/premium_lock.dart';
 import 'package:find_my_patterns/core/widgets/status_views.dart';
 import 'package:flutter/material.dart';
 
 import '../screen_registry.dart';
+
+// The real four-group shape `GET /feelings` serves (`allGroups` in
+// `feeling_chips_test.dart`: uplifted/steady/tense/low, several feelings
+// each), with one substitution: `affectionate` stands in for `grateful` as
+// the long-label member of `uplifted`. `feeling_chips_test.dart` documents
+// "Affectionate"/"Overwhelmed"/"Disappointed" as this app's longest feeling
+// words -- #176 itself was actually found with "happy", one of the
+// *shortest* (the entry fixture `entry_composer_screen_test.dart` seeds its
+// own dynamic-type matrix with), because the defect was never really about
+// the label's own length: it was the fixed trailing siblings ("suggested",
+// "×") outgrowing the chip regardless of what the label needed. "Affectionate"
+// is used here instead because it is strictly harder -- if the fix holds for
+// this app's longest real word, it holds for "happy" too, and this case
+// would have caught the underlying defect either way. Declared here rather
+// than imported from a test file, since a `ScreenCase` builder is not the
+// place to depend on another file's test-only fixtures.
+const _happy = Feeling('happy', 'Happy', Valence.positive, 'uplifted');
+const _affectionate = Feeling(
+  'affectionate',
+  'Affectionate',
+  Valence.positive,
+  'uplifted',
+);
+const _calm = Feeling('calm', 'Calm', Valence.neutral, 'steady');
+const _overwhelmed = Feeling(
+  'overwhelmed',
+  'Overwhelmed',
+  Valence.negative,
+  'tense',
+);
+const _frustrated = Feeling(
+  'frustrated',
+  'Frustrated',
+  Valence.negative,
+  'tense',
+);
+const _sad = Feeling('sad', 'Sad', Valence.negative, 'low');
+const _groups = [
+  FeelingGroup('uplifted', 'Uplifted', Valence.positive, [
+    _affectionate,
+    _happy,
+  ]),
+  FeelingGroup('steady', 'Steady', Valence.neutral, [_calm]),
+  FeelingGroup('tense', 'Tense', Valence.negative, [
+    _overwhelmed,
+    _frustrated,
+  ]),
+  FeelingGroup('low', 'Low', Valence.negative, [_sad]),
+];
+
+/// `entry_composer_screen.dart`'s confirm-feeling step
+/// (`_ConfirmFeelingStep`), the real screen #176 was found on -- not a
+/// synthetic reproduction of `_ChosenFeelings` alone. Same outer padding
+/// (`EdgeInsets.all(JournalSpacing.x5)`, 24dp a side) and the same shape
+/// that produces the defect: `affectionate` is both `selected` (chosen
+/// already, per `_seedSelected` pre-selecting the analyser's suggestion)
+/// and in `suggestedKeys`, so its chip in `_ChosenFeelings`' `Wrap` carries
+/// `selected: true`, `removable: true` *and* `suggested: true` together --
+/// the label, the "suggested" note and the "×" all competing for the same
+/// line, which is exactly the combination #111's `Flexible` around the
+/// label alone never had to survive. Also exercises `_GroupChips`, all four
+/// group chips sharing one `Wrap` row with the "uplifted" group's own count
+/// badge active (#176's sibling defect in `_GroupChip`, found while fixing
+/// this one -- same shape, same fix).
+
+Widget _feelingChipsScreen() => MaterialApp(
+  theme: buildLightTheme(),
+  home: Scaffold(
+    body: SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(JournalSpacing.x5),
+        child: FeelingChips(
+          groups: _groups,
+          selected: const [_affectionate],
+          onSelectionChange: (_) {},
+          suggestedKeys: const {'affectionate'},
+        ),
+      ),
+    ),
+  ),
+);
 
 /// Mirrors `day_entries_screen.dart`'s private `_DayStepButton`: a fixed
 /// 48x48 circular icon button that carries no text and never grows with
@@ -291,6 +374,32 @@ final coreWidgets = ScreenArea(
       name: 'JournalDesignSystem',
       source: 'core/widgets/journal.dart',
       build: _journalDesignSystemScreen,
+    ),
+    // `feeling_chips.dart` already has its own dedicated
+    // `feeling_chips_test.dart` with `TextScaler` coverage, which is why
+    // the sweep's own guard has counted the file as accounted for without
+    // ever registering it here -- and why #176 went unseen: that dedicated
+    // test only checks 360dp, and only the group-sheet shape, never the
+    // 320dp `_ChosenFeelings` row a real confirm-feeling step renders.
+    // Registered directly now rather than left to the dedicated test, per
+    // this sweep's own stated weakness (`ACCESSIBILITY.md` §6): "a
+    // dedicated test proves what its author thought to build; a
+    // `ScreenCase` proves the surface as the app actually assembles it."
+    ScreenCase(
+      name: 'FeelingChips',
+      source: 'core/widgets/feeling_chips.dart',
+      build: _feelingChipsScreen,
+      // `_GroupChip`'s label ("Uplifted") silently breaks mid-word at
+      // 320dp/2x once all four real groups share one row and the badge is
+      // active: needs 224px, given 182px. The mechanical fix (the same
+      // `Wrap`+`IntrinsicWidth` shape #176 fixed `FeelingChip` with) works
+      // here too but grows every active group chip's height enough,
+      // stacked across four of them, to overflow `feeling_chips_test.dart`'s
+      // own non-scrollable harness by 157px -- a design call between fixing
+      // that widget differently and giving the dedicated test a scrollable
+      // ancestor to match how every real screen renders it, not a
+      // mechanical Row-to-Wrap swap. See #181.
+      knownFailures: const {'320x2.0': '#181'},
     ),
   ],
   unswept: const {
