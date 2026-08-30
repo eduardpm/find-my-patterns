@@ -148,12 +148,15 @@ final insights = ScreenArea(
       // "Year" needs 112.0px but is given 64.0px at 320dp/2x (72.8px given
       // 58.4px at 320dp/1.3x; 360dp is only 1.1px short at 1.3x, 34.7px
       // short at 2x). Same family as #169's HTTP/HTTPS switcher: a control
-      // decision (a different period picker), not a mechanical fix. #172.
+      // decision (a different period picker), not a mechanical fix.
+      // Consolidated into #169, which covers all three SegmentedButton call
+      // sites: the fix is one shared segmented-choice widget, not a patch
+      // per screen. Remove this entry when that lands.
       knownFailures: const {
-        '320x1.3': '#172',
-        '320x2.0': '#172',
-        '360x1.3': '#172',
-        '360x2.0': '#172',
+        '320x1.3': '#169',
+        '320x2.0': '#169',
+        '360x1.3': '#169',
+        '360x2.0': '#169',
       },
     ),
     ScreenCase(
