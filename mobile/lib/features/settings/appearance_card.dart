@@ -196,9 +196,19 @@ class _ModeOptionContent extends StatelessWidget {
         children: [
           Icon(_modeIcon(option), size: 16, color: color),
           const SizedBox(width: JournalSpacing.x2),
-          Text(
-            option.label,
-            style: theme.textTheme.labelLarge?.copyWith(color: color),
+          // `Flexible`, not a bare `Text`: this row sits inside one of
+          // three `Expanded` segments sharing one line (`_ModeSelector`),
+          // so at 320dp/2x each label has only a third of the line to
+          // work with -- "System" plus its icon overflowed its own
+          // segment by 62px without this. Wrapping to a second line, the
+          // same fix every other label-beside-a-fixed-icon row in this
+          // app uses, keeps the word whole rather than truncating it.
+          Flexible(
+            child: Text(
+              option.label,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.labelLarge?.copyWith(color: color),
+            ),
           ),
         ],
       ),
