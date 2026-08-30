@@ -103,8 +103,12 @@ describe('migrateDiary', () => {
     const before = read<Record<string, unknown>>(
       `SELECT ${WRITTEN} FROM diary_entries ORDER BY id`,
     );
+    // Same reasoning as `WRITTEN` above, extended to this table by M-1b (#134): it now gains its
+    // own `user_id` column, so `SELECT *` here would fail the instant this migration adds it.
+    const ANSWER_WRITTEN =
+      'id, entry_id, question_key, question_text_snapshot, answer_text, order_index';
     const answersBefore = read<Record<string, unknown>>(
-      'SELECT * FROM guiding_question_answers ORDER BY id',
+      `SELECT ${ANSWER_WRITTEN} FROM guiding_question_answers ORDER BY id`,
     );
 
     migrateDiary(target);
@@ -120,7 +124,9 @@ describe('migrateDiary', () => {
       ).every((row) => row.feeling_intensity === null),
     ).toBe(true);
     expect(
-      read<Record<string, unknown>>('SELECT * FROM guiding_question_answers ORDER BY id'),
+      read<Record<string, unknown>>(
+        `SELECT ${ANSWER_WRITTEN} FROM guiding_question_answers ORDER BY id`,
+      ),
     ).toEqual(answersBefore);
   });
 
@@ -201,6 +207,11 @@ describe('migrateDiary — #60: the Steady group valence split', () => {
    */
   function buildPreSplitDiary(targetPath: string): void {
     const raw = new Database(targetPath);
+    // M-1b (#134): `SCHEMA_STATEMENTS` now gives `diary_entries` a `user_id` that defaults to and
+    // references `DEFAULT_USER_ID`, but this helper writes an entry before any `users` row exists
+    // — better-sqlite3 defaults a fresh connection's `foreign_keys` to on, so without this the
+    // insert below would fail the same way `migrate.ts`'s own connection would (see its comment).
+    raw.pragma('foreign_keys = OFF');
     try {
       raw.exec('BEGIN');
       for (const statement of SCHEMA_STATEMENTS) raw.exec(statement);
@@ -337,6 +348,8 @@ describe('migrateDiary — #95: guiding-question copy refresh', () => {
 
   function buildPreCopyRefreshDiary(targetPath: string): { entryId: string; answerId: string } {
     const raw = new Database(targetPath);
+    // M-1b (#134): see the matching comment in `buildPreSplitDiary` above.
+    raw.pragma('foreign_keys = OFF');
     try {
       raw.exec('BEGIN');
       for (const statement of SCHEMA_STATEMENTS) raw.exec(statement);
@@ -568,5 +581,141 @@ describe('migrateDiary — M-2: server-side entitlements (#47)', () => {
       .get(DEFAULT_USER_ID) as { tier: string };
     check.close();
     expect(row.tier).toBe('premium');
+  });
+});
+
+describe('migrateDiary — M-1b: user_id columns, backfill and indexes (#134)', () => {
+  /**
+   * Every table `schema.ts`'s M-1b note classifies as user data. `target` (the top-level
+   * `beforeEach`'s copy of `pre-grouped-vocabulary.db`) predates every one of them except the six
+   * this fixture already carries content in — `diary_entries`, `topics`, `patterns`,
+   * `entry_topics`, `pattern_entries`, `guiding_question_answers` — plus the always-empty
+   * `inference_jobs`. The rest (`entry_feelings`, `pattern_withdrawals`, `diary_meta`,
+   * `experiments`, `entry_topic_feelings`, `csv_imports`) do not exist in this fixture at all, so
+   * this is also the strongest test available that a genuinely old diary — one missing a table
+   * outright, not merely missing a column on one it already has — still ends up with every table
+   * correctly owned.
+   */
+  const USER_DATA_TABLES = [
+    'topics',
+    'diary_entries',
+    'entry_feelings',
+    'guiding_question_answers',
+    'entry_topics',
+    'patterns',
+    'pattern_entries',
+    'pattern_withdrawals',
+    'experiments',
+    'inference_jobs',
+    'entry_topic_feelings',
+    'csv_imports',
+  ];
+  const CONTENT_BEARING_TABLES = [
+    'diary_entries',
+    'topics',
+    'patterns',
+    'entry_topics',
+    'pattern_entries',
+    'guiding_question_answers',
+  ];
+
+  function rowCounts(dbPath: string, tables: string[]): Record<string, number> {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      return Object.fromEntries(
+        tables.map((table) => [
+          table,
+          (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n,
+        ]),
+      );
+    } finally {
+      db.close();
+    }
+  }
+
+  it('adds user_id to every user-data table without losing or moving a single row', () => {
+    const countsBefore = rowCounts(target, CONTENT_BEARING_TABLES);
+    expect(countsBefore.diary_entries).toBeGreaterThan(0);
+    expect(countsBefore.topics).toBeGreaterThan(0);
+    expect(countsBefore.patterns).toBeGreaterThan(0);
+    expect(countsBefore.entry_topics).toBeGreaterThan(0);
+    expect(countsBefore.pattern_entries).toBeGreaterThan(0);
+    expect(countsBefore.guiding_question_answers).toBeGreaterThan(0);
+
+    migrateDiary(target);
+
+    // Acceptance criterion: every table's row count unchanged.
+    expect(rowCounts(target, CONTENT_BEARING_TABLES)).toEqual(countsBefore);
+
+    // Acceptance criterion: every existing row owned by the default user, on every table this
+    // fixture actually has content in, plus the always-empty `inference_jobs`.
+    const db = new Database(target, { readonly: true });
+    try {
+      for (const table of USER_DATA_TABLES) {
+        const rows = db.prepare(`SELECT user_id FROM ${table}`).all() as Array<{
+          user_id: string;
+        }>;
+        for (const row of rows) {
+          expect(row.user_id, `${table}.user_id`).toBe(DEFAULT_USER_ID);
+        }
+      }
+      // `diary_meta` did not exist in this fixture at all, so the migration created it fresh —
+      // nothing to backfill, but it must exist under its new composite key.
+      const diaryMetaColumns = db
+        .prepare(`SELECT name FROM pragma_table_info('diary_meta')`)
+        .all() as Array<{ name: string }>;
+      expect(diaryMetaColumns.map((c) => c.name).sort()).toEqual(['key', 'user_id', 'value']);
+    } finally {
+      db.close();
+    }
+
+    const after = openDiary(target);
+    expect(() => assertCompatible(after)).not.toThrow();
+    after.close();
+  });
+
+  it('is idempotent — running it twice leaves ownership exactly as the first run left it', () => {
+    migrateDiary(target);
+    const once = USER_DATA_TABLES.reduce<Record<string, unknown[]>>((acc, table) => {
+      acc[table] = read<Record<string, unknown>>(`SELECT * FROM ${table} ORDER BY rowid`);
+      return acc;
+    }, {});
+
+    migrateDiary(target);
+
+    for (const table of USER_DATA_TABLES) {
+      expect(read<Record<string, unknown>>(`SELECT * FROM ${table} ORDER BY rowid`)).toEqual(
+        once[table],
+      );
+    }
+  });
+
+  it('lets a second user hold their own diary_meta row under the same key, once one exists', () => {
+    migrateDiary(target);
+    const db = new Database(target);
+    const secondUserId = '00000000-0000-0000-0000-000000000002';
+    db.prepare(`INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)`).run(
+      secondUserId,
+      'second@example.invalid',
+      'disabled:no-password-set',
+      '2026-01-01 00:00:00.000000',
+    );
+    db.prepare(
+      `INSERT INTO diary_meta (user_id, "key", value) VALUES (?, 'pattern_echo_log', ?)`,
+    ).run(DEFAULT_USER_ID, '{}');
+    // Same key, different owner — this is exactly what the old bare `PRIMARY KEY ("key")` could
+    // not allow, and what makes the composite key the right fix rather than an unnecessary one.
+    expect(() =>
+      db
+        .prepare(`INSERT INTO diary_meta (user_id, "key", value) VALUES (?, 'pattern_echo_log', ?)`)
+        .run(secondUserId, '{}'),
+    ).not.toThrow();
+    // The same (user_id, key) pair twice is still a collision.
+    expect(() =>
+      db
+        .prepare(`INSERT INTO diary_meta (user_id, "key", value) VALUES (?, 'pattern_echo_log', ?)`)
+        .run(DEFAULT_USER_ID, '{}'),
+    ).toThrow();
+    db.close();
   });
 });

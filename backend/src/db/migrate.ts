@@ -284,6 +284,18 @@ export function migrateDiary(targetPath: string): MigrationReport {
   }
 
   const db = new Database(targetPath);
+  // better-sqlite3 defaults a fresh raw connection's `foreign_keys` pragma to **on** (unlike the
+  // sqlite3 CLI) — confirmed against this project's actual dependency version, not assumed. Off
+  // here for two reasons, both from M-1b (#134): SQLite refuses `ALTER TABLE ... ADD COLUMN` for a
+  // column that carries both a `REFERENCES` clause and a non-NULL default while foreign keys are
+  // enforced ("Cannot add a REFERENCES column with non-NULL default value"), which is exactly the
+  // shape every new `user_id` column below has; and the running server's own connection
+  // (`database.ts`) already runs permanently with `foreign_keys = OFF`, for the same reason it
+  // gives — an existing diary may already disagree with a declared foreign key (`sessions`'s guard
+  // in `openDiary`'s doc comment), and enforcing one here would turn reading a real diary into an
+  // error. This does not relax anything a real diary depended on; it matches the posture the
+  // fixture builder (`build-golden-db.ts`) and the live connection both already have.
+  db.pragma('foreign_keys = OFF');
   try {
     return db.transaction((): MigrationReport => {
       for (const statement of MIGRATION_STATEMENTS) {
