@@ -21,6 +21,7 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_USER_ID } from '../../src/auth/default-user';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
+import { localDateString } from '../helpers/dates';
 
 interface WrittenEntry {
   text: string;
@@ -122,8 +123,13 @@ async function insightsFor(
     if (entry.daysAgo) {
       // The API files every entry under today, deliberately. Backdating has to go around it, and
       // going around it is the only way to ask what "recent" means to the engine.
+      //
+      // #129: `entry_date` is filed under `todayLocal()` (`db/codecs.ts`), so the backdated value
+      // has to come from local-calendar arithmetic (`localDateString`) rather than a UTC-instant
+      // subtraction, which silently disagrees with `todayLocal()` between local midnight and UTC
+      // midnight.
       const db = new Database(h.dbPath);
-      const when = new Date(Date.now() - entry.daysAgo * 86_400_000).toISOString().slice(0, 10);
+      const when = localDateString(-entry.daysAgo);
       db.prepare('UPDATE diary_entries SET entry_date = ? WHERE id = ?').run(when, created.id);
       db.close();
     }

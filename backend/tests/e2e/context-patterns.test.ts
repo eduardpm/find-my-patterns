@@ -12,6 +12,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CONTEXT_FACTORS } from '../../src/insights/constants';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
+import { localDateString } from '../helpers/dates';
 
 let h: Harness;
 const server = () => h.app.getHttpServer();
@@ -50,11 +51,17 @@ function backdateTo(entryId: string, date: string): void {
   db.close();
 }
 
-const isoDate = (daysAgo: number): string =>
-  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+// #129: this produces the value written into `entry_date` via `backdateTo`, and `entry_date` is
+// filed under `todayLocal()` (`db/codecs.ts`), so the date itself has to come from local-calendar
+// arithmetic (`localDateString`) rather than a UTC-instant subtraction.
+const isoDate = (daysAgo: number): string => localDateString(-daysAgo);
 
 /** Sunday, as `new Date(...).getUTCDay()` sees it — the same UTC calendar the backend's own
- *  `weekdayIndex` reads `entry_date` through (`analysis.ts#daysBetween`/`#weekdayIndex`). */
+ *  `weekdayIndex` reads `entry_date` through (`analysis.ts#daysBetween`/`#weekdayIndex`).
+ *  This is unrelated to which clock *produced* `isoDate`'s string above: `getUTCDay()` here is
+ *  parsing a bare `YYYY-MM-DD` (which `Date` always reads as UTC midnight) to recover that
+ *  calendar date's weekday — exactly how `weekdayIndex` reads `entry_date` — so it stays
+ *  `getUTCDay()` regardless of which clock named the date. */
 const isSunday = (daysAgo: number): boolean => new Date(isoDate(daysAgo)).getUTCDay() === 0;
 
 /** The first `count` days, within the 30-day recency window, that land on a Sunday. */
