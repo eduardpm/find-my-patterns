@@ -1667,5 +1667,86 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      'the pending-suggestion banner wraps its label instead of '
+      'overflowing the picker at 320dp/2x',
+      (tester) async {
+        // #155: `_ReadingEntryBanner`'s `Row` (spinner + "Reading your
+        // entry…" text) had no `Flexible` around the text either.
+        // Measured (in this suite's own text-rendering environment) at
+        // over 200px past the picker's own right edge -- and, unlike
+        // `_TargetDateChip` above, *silently*: this `Row` sits in a
+        // non-stretched `Column` child inside a `SingleChildScrollView`,
+        // and nothing here threw a `RenderFlex` overflow, the same
+        // "renders wrong without throwing" shape `today_screen.dart`'s
+        // FAB had. The scroll view's own measured right edge is the
+        // ceiling the banner must not cross.
+        tester.view.physicalSize = const Size(320, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        final delay = ManualDelay();
+        await tester.pumpWidget(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: buildTestable(
+                replies: [
+                  ...bootReplies(),
+                  FakeReply(201, body: entryJson(analysisPending: true)),
+                  FakeReply(200, body: entryJson(analysisPending: true)),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        // Drains the guided stage's own pre-existing, out-of-scope
+        // overflow -- see the backdated-chip test above for why.
+        tester.takeException();
+        containerOf(
+                  tester,
+                )
+                .read(
+                  entryComposerControllerProvider(CalendarDate.today())
+                      .notifier,
+                )
+                .pollDelay =
+            delay.call;
+
+        await tester.tap(find.text('Write freely instead'));
+        await tester.pump();
+        // Drains freeform's own pre-existing, out-of-scope
+        // `VoiceAnswerRecorder` overflow.
+        tester.takeException();
+        await tester.enterText(find.byType(TextFormField), 'A long day.');
+        await tester.pump();
+        await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+        tester.takeException();
+        final banner = find.text('Reading your entry…');
+        await pumpUntilFound(tester, banner);
+        tester.takeException();
+
+        expect(banner, findsOneWidget);
+        final bannerRect = tester.getRect(banner);
+        final scrollViewRect = tester.getRect(
+          find.byType(SingleChildScrollView).last,
+        );
+        expect(
+          bannerRect.right,
+          lessThanOrEqualTo(scrollViewRect.right),
+          reason:
+              'the banner text must not render past the picker\'s own '
+              'right edge',
+        );
+        // The manual picker is not gated behind the pending banner (see
+        // the class doc comment on `_ReadingEntryBanner`) -- still true
+        // once the label wraps to more than one line.
+        expect(find.text('Uplifted'), findsOneWidget);
+      },
+    );
   });
 }

@@ -784,10 +784,22 @@ class _ReadingEntryBanner extends StatelessWidget {
               ),
             ),
             const SizedBox(width: JournalSpacing.x2),
-            Text(
-              'Reading your entry…',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+            // #155: no `Flexible` around this `Text` -- at 320dp/textScale
+            // 2.0 it rendered past the picker's own right edge by well
+            // over 200px (measured in this suite's own text-rendering
+            // environment), silently: this `Row` sits in a
+            // non-stretched `Column` child inside a `SingleChildScrollView`,
+            // and it painted past the scroll view's own measured bound
+            // without a `RenderFlex` overflow ever being thrown, the same
+            // "renders wrong without throwing" shape `today_screen.dart`'s
+            // FAB had. Wrapping the label, not shrinking or truncating it,
+            // matches every other fix for this defect family in this app.
+            Flexible(
+              child: Text(
+                'Reading your entry…',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ],
