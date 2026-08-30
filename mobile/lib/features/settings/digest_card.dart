@@ -73,23 +73,29 @@ class DigestCard extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: JournalSpacing.x4),
-          Row(
-            children: [
-              Expanded(
-                child: _WeekdayDropdown(
-                  weekday: schedule.weekday,
-                  onChanged: (weekday) => unawaited(
-                    controller.save(schedule.copyWith(weekday: weekday)),
-                  ),
-                ),
-              ),
-              const SizedBox(width: JournalSpacing.x3),
-              TextButton(
-                onPressed: () =>
-                    unawaited(_pickTime(context, schedule, controller)),
-                child: Text(_formatTime(schedule.hour, schedule.minute)),
-              ),
-            ],
+          // A column, not a row: the sweep measured "Wednesday" -- the
+          // longest weekday name the dropdown can show -- needing up to
+          // 198.9px at 320dp/1.3x while sharing a row with the time button
+          // left it only 123.4px, because the time button (not `Expanded`)
+          // took whatever width it needed first and the dropdown's
+          // `Expanded` only got what was left over. Neither label is
+          // decorative here -- day and time are both load-bearing -- so
+          // rather than shrink one for the other, each gets its own line
+          // and therefore the full card width to lay out in.
+          _WeekdayDropdown(
+            weekday: schedule.weekday,
+            onChanged: (weekday) => unawaited(
+              controller.save(schedule.copyWith(weekday: weekday)),
+            ),
+          ),
+          const SizedBox(height: JournalSpacing.x2),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () =>
+                  unawaited(_pickTime(context, schedule, controller)),
+              child: Text(_formatTime(schedule.hour, schedule.minute)),
+            ),
           ),
           if (blocked) ...[
             const SizedBox(height: JournalSpacing.x4),

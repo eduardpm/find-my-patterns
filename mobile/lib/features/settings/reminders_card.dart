@@ -132,39 +132,57 @@ class _ReminderRow extends StatelessWidget {
       // 48dp: the touch-target floor, since the row is otherwise only as
       // tall as its text and the switch.
       constraints: const BoxConstraints(minHeight: JournalSpacing.x7),
-      child: Row(
+      // `Wrap`, not `Row`: at 320dp/2x the sweep measured this row's time
+      // label needing 170px while an `Expanded` sharing the row with the
+      // switch and remove button only had 164px left to give it -- both
+      // controls already sit at their own required minimum (the switch's
+      // intrinsic size, the remove button's 48dp touch-target floor), so
+      // there is no room to reclaim from them. Grouping the switch and
+      // remove button as one `Wrap` child, instead of splitting the time
+      // label across an `Expanded`, means the time -- the load-bearing
+      // value here -- is always laid out at its own full natural width;
+      // the switch/remove group simply drops to its own line on the rare
+      // screen too narrow to hold both, rather than the time ever being
+      // squeezed smaller than it needs.
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: JournalSpacing.x1,
         children: [
-          Expanded(
-            child: TextButton(
-              onPressed: () => unawaited(_pickTime(context)),
-              style: TextButton.styleFrom(
-                alignment: Alignment.centerLeft,
-                padding: EdgeInsets.zero,
-              ),
-              child: Text(label, style: theme.textTheme.titleMedium),
+          TextButton(
+            onPressed: () => unawaited(_pickTime(context)),
+            style: TextButton.styleFrom(
+              alignment: Alignment.centerLeft,
+              padding: EdgeInsets.zero,
             ),
+            child: Text(label, style: theme.textTheme.titleMedium),
           ),
-          Semantics(
-            label: '$label reminder',
-            child: Switch(value: reminder.enabled, onChanged: onToggle),
-          ),
-          // `tooltip` alone would only reach the semantics tree's
-          // `tooltip` field, not its `label` -- the accessible name a
-          // screen reader announces -- so this replaces `IconButton`'s
-          // own semantics with an explicit one (the same pattern
-          // `pattern_echo_panel.dart`'s dismiss button uses).
-          Semantics(
-            container: true,
-            button: true,
-            label: 'Remove $label reminder',
-            onTap: onRemove,
-            child: ExcludeSemantics(
-              child: IconButton(
-                onPressed: onRemove,
-                icon: const Icon(Icons.close),
-                tooltip: 'Remove $label reminder',
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Semantics(
+                label: '$label reminder',
+                child: Switch(value: reminder.enabled, onChanged: onToggle),
               ),
-            ),
+              // `tooltip` alone would only reach the semantics tree's
+              // `tooltip` field, not its `label` -- the accessible name a
+              // screen reader announces -- so this replaces `IconButton`'s
+              // own semantics with an explicit one (the same pattern
+              // `pattern_echo_panel.dart`'s dismiss button uses).
+              Semantics(
+                container: true,
+                button: true,
+                label: 'Remove $label reminder',
+                onTap: onRemove,
+                child: ExcludeSemantics(
+                  child: IconButton(
+                    onPressed: onRemove,
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Remove $label reminder',
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
