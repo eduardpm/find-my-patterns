@@ -271,7 +271,8 @@ class PatternCardState extends State<PatternCard> {
                 label: Text(
                   _showEvidence
                       ? 'Hide entries'
-                      : '${pattern.evidence.length} entries',
+                      : '${pattern.evidence.length} '
+                            '${pattern.evidence.length == 1 ? 'entry' : 'entries'}',
                   style: theme.textTheme.labelLarge,
                 ),
               ),

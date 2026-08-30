@@ -100,6 +100,27 @@ void main() {
     },
   );
 
+  testWidgets(
+    'singularises the count line when the equal count is 1 (defect found '
+    'on the live diary: "1 OCCURRENCES")',
+    (tester) async {
+      await tester.pumpWidget(
+        app(
+          WithdrawalNotice(
+            withdrawal: buildWithdrawal(
+              reason: WithdrawalReason.excludedUnpaired,
+              previousCount: 1,
+              newCount: 1,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('1 OCCURRENCE'), findsOneWidget);
+      expect(find.text('1 OCCURRENCES'), findsNothing);
+    },
+  );
+
   for (final entry in {
     WithdrawalReason.belowThreshold: 'NOT ENOUGH LEFT',
     WithdrawalReason.belowLift: 'ASSOCIATION TOO WEAK',
