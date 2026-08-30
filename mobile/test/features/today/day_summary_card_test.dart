@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart';
 
 import '../../support/harness.dart';
+import '../../support/rendered_text.dart';
 
 void main() {
   const date = CalendarDate(2026, 8, 28);
@@ -439,12 +440,14 @@ void main() {
       'rather than overflowing or truncating a number',
       (tester) async {
         // A single-digit count here, not `busyDayEntries`' two-digit one:
-        // at 2x text scale, "12" plus "entries" already claims more than a
-        // 360dp card's own content width by itself, with nothing left for
-        // any span at all -- a real defect, but on the *other* half of this
-        // row, and not the one #131 describes or this fix touches. See the
-        // audit note in the PR description. Isolating it here keeps this
-        // test about the span, the thing #131's `Expanded` actually fixed.
+        // at 2x text scale, a two-digit count plus "entries" already
+        // claims more than a 360dp card's own content width by itself,
+        // with nothing left for any span at all -- a real defect, but on
+        // the *other* half of this row, and not the one #131 describes or
+        // this fix touches. #137 (see the group below) is what closes
+        // that half; a single-digit count here keeps this test about the
+        // span, the thing #131's `Expanded` actually fixed, without the
+        // two defects' fixes shadowing each other.
         final entries = [
           entryAt('a', DateTime(2026, 8, 28, 7, 15), [grateful]),
           entryAt('b', DateTime(2026, 8, 28, 12), [grateful]),
@@ -482,5 +485,241 @@ void main() {
         expect(find.text('3'), findsOneWidget);
       },
     );
+  });
+
+  group('the count/label pair at large text scale (#137)', () {
+    // #137's own reproduction: at `textScale: 2.0`, a two-digit count plus
+    // "entries" *alone* -- no span considered at all -- already outgrows a
+    // 360dp card's own content width (~342px needed against ~312px
+    // available). #131 only ever taught the *span* to yield; this is the
+    // other half of the same row, the side #131's own PR assumed was
+    // safely fixed-width and filed this ticket to revisit.
+    //
+    // Every entry below shares one timestamp, so `_timeSpan` always
+    // resolves to the short "at 7:15 AM" form (`first == last`) -- this
+    // group is about the count/label pair, not the span's own width, so
+    // the span is kept as small and unrelated to the count as possible.
+    final format = DateFormat.jm();
+    final sameTimestamp = DateTime(2026, 8, 28, 7, 15);
+    final expectedSpan = 'at ${format.format(sameTimestamp)}';
+
+    List<Entry> entriesNumbering(int count) => [
+      for (var i = 0; i < count; i++) entryAt('e$i', sameTimestamp, [grateful]),
+    ];
+
+    // One-digit and two-digit counts, the two shapes named in the issue.
+    final oneDigitEntries = entriesNumbering(3);
+    final twoDigitEntries = entriesNumbering(12);
+
+    // Every combination the issue names: 320dp/360dp, 1x/2x text scale,
+    // one-digit/two-digit counts. Whichever of the row's two shapes a
+    // given cell picks, two invariants must hold regardless -- no
+    // `RenderFlex` overflow, and the count survives in full, never
+    // clipped to an ellipsis. Checking the full matrix (not just the one
+    // 360dp/2x/two-digit cell the issue measured) is what stops a seventh
+    // instance of this same family turning up in some other cell nobody
+    // thought to run.
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 2.0]) {
+        for (final entries in [oneDigitEntries, twoDigitEntries]) {
+          final count = entries.length;
+          final label = count == 1 ? 'entry' : 'entries';
+          testWidgets(
+            '$count entries at ${width.toInt()}dp / ${scale}x text scale: '
+            'no overflow, count shown in full',
+            (tester) async {
+              tester.view.physicalSize = Size(width, 1200);
+              tester.view.devicePixelRatio = 1;
+              addTearDown(tester.view.reset);
+
+              await pumpCard(tester, entries: entries, textScale: scale);
+
+              expect(tester.takeException(), isNull);
+              // `renderedText` reads a plain `Text('$count')` next to a
+              // plain `Text('entries')` (the ordinary row) exactly the
+              // same way it reads one `Text.rich` spanning both words
+              // (the stacked row) -- this assertion does not need to
+              // know which shape this cell picked.
+              final onScreen = renderedText(tester);
+              expect(onScreen, contains('$count'));
+              expect(onScreen, contains(label));
+              expect(onScreen, contains(expectedSpan));
+            },
+          );
+        }
+      }
+    }
+
+    testWidgets(
+      'stacks the count/label pair onto its own line, span underneath, '
+      'when the pair alone cannot share a 360dp row at 2x text scale',
+      (tester) async {
+        tester.view.physicalSize = const Size(360, 1200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await pumpCard(tester, entries: twoDigitEntries, textScale: 2);
+
+        expect(tester.takeException(), isNull);
+        // The full, untruncated "12 entries" -- as one `Text.rich`, since
+        // a standalone `Text('12')` no longer exists on this branch. This
+        // is the assertion that pins the layout decision itself, not just
+        // "nothing threw": a fix that shrank the count's font instead of
+        // moving it to its own line would also clear the overflow, but
+        // would fail this string-and-style check.
+        final pairFinder = find.text('12 entries', findRichText: true);
+        expect(pairFinder, findsOneWidget);
+        // The span is not lost, just relocated -- it still renders in
+        // full, strictly below the count/label pair rather than trailing
+        // it on the same line the way #131's `Expanded` would place it.
+        final spanFinder = find.text(expectedSpan);
+        expect(spanFinder, findsOneWidget);
+        expect(
+          tester.getTopLeft(spanFinder).dy,
+          greaterThanOrEqualTo(tester.getBottomLeft(pairFinder).dy),
+        );
+      },
+    );
+
+    testWidgets(
+      'stacks the count/label pair the same way at 320dp -- the pair\'s '
+      'own width does not depend on how narrow the card is',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 1200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await pumpCard(tester, entries: twoDigitEntries, textScale: 2);
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('12 entries', findRichText: true), findsOneWidget);
+        expect(find.text(expectedSpan), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'keeps the ordinary one-line row -- count and label as separate '
+      'widgets, span flush right -- when the pair still fits at 2x scale',
+      (tester) async {
+        // 360dp, not 320dp: measured directly, a single digit plus
+        // "entries" fits this row's available width doubled at 360dp but
+        // *not* at 320dp (the matrix loop above's "3 entries at 320dp /
+        // 2.0x" cell is already on the stacked branch -- confirmed by
+        // this same file's red run, where that exact cell failed against
+        // the unfixed code too). The pair's fit is a real measurement,
+        // not a "single digit always fits" assumption, so this test picks
+        // the one width the matrix loop already proved keeps it inline.
+        tester.view.physicalSize = const Size(360, 1200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await pumpCard(tester, entries: oneDigitEntries, textScale: 2);
+
+        expect(tester.takeException(), isNull);
+        // Two separate `Text`s, not one `Text.rich` -- the inverse of the
+        // stacked-mode assertion above, pinning down that the ordinary
+        // case really does keep #131's original widget shape rather than
+        // the new branch always running.
+        expect(find.text('3'), findsOneWidget);
+        expect(find.text('entries'), findsOneWidget);
+        expect(find.text('3 entries', findRichText: true), findsNothing);
+      },
+    );
+  });
+
+  group('card-wide audit at 2x text scale (#137)', () {
+    // #131's own PR audited the feeling-chip row and the STRONGEST row at
+    // 320dp and found them already safe, thanks to #111's shrink-wrapping
+    // fix on `FeelingChip`. #137 exists precisely because nobody had
+    // re-run that audit at 2x text scale before shipping -- this closes
+    // that loop, rather than leaving "still safe" as another assumption
+    // on file the way #131's own did for the count/label pair.
+    testWidgets(
+      'the feeling-chip row and the count/span row above it do not '
+      'overflow at 2x text scale, at 320dp or 360dp, with a real '
+      'two-endpoint span',
+      (tester) async {
+        // No rated intensity here on purpose -- isolates the `Wrap` of
+        // `FeelingChip`s from the separate STRONGEST row below (see the
+        // finding documented after this test), so a fix or regression in
+        // one can't be misread as evidence about the other. This fixture
+        // still exercises the count/span row from the group above, with a
+        // full "9:00 AM – 9:00 PM" span rather than the short "at ..."
+        // form -- confirmed (via this file's red run) to also overflow
+        // against the unfixed code at 320dp, even with a single-digit
+        // count: the fixed count/label pair alone already claims more of
+        // this narrower row than #131's own matrix ever measured.
+        for (final width in [320.0, 360.0]) {
+          tester.view.physicalSize = Size(width, 1400);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          await pumpCard(
+            tester,
+            entries: [
+              entryAt('a', DateTime.utc(2026, 8, 28, 9), [grateful]),
+              entryAt('b', DateTime.utc(2026, 8, 28, 21), [anxious]),
+            ],
+            summary: const DaySummary(date, [grateful, anxious]),
+            textScale: 2,
+          );
+
+          expect(tester.takeException(), isNull, reason: 'at ${width}dp');
+          expect(find.text('Grateful'), findsOneWidget);
+          expect(find.text('Anxious'), findsOneWidget);
+        }
+      },
+    );
+
+    testWidgets(
+      'the STRONGEST row does not overflow at 2x text scale on a 360dp '
+      'card',
+      (tester) async {
+        tester.view.physicalSize = const Size(360, 1400);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await pumpCard(
+          tester,
+          entries: [
+            entryAt(
+              'a',
+              DateTime.utc(2026, 8, 28, 9),
+              [grateful],
+              intensities: {'grateful': 4},
+            ),
+            entryAt(
+              'b',
+              DateTime.utc(2026, 8, 28, 21),
+              [anxious],
+              intensities: {'anxious': 4},
+            ),
+          ],
+          summary: const DaySummary(date, [grateful, anxious], intensity: 4),
+          textScale: 2,
+        );
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('STRONGEST'), findsOneWidget);
+      },
+    );
+
+    // NOT asserted safe, deliberately: at 320dp and 2x text scale, the
+    // STRONGEST row (`Eyebrow('Strongest')` + the fixed 60px intensity bar
+    // + their two `JournalSpacing` gaps, all non-flexible) measures
+    // ~304.6px by itself -- before the trailing `Flexible(FeelingChip(...))`
+    // gets any width at all -- against ~272px available, a 33px overflow
+    // confirmed by a throwaway diagnostic test against this exact fixture.
+    // That is the same architectural shape as this ticket's own defect
+    // (fixed, non-flexible siblings alone outgrowing the row) but on a
+    // *different* row, needing its own "which side yields" judgement the
+    // same way #137 needed one for the count/label pair -- Eyebrow text
+    // isn't a number so the anti-truncation rule doesn't bind it the same
+    // way, but shrinking or wrapping it is still a design call, not a
+    // mechanical fix. Widening it here would repeat #131's own mistake of
+    // folding a second design decision into a focused fix, and touching
+    // `_IntensityBar`'s fixed 60px (#115) or `FeelingChip`'s internals
+    // (#111) is out of scope by name. Left as a reported finding for its
+    // own ticket rather than fixed or silently asserted safe.
   });
 }

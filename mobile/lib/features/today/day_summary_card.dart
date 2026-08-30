@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+// `intl` exports its own `TextDirection` (LTR/RTL/UNKNOWN, unrelated to
+// Flutter's), which otherwise shadows `dart:ui`'s -- the one `TextPainter`
+// below actually needs -- since both come in unprefixed. Nothing in this
+// file formats bidi text, so hiding it is free.
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../core/diary/entry.dart';
 import '../../core/diary/feeling.dart';
@@ -100,62 +104,126 @@ class DaySummaryCard extends StatelessWidget {
             children: [
               Eyebrow(isToday ? 'The day so far' : 'The day'),
               const SizedBox(height: JournalSpacing.x2),
-              Row(
+              LayoutBuilder(
                 // Keyed so `day_summary_card_test.dart` can measure this
-                // row's own rendered width directly (#131) -- the same
+                // row's own rendered geometry directly (#131) -- the same
                 // reason `_IntensityBar` picked up a key for #115: a test
                 // that only finds widgets by type risks matching the wrong
-                // `Row` once the card has more than one.
+                // `Row` once the card has more than one. The key moved
+                // here from the inner `Row` when #137 gave this area a
+                // second possible shape (below): a `LayoutBuilder` reports
+                // whatever size its built child comes back with, so every
+                // existing `getSize`/`getTopRight` call against this key
+                // keeps reading the same rendered box either way.
                 key: const ValueKey('daySummaryCountSpanRow'),
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '$count',
-                    style: JournalType.tabularFigures(
-                      theme.textTheme.displaySmall!,
-                    ).copyWith(color: theme.colorScheme.primary),
-                  ),
-                  const SizedBox(width: JournalSpacing.x2),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(
-                      count == 1 ? 'entry' : 'entries',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: journal.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  // #131: this used to be a `Spacer()` plus a plain `Text`,
-                  // which gave the span unbounded width to lay out with --
-                  // the same defect family as #111/#117, except a `Row`
-                  // announces it as a `RenderFlex` overflow instead of
-                  // silently mis-sizing. The count is the fixed-ish side
-                  // (a digit plus "entry"/"entries" never grows past two
-                  // short words), so it stays un-flexible and the span --
-                  // the side whose width actually varies with the day's
-                  // data -- is what yields. `Expanded` (not `Flexible`)
-                  // is required to still hug the row's trailing edge when
-                  // there is room: a bare `Flexible` does not claim the
-                  // leftover main-axis space the way `Spacer` used to, so
-                  // the span would sit immediately after the count instead
-                  // of at the right. It wraps to a second line rather than
-                  // truncating -- the product rule against clipping a
-                  // number applies to the span's clock times as much as it
-                  // does to the entry count.
-                  if (spanText != null)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Text(
-                          spanText,
-                          textAlign: TextAlign.right,
-                          style: JournalType.tabularFigures(
-                            theme.textTheme.bodySmall!,
-                          ).copyWith(color: journal.onSurfaceVariant),
+                builder: (context, constraints) {
+                  final countStyle = JournalType.tabularFigures(
+                    theme.textTheme.displaySmall!,
+                  ).copyWith(color: theme.colorScheme.primary);
+                  final labelText = count == 1 ? 'entry' : 'entries';
+                  final labelStyle = theme.textTheme.bodyMedium?.copyWith(
+                    color: journal.onSurfaceVariant,
+                  );
+                  final spanStyle = JournalType.tabularFigures(
+                    theme.textTheme.bodySmall!,
+                  ).copyWith(color: journal.onSurfaceVariant);
+
+                  // #137: the compound worst case #131 explicitly left
+                  // out -- a two-digit count plus "entries" *alone*, no
+                  // span involved yet, already outgrowing a 360dp card's
+                  // own content width at 2x text scale (~342px needed
+                  // against ~312px available). Measuring the pair at the
+                  // exact `TextStyle` and `TextScaler` this build is
+                  // actually using answers the only question that
+                  // matters -- does this pair fit *this* row, right now --
+                  // instead of guessing from a hardcoded "two digits at
+                  // 2x" threshold that the next locale or font tweak could
+                  // quietly invalidate.
+                  final scaler = MediaQuery.textScalerOf(context);
+                  final pairWidth =
+                      _measure('$count', countStyle, scaler) +
+                      JournalSpacing.x2 +
+                      _measure(labelText, labelStyle, scaler);
+
+                  if (pairWidth <= constraints.maxWidth) {
+                    // Ordinary case, #131 untouched: the count and its
+                    // label are the fixed-ish side (a digit plus
+                    // "entry"/"entries" never grows past two short
+                    // words), so they stay un-flexible and the span --
+                    // the side whose width actually varies with the
+                    // day's data -- is what yields. `Expanded` (not
+                    // `Flexible`) is required to still hug the row's
+                    // trailing edge when there is room: a bare
+                    // `Flexible` does not claim the leftover main-axis
+                    // space the way a `Spacer` used to, so the span
+                    // would sit immediately after the count instead of
+                    // at the right. It wraps to a second line rather
+                    // than truncating -- the product rule against
+                    // clipping a number applies to the span's clock
+                    // times as much as it does to the entry count.
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text('$count', style: countStyle),
+                        const SizedBox(width: JournalSpacing.x2),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(labelText, style: labelStyle),
+                        ),
+                        if (spanText != null)
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Text(
+                                spanText,
+                                textAlign: TextAlign.right,
+                                style: spanStyle,
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  }
+
+                  // Compound worst case: the count and its label do not
+                  // fit *by themselves*, so no split of the row's
+                  // leftover space could ever have saved it -- #131's
+                  // `Expanded` assumes there is a positive amount of
+                  // leftover main-axis space to hand the span, and here
+                  // there is none, even with no span at all. Truncating
+                  // "12" is off the table (the product rule that every
+                  // claim shows its numbers in full), and shrinking the
+                  // count's own type fights the accessibility scale the
+                  // user just asked for by choosing it -- so the fix
+                  // moves to the other axis instead. The count and its
+                  // label become one `Text.rich`, which -- like any
+                  // wrapped `Text` -- breaks at the word boundary between
+                  // them if even the pair alone cannot share a line at
+                  // some more extreme scale, rather than clipping either
+                  // one. The span, if there is one, drops to a line of
+                  // its own underneath: there is no longer a shared line
+                  // for it to trail on, so it is left-aligned rather than
+                  // right-aligned the way the ordinary case's `Expanded`
+                  // leaves it.
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(text: '$count', style: countStyle),
+                            const TextSpan(text: ' '),
+                            TextSpan(text: labelText, style: labelStyle),
+                          ],
                         ),
                       ),
-                    ),
-                ],
+                      if (spanText != null) ...[
+                        const SizedBox(height: JournalSpacing.x1),
+                        Text(spanText, style: spanStyle),
+                      ],
+                    ],
+                  );
+                },
               ),
               if (feelings.isNotEmpty || strongest != null) ...[
                 const SizedBox(height: JournalSpacing.x4),
@@ -203,6 +271,20 @@ class DaySummaryCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The width [text] would render at in [style] under [scaler], as a single
+/// unwrapped line -- what a `TextPainter` computes is the same measurement
+/// Flutter's own text layout uses to paint it, so this asks the count/span
+/// row's build-time question directly ("does the pair fit *this* row,
+/// right now") instead of a hardcoded digit-count-or-scale threshold (#137).
+double _measure(String text, TextStyle? style, TextScaler scaler) {
+  final painter = TextPainter(
+    text: TextSpan(text: text, style: style),
+    textDirection: TextDirection.ltr,
+    textScaler: scaler,
+  )..layout();
+  return painter.width;
 }
 
 List<Feeling> _distinctFeelings(List<Entry> entries) {
