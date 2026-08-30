@@ -164,4 +164,130 @@ void main() {
 
     expect(harness.adapter.requests, isNotEmpty);
   });
+
+  group('dynamic type at the required matrix (#155)', () {
+    // A first-run user sees this screen at whatever text scale they
+    // already have set, so `login_screen.dart:127`'s error-banner `Row`
+    // (already `Flexible`-protected) and the "Connected to <origin> --
+    // change" `TextButton` (`:149`, an unbounded-length host the user
+    // themselves typed into `ServerForm`) are both measured, not assumed.
+    const longHostConfigured = AppSettings(
+      backend: BackendAddress(
+        host: 'a-fairly-long-self-hosted-server-hostname.example.internal',
+        port: 8443,
+      ),
+    );
+
+    Future<void> pumpAtScale(
+      WidgetTester tester,
+      Widget app, {
+      required double width,
+      required double scale,
+    }) async {
+      tester.view.physicalSize = Size(width, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: app,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 1.3, 2.0]) {
+        testWidgets(
+          'the server form (no backend configured) renders with no '
+          'overflow at ${width.toInt()}dp / ${scale}x',
+          (tester) async {
+            await pumpAtScale(
+              tester,
+              Harness(
+                requireAuth: true,
+              ).scope(const MaterialApp(home: LoginScreen())),
+              width: width,
+              scale: scale,
+            );
+
+            expect(tester.takeException(), isNull);
+            expect(find.byType(ServerForm), findsOneWidget);
+          },
+        );
+
+        testWidgets(
+          'the password field (backend configured, with a long host) '
+          'renders with no overflow at ${width.toInt()}dp / ${scale}x',
+          (tester) async {
+            await pumpAtScale(
+              tester,
+              Harness(
+                settings: longHostConfigured,
+                requireAuth: true,
+              ).scope(const MaterialApp(home: LoginScreen())),
+              width: width,
+              scale: scale,
+            );
+
+            expect(tester.takeException(), isNull);
+            expect(find.text('Sign in'), findsOneWidget);
+            expect(
+              find.textContaining(
+                'a-fairly-long-self-hosted-server-hostname',
+              ),
+              findsOneWidget,
+            );
+          },
+        );
+      }
+    }
+
+    testWidgets(
+      'the rejected-password error banner renders with no overflow at '
+      '320dp/2x',
+      (tester) async {
+        final harness = Harness(
+          settings: longHostConfigured,
+          requireAuth: true,
+          adapter: FakeHttpAdapter.always(const FakeReply(401)),
+        );
+        await pumpAtScale(
+          tester,
+          harness.scope(const MaterialApp(home: LoginScreen())),
+          width: 320,
+          scale: 2,
+        );
+
+        await tester.enterText(find.byType(TextField), 'wrong');
+        await tester.tap(find.text('Sign in'));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Your session has expired'), findsOneWidget);
+      },
+    );
+
+    testWidgets('the "Sign in" button stays at least 48dp at 320dp/2x', (
+      tester,
+    ) async {
+      await pumpAtScale(
+        tester,
+        Harness(
+          settings: longHostConfigured,
+          requireAuth: true,
+        ).scope(const MaterialApp(home: LoginScreen())),
+        width: 320,
+        scale: 2,
+      );
+
+      expect(tester.takeException(), isNull);
+      final size = tester.getSize(find.byType(FilledButton));
+      expect(size.height, greaterThanOrEqualTo(48));
+    });
+  });
 }
