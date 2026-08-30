@@ -56,9 +56,8 @@ class DaySummaryCard extends StatelessWidget {
     final journal = context.journalColors;
     final theme = Theme.of(context);
     final count = entries.length;
-    final times = [
-      for (final entry in entries) entry.createdAt.toLocal(),
-    ]..sort();
+    final times = [for (final entry in entries) entry.createdAt.toLocal()]
+      ..sort();
     final first = times.isEmpty ? null : times.first;
     final last = times.isEmpty ? null : times.last;
     final feelings = (summary?.feelings.isNotEmpty ?? false)
@@ -102,6 +101,12 @@ class DaySummaryCard extends StatelessWidget {
               Eyebrow(isToday ? 'The day so far' : 'The day'),
               const SizedBox(height: JournalSpacing.x2),
               Row(
+                // Keyed so `day_summary_card_test.dart` can measure this
+                // row's own rendered width directly (#131) -- the same
+                // reason `_IntensityBar` picked up a key for #115: a test
+                // that only finds widgets by type risks matching the wrong
+                // `Row` once the card has more than one.
+                key: const ValueKey('daySummaryCountSpanRow'),
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
@@ -120,18 +125,36 @@ class DaySummaryCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (spanText != null) ...[
-                    const Spacer(),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Text(
-                        spanText,
-                        style: JournalType.tabularFigures(
-                          theme.textTheme.bodySmall!,
-                        ).copyWith(color: journal.onSurfaceVariant),
+                  // #131: this used to be a `Spacer()` plus a plain `Text`,
+                  // which gave the span unbounded width to lay out with --
+                  // the same defect family as #111/#117, except a `Row`
+                  // announces it as a `RenderFlex` overflow instead of
+                  // silently mis-sizing. The count is the fixed-ish side
+                  // (a digit plus "entry"/"entries" never grows past two
+                  // short words), so it stays un-flexible and the span --
+                  // the side whose width actually varies with the day's
+                  // data -- is what yields. `Expanded` (not `Flexible`)
+                  // is required to still hug the row's trailing edge when
+                  // there is room: a bare `Flexible` does not claim the
+                  // leftover main-axis space the way `Spacer` used to, so
+                  // the span would sit immediately after the count instead
+                  // of at the right. It wraps to a second line rather than
+                  // truncating -- the product rule against clipping a
+                  // number applies to the span's clock times as much as it
+                  // does to the entry count.
+                  if (spanText != null)
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(
+                          spanText,
+                          textAlign: TextAlign.right,
+                          style: JournalType.tabularFigures(
+                            theme.textTheme.bodySmall!,
+                          ).copyWith(color: journal.onSurfaceVariant),
+                        ),
                       ),
                     ),
-                  ],
                 ],
               ),
               if (feelings.isNotEmpty || strongest != null) ...[
