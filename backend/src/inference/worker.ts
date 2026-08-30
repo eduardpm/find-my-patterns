@@ -5,6 +5,7 @@ import { loadConfig } from '../config';
 import { assertCompatible } from '../db/compatibility';
 import { decodeJson, encodeDateTime, encodeJson, nowUtc } from '../db/codecs';
 import { openDiary, type DiaryDatabase } from '../db/database';
+import { createScopedDb } from '../db/scoped-db';
 import { canonicalTopicName, normalizeTopicName } from '../topics/canonicalization';
 import { CURATED_TOPIC_KEYWORDS } from '../topics/topics.service';
 import { templateSuggestionFor } from '../insights/patterns.service';
@@ -26,6 +27,13 @@ import { type EntryAnalysis, type ProposedPairing } from './inference';
 
 interface Job {
   id: string;
+  /**
+   * The job's owner (#135). Read off `inference_jobs.user_id` by the single cross-user
+   * `claimNext` query below, and from here on the one thing that decides which user's rows
+   * `processJob`/`applyAnalysis`/`recordFailure` are allowed to touch: each of them is handed a
+   * `DiaryDatabase` obtained from `ScopedDb.forUser(job.userId)`, never the raw connection.
+   */
+  userId: string;
   kind: 'entry_analysis' | 'transcript_format';
   entryId: string;
   attempts: number;
@@ -143,17 +151,35 @@ const MODEL_FORMAT = {
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+/**
+ * Claims the next queued job, across every user's queue in one query (#135).
+ *
+ * This worker is a single dispatcher, not one poller per user: looping over users here would turn
+ * one query per poll into one query per (poll × user count), which is exactly the multiplied load
+ * the issue's acceptance criterion 4 forbids, for no benefit — Ollama can only serve one job at a
+ * time regardless of whose queue it came from. So the candidate `SELECT` below stays deliberately
+ * unscoped, on the raw connection rather than a `ScopedDb` handle: there is no single `userId` a
+ * cross-user claim could be scoped to. It now also reads `user_id`, so the `Job` it returns can
+ * carry its owner for everything downstream.
+ *
+ * The claiming `UPDATE`, by contrast, already knows exactly whose row it is about to touch — the
+ * `user_id` the `SELECT` just read — so it runs through `ScopedDb.forUser(row.user_id)` and adds
+ * `AND user_id = ?` as defence in depth beyond the already-globally-unique primary key. Two queries
+ * per poll either way; scoping the second changes what it can touch, not how many round trips it
+ * costs.
+ */
 function claimNext(db: DiaryDatabase): Job | null {
   return db.transaction(() => {
     const row = db
       .prepare(
-        `SELECT id, kind, entry_id, attempts, result_json FROM inference_jobs
+        `SELECT id, user_id, kind, entry_id, attempts, result_json FROM inference_jobs
          WHERE status = 'queued' AND kind IN ('entry_analysis', 'transcript_format')
          ORDER BY created_at, id LIMIT 1`,
       )
       .get() as
       | {
           id: string;
+          user_id: string;
           kind: 'entry_analysis' | 'transcript_format';
           entry_id: string;
           attempts: number;
@@ -162,15 +188,17 @@ function claimNext(db: DiaryDatabase): Job | null {
       | undefined;
     if (!row) return null;
 
-    const changed = db
+    const changed = createScopedDb(db)
+      .forUser(row.user_id)
       .prepare(
         `UPDATE inference_jobs SET status = 'running', attempts = attempts + 1,
-         started_at = ?, error_text = NULL WHERE id = ? AND status = 'queued'`,
+         started_at = ?, error_text = NULL WHERE id = ? AND status = 'queued' AND user_id = ?`,
       )
-      .run(encodeDateTime(nowUtc()), row.id);
+      .run(encodeDateTime(nowUtc()), row.id, row.user_id);
     if (changed.changes !== 1) return null;
     return {
       id: row.id,
+      userId: row.user_id,
       kind: row.kind,
       entryId: row.entry_id,
       attempts: Number(row.attempts) + 1,
@@ -512,6 +540,9 @@ async function ollamaSuggestion(
 
 interface UnnarratedPattern {
   id: string;
+  /** The pattern's owner (#135) — read alongside everything else so the two `UPDATE`s below can be
+   *  scoped to it once a candidate is picked; see {@link narrateNextPattern}'s doc comment. */
+  user_id: string;
   topic: string;
   feeling_key: string;
   direction: string;
@@ -601,14 +632,24 @@ function logNarrationAttempt(entry: {
  *
  * Returns what actually happened, not merely whether something was tried — see {@link
  * NarrationOutcome}. `runWorker` uses that distinction to decide whether to pace like idleness.
+ *
+ * **Scoping (#135):** the candidate scan below is cross-user by design, the same reasoning as
+ * `claimNext` — one query across every user's patterns rather than a loop that polls each user in
+ * turn and multiplies query load by the user count. It is therefore deliberately left on the raw
+ * connection rather than a `ScopedDb` handle, and it now also selects `p.user_id` so the two
+ * `UPDATE`s below — which touch exactly the one pattern this call picked — can each be scoped to
+ * that pattern's own owner via `ScopedDb.forUser`. The join to `topics` is pinned to the same
+ * owner (`t.user_id = p.user_id`) so a pattern can never be narrated using another user's topic
+ * row of the same id, even though `topic_id` already resolves to a single, globally-unique row on
+ * its own — defence in depth, not a correctness fix.
  */
 export async function narrateNextPattern(db: DiaryDatabase): Promise<NarrationOutcome> {
   const now = encodeDateTime(nowUtc());
   const candidate = db
     .prepare(
-      `SELECT p.id, t.name AS topic, p.feeling_key, p.direction, p.suggestion_text,
+      `SELECT p.id, p.user_id, t.name AS topic, p.feeling_key, p.direction, p.suggestion_text,
               p.narration_attempts, p.narration_next_attempt_at
-       FROM patterns p JOIN topics t ON t.id = p.topic_id
+       FROM patterns p JOIN topics t ON t.id = p.topic_id AND t.user_id = p.user_id
        ORDER BY p.last_updated_at DESC, p.id`,
     )
     .all() as UnnarratedPattern[];
@@ -648,10 +689,13 @@ export async function narrateNextPattern(db: DiaryDatabase): Promise<NarrationOu
     // changing, and stamping it here would reorder the user's Insights view for no reason they
     // could see. The attempt state resets — a pattern that just got narrated has nothing left to
     // retry until `recomputePatterns` next makes it eligible.
-    db.prepare(
-      `UPDATE patterns SET suggestion_text = ?, narration_attempts = 0, narration_next_attempt_at = NULL
-       WHERE id = ? AND suggestion_text = ?`,
-    ).run(accepted, pattern.id, pattern.suggestion_text);
+    createScopedDb(db)
+      .forUser(pattern.user_id)
+      .prepare(
+        `UPDATE patterns SET suggestion_text = ?, narration_attempts = 0, narration_next_attempt_at = NULL
+         WHERE id = ? AND suggestion_text = ? AND user_id = ?`,
+      )
+      .run(accepted, pattern.id, pattern.suggestion_text, pattern.user_id);
     return 'wrote';
   }
 
@@ -669,16 +713,20 @@ export async function narrateNextPattern(db: DiaryDatabase): Promise<NarrationOu
     attempts: nextAttempts,
     error: errorMessage,
   });
-  db.prepare(
-    `UPDATE patterns SET narration_attempts = ?, narration_next_attempt_at = ?
-     WHERE id = ? AND suggestion_text = ? AND narration_attempts = ?`,
-  ).run(
-    nextAttempts,
-    narrationBackoffTimestamp(nextAttempts),
-    pattern.id,
-    pattern.suggestion_text,
-    pattern.narration_attempts,
-  );
+  createScopedDb(db)
+    .forUser(pattern.user_id)
+    .prepare(
+      `UPDATE patterns SET narration_attempts = ?, narration_next_attempt_at = ?
+       WHERE id = ? AND suggestion_text = ? AND narration_attempts = ? AND user_id = ?`,
+    )
+    .run(
+      nextAttempts,
+      narrationBackoffTimestamp(nextAttempts),
+      pattern.id,
+      pattern.suggestion_text,
+      pattern.narration_attempts,
+      pattern.user_id,
+    );
   return 'attempted';
 }
 
@@ -891,17 +939,26 @@ async function ollamaFormatTranscript(transcript: string): Promise<string> {
   }
 }
 
+/**
+ * Applies a completed analysis, entirely within one user's rows (#135).
+ *
+ * `db` is always the handle `runWorker` obtained from `ScopedDb.forUser(job.userId)` — never the
+ * raw connection — so every statement below both filters by `user_id = job.userId` (a `SELECT`,
+ * `UPDATE` or `DELETE`) and sets it (an `INSERT`'s column list), which is also what lets each
+ * statement pass `ScopedDb`'s guard at all. `topics.UNIQUE (user_id, name)` (`schema.ts`) is why
+ * `findTopic` filters on both: two different users can genuinely each have their own "coffee".
+ */
 function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): void {
   db.transaction(() => {
     const now = encodeDateTime(nowUtc());
     const entryStillExists = db
-      .prepare('SELECT 1 FROM diary_entries WHERE id = ?')
-      .get(job.entryId);
+      .prepare('SELECT 1 FROM diary_entries WHERE id = ? AND user_id = ?')
+      .get(job.entryId, job.userId);
     if (!entryStillExists) {
       db.prepare(
         `UPDATE inference_jobs SET status = 'failed', error_text = 'Entry no longer exists',
-         completed_at = ? WHERE id = ?`,
-      ).run(now, job.id);
+         completed_at = ? WHERE id = ? AND user_id = ?`,
+      ).run(now, job.id, job.userId);
       return;
     }
 
@@ -912,28 +969,33 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
     const applied = db
       .prepare(
         `UPDATE diary_entries SET feeling_key = ?, feeling_source = 'suggested', updated_at = ?
-         WHERE id = ? AND feeling_source = 'unset'`,
+         WHERE id = ? AND feeling_source = 'unset' AND user_id = ?`,
       )
-      .run(analysis.feelings[0].key, now, job.entryId);
+      .run(analysis.feelings[0].key, now, job.entryId, job.userId);
     if (applied.changes === 1) {
-      db.prepare('DELETE FROM entry_feelings WHERE entry_id = ?').run(job.entryId);
+      db.prepare('DELETE FROM entry_feelings WHERE entry_id = ? AND user_id = ?').run(
+        job.entryId,
+        job.userId,
+      );
       const insertFeeling = db.prepare(
-        'INSERT INTO entry_feelings (entry_id, feeling_key, position) VALUES (?, ?, ?)',
+        'INSERT INTO entry_feelings (entry_id, user_id, feeling_key, position) VALUES (?, ?, ?, ?)',
       );
       analysis.feelings.forEach((feeling, position) =>
-        insertFeeling.run(job.entryId, feeling.key, position),
+        insertFeeling.run(job.entryId, job.userId, feeling.key, position),
       );
     }
 
-    const findTopic = db.prepare('SELECT id FROM topics WHERE name = ?');
+    const findTopic = db.prepare('SELECT id FROM topics WHERE name = ? AND user_id = ?');
     const insertTopic = db.prepare(
-      `INSERT INTO topics (id, name, aliases, first_seen_at, last_seen_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO topics (id, user_id, name, aliases, first_seen_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     );
-    const touchTopic = db.prepare('UPDATE topics SET last_seen_at = ? WHERE id = ?');
+    const touchTopic = db.prepare(
+      'UPDATE topics SET last_seen_at = ? WHERE id = ? AND user_id = ?',
+    );
     const linkTopic = db.prepare(
-      `INSERT OR IGNORE INTO entry_topics (entry_id, topic_id, extracted_by)
-       VALUES (?, ?, 'llm')`,
+      `INSERT OR IGNORE INTO entry_topics (entry_id, topic_id, user_id, extracted_by)
+       VALUES (?, ?, ?, 'llm')`,
     );
 
     // A4-02: the proposal is mapped onto a canonical topic *before* a row is touched. Storing it
@@ -941,8 +1003,15 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
     // found — "project review", "project meeting" and "review" as three rows, none of which ever
     // reached three occurrences. A proposal that matches nothing is still stored under its own
     // name: the mapping is a preference, not a filter (A4-10).
+    //
+    // Scoped to this job's own user (#135): the vocabulary a proposal canonicalises against is
+    // this user's own topic list only. Reading across users here would let one user's topic names
+    // (and aliases) steer another user's canonicalization — the same class of leak this ticket
+    // exists to close, just via a read instead of a write.
     const known = (
-      db.prepare('SELECT name, aliases FROM topics ORDER BY name').all() as Array<{
+      db
+        .prepare('SELECT name, aliases FROM topics WHERE user_id = ? ORDER BY name')
+        .all(job.userId) as Array<{
         name: string;
         aliases: string;
       }>
@@ -963,14 +1032,14 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
 
     const topicIdByName = new Map<string, string>();
     for (const name of canonical) {
-      const existing = findTopic.get(name) as { id: string } | undefined;
+      const existing = findTopic.get(name, job.userId) as { id: string } | undefined;
       const topicId = existing?.id ?? randomUUID();
-      if (existing) touchTopic.run(now, topicId);
+      if (existing) touchTopic.run(now, topicId, job.userId);
       else {
-        insertTopic.run(topicId, name, encodeJson([]), now, now);
+        insertTopic.run(topicId, job.userId, name, encodeJson([]), now, now);
         known.push({ name, aliases: [] });
       }
-      linkTopic.run(job.entryId, topicId);
+      linkTopic.run(job.entryId, topicId, job.userId);
       topicIdByName.set(name, topicId);
     }
 
@@ -986,14 +1055,14 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
           db
             .prepare(
               `SELECT topic_id, feeling_key FROM entry_topic_feelings
-               WHERE entry_id = ? AND source != 'suggested'`,
+               WHERE entry_id = ? AND source != 'suggested' AND user_id = ?`,
             )
-            .all(job.entryId) as Array<{ topic_id: string; feeling_key: string }>
+            .all(job.entryId, job.userId) as Array<{ topic_id: string; feeling_key: string }>
         ).map((row) => `${row.topic_id} ${row.feeling_key}`),
       );
       const insertPairing = db.prepare(
-        `INSERT OR IGNORE INTO entry_topic_feelings (entry_id, topic_id, feeling_key, source)
-         VALUES (?, ?, ?, 'suggested')`,
+        `INSERT OR IGNORE INTO entry_topic_feelings (entry_id, topic_id, user_id, feeling_key, source)
+         VALUES (?, ?, ?, ?, 'suggested')`,
       );
       for (const pairing of analysis.pairings) {
         const canonicalName = canonicalByProposed.get(pairing.topic);
@@ -1001,7 +1070,7 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
         if (!topicId) continue;
         for (const feelingKey of pairing.feelingKeys) {
           if (alreadyDecided.has(`${topicId} ${feelingKey}`)) continue;
-          insertPairing.run(job.entryId, topicId, feelingKey);
+          insertPairing.run(job.entryId, topicId, job.userId, feelingKey);
         }
       }
     }
@@ -1015,7 +1084,7 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
     // entry, which is what the original DELETE was protecting against.
     db.prepare(
       `UPDATE inference_jobs SET status = 'completed', result_json = ?, completed_at = ?
-       WHERE id = ?`,
+       WHERE id = ? AND user_id = ?`,
     ).run(
       // `feeling_key`/`confidence` are still written alongside the list. They are what a client
       // built before the vocabulary grew reads, and what `readSuggestedFeelings` falls back to.
@@ -1026,14 +1095,21 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
       }),
       now,
       job.id,
+      job.userId,
     );
     db.prepare(
       `DELETE FROM inference_jobs
-       WHERE entry_id = ? AND kind = 'entry_analysis' AND id <> ?`,
-    ).run(job.entryId, job.id);
+       WHERE entry_id = ? AND kind = 'entry_analysis' AND id <> ? AND user_id = ?`,
+    ).run(job.entryId, job.id, job.userId);
   });
 }
 
+/**
+ * Runs the model call and applies its result, all within one user's rows (#135).
+ *
+ * `db` is the handle `runWorker` obtained from `ScopedDb.forUser(job.userId)` for this specific
+ * job — see `applyAnalysis`'s doc comment for what that guarantees and what it does not.
+ */
 async function processJob(db: DiaryDatabase, job: Job): Promise<void> {
   if (job.kind === 'transcript_format') {
     const payload = JSON.parse(job.resultJson ?? '{}') as { input?: unknown };
@@ -1041,26 +1117,34 @@ async function processJob(db: DiaryDatabase, job: Job): Promise<void> {
     const text = await ollamaFormatTranscript(payload.input);
     db.prepare(
       `UPDATE inference_jobs SET status = 'completed', result_json = ?, completed_at = ?
-       WHERE id = ?`,
-    ).run(JSON.stringify({ text }), encodeDateTime(nowUtc()), job.id);
+       WHERE id = ? AND user_id = ?`,
+    ).run(JSON.stringify({ text }), encodeDateTime(nowUtc()), job.id, job.userId);
     return;
   }
 
-  const entry = db.prepare('SELECT raw_text FROM diary_entries WHERE id = ?').get(job.entryId) as
-    { raw_text: string } | undefined;
+  const entry = db
+    .prepare('SELECT raw_text FROM diary_entries WHERE id = ? AND user_id = ?')
+    .get(job.entryId, job.userId) as { raw_text: string } | undefined;
   if (!entry) throw new Error('Entry no longer exists');
   const analysis = await ollamaAnalysis(entry.raw_text);
   if (analysis.feelings.length === 0) throw new Error('Analysis proposed no feeling');
   applyAnalysis(db, job, analysis);
 }
 
+/** `db` is the same per-job `ScopedDb.forUser(job.userId)` handle `processJob` used (#135). */
 function recordFailure(db: DiaryDatabase, job: Job, error: unknown): void {
   const message = error instanceof Error ? error.message.slice(0, 500) : 'Unknown inference error';
   const retry = job.attempts < 3;
   db.prepare(
     `UPDATE inference_jobs SET status = ?, error_text = ?, completed_at = ?, started_at = NULL
-     WHERE id = ?`,
-  ).run(retry ? 'queued' : 'failed', message, retry ? null : encodeDateTime(nowUtc()), job.id);
+     WHERE id = ? AND user_id = ?`,
+  ).run(
+    retry ? 'queued' : 'failed',
+    message,
+    retry ? null : encodeDateTime(nowUtc()),
+    job.id,
+    job.userId,
+  );
 }
 
 /**
@@ -1161,8 +1245,16 @@ export async function runWorker(once = false, signal?: AbortSignal): Promise<voi
 
   const db = openDiary(config.databasePath);
   assertCompatible(db);
+  const scopedDb = createScopedDb(db);
 
   // A process killed during inference leaves no ambiguous result: its job becomes retryable.
+  //
+  // Deliberately unscoped (#135): this is process-restart bookkeeping, not work done on behalf of
+  // any one user — a worker that crashed mid-job may have left *any* user's row stuck in
+  // 'running', and recovering all of them in one cross-user sweep is the entire point. There is no
+  // single `userId` this could be scoped to without turning one restart-time pass into a per-user
+  // loop, which is exactly the multiplied query cost criterion 4 forbids, for a maintenance step
+  // that only ever runs once per process start, never per poll.
   db.prepare(
     `UPDATE inference_jobs SET status = 'queued', started_at = NULL
      WHERE status = 'running' AND attempts < 3`,
@@ -1205,10 +1297,13 @@ export async function runWorker(once = false, signal?: AbortSignal): Promise<voi
     do {
       const job = claimNext(db);
       if (job) {
+        // Everything downstream of a claimed job runs against a handle scoped to that job's own
+        // owner (#135) — the raw connection is never touched again for this job.
+        const userDb = scopedDb.forUser(job.userId);
         try {
-          await processJob(db, job);
+          await processJob(userDb, job);
         } catch (error) {
-          recordFailure(db, job, error);
+          recordFailure(userDb, job, error);
         }
         if (once) break;
         continue;
