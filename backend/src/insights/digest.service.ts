@@ -73,7 +73,7 @@ export class DigestService {
    * defaults to the week containing today's server-local date — the live, unpinned path a real
    * client's digest sheet actually calls.
    */
-  get(weekRaw?: string): DigestResponse {
+  get(userId: string, weekRaw?: string): DigestResponse {
     const anchor = weekRaw === undefined ? todayLocal() : parseDigestWeek(weekRaw);
     const monday = weekStart(anchor);
     const sunday = addDays(monday, 6);
@@ -85,14 +85,14 @@ export class DigestService {
     // counts below, this is not restricted to confirmed feelings: "you wrote n entries this week" is
     // a claim about writing, not about what was later confirmed, and it is the one number the empty
     // case still owes the user (task 1).
-    const weekEntries = this.entries.findInDateRange(monday, sunday);
+    const weekEntries = this.entries.findInDateRange(userId, monday, sunday);
     if (weekEntries.length === 0) {
       return { empty: true, entry_count: 0 };
     }
 
     const mondayStr = serializeDate(monday);
     const sundayStr = serializeDate(sunday);
-    const patterns = this.patterns.listPatterns();
+    const patterns = this.patterns.listPatterns(userId);
 
     // R-2-02: "strongest active pattern with activity this week." `PatternOut.evidence` already
     // carries every contributing entry's date (`patterns.service.ts#evidenceByPattern`), so no
@@ -181,7 +181,7 @@ export class DigestService {
     if (highlight !== undefined) {
       const feeling = highlight.feeling;
       const currentCount = countConfirmedFeeling(weekEntries, feeling);
-      const previousEntries = this.entries.findInDateRange(previousMonday, previousSunday);
+      const previousEntries = this.entries.findInDateRange(userId, previousMonday, previousSunday);
       const previousCount = countConfirmedFeeling(previousEntries, feeling);
       const direction: DigestMovementOut['direction'] =
         currentCount === previousCount ? 'flat' : currentCount > previousCount ? 'up' : 'down';

@@ -1,4 +1,5 @@
-import { Controller, Get, HttpException, HttpStatus, Query } from '@nestjs/common';
+import { Controller, Get, HttpException, HttpStatus, Query, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { RequiresPremium } from '../billing/requires-premium.guard';
 import { DigestService, InvalidDigestWeekError, type DigestResponse } from './digest.service';
 
@@ -36,9 +37,9 @@ export class DigestController {
    * the clock itself (determinism, acceptance criterion 1).
    */
   @Get('digest')
-  get(@Query('week') week?: string): DigestResponse {
+  get(@Query('week') week: string | undefined, @Req() req: Request): DigestResponse {
     try {
-      return this.digest.get(week);
+      return this.digest.get(req.userId as string, week);
     } catch (err) {
       if (err instanceof InvalidDigestWeekError) {
         throw new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY);

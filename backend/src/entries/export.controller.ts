@@ -1,5 +1,5 @@
-import { Controller, Get, HttpException, HttpStatus, Query, Res } from '@nestjs/common';
-import type { Response } from 'express';
+import { Controller, Get, HttpException, HttpStatus, Query, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { serializeDate, todayLocal } from '../db/codecs';
 import { exportFormatQuerySchema, parseOrThrow } from '../common/validation';
 import { ExportService } from './export.service';
@@ -17,17 +17,22 @@ export class ExportController {
   constructor(private readonly exportService: ExportService) {}
 
   @Get()
-  get(@Query('format') format: string | undefined, @Res() res: Response): void {
+  get(
+    @Query('format') format: string | undefined,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): void {
     if (!format) {
       throw new HttpException('Field required: format', HttpStatus.UNPROCESSABLE_ENTITY);
     }
     const parsed = parseOrThrow(exportFormatQuerySchema, format);
+    const userId = req.userId as string;
     // Today's date, not the diary's date range — this only names the file a browser or share
     // sheet offers to save, the same role a backup's filename plays in `npm run backup`.
     const filenameDate = serializeDate(todayLocal());
 
     if (parsed === 'json') {
-      const body = JSON.stringify(this.exportService.toJson(), null, 2);
+      const body = JSON.stringify(this.exportService.toJson(userId), null, 2);
       res
         .status(HttpStatus.OK)
         .set({
@@ -38,7 +43,7 @@ export class ExportController {
       return;
     }
 
-    const body = this.exportService.toMarkdown();
+    const body = this.exportService.toMarkdown(userId);
     res
       .status(HttpStatus.OK)
       .set({

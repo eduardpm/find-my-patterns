@@ -1,4 +1,5 @@
-import { Controller, Get, HttpException, HttpStatus, Query } from '@nestjs/common';
+import { Controller, Get, HttpException, HttpStatus, Query, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { decodeDate } from '../db/codecs';
 import { QuestionYieldService, type QuestionYieldReport } from './question-yield.service';
 
@@ -15,7 +16,11 @@ export class QuestionYieldController {
   constructor(private readonly service: QuestionYieldService) {}
 
   @Get()
-  get(@Query('from') from?: string, @Query('to') to?: string): QuestionYieldReport {
+  get(
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Req() req: Request,
+  ): QuestionYieldReport {
     if (from !== undefined) assertDateFormat('from', from);
     if (to !== undefined) assertDateFormat('to', to);
     if (from !== undefined && to !== undefined && from > to) {
@@ -24,7 +29,7 @@ export class QuestionYieldController {
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
     }
-    return this.service.compute({ from, to });
+    return this.service.compute(req.userId as string, { from, to });
   }
 }
 

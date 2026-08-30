@@ -14,8 +14,7 @@ import {
   type NaiveDateTime,
   type PlainDate,
 } from '../db/codecs';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import type { PatternDirection } from '../domain/types';
 import { TopicsService } from '../topics/topics.service';
 import {
@@ -420,7 +419,7 @@ interface ContextCandidate {
 @Injectable()
 export class PatternsService {
   constructor(
-    @Inject(DIARY_DB) private readonly db: DiaryDatabase,
+    @Inject(SCOPED_DB) private readonly db: ScopedDb,
     private readonly topics: TopicsService,
   ) {}
 
@@ -434,17 +433,18 @@ export class PatternsService {
    * `CONFIRMED_FEELING_SOURCES` is applied in the SQL rather than afterwards, so there is no path
    * through this file on which a `suggested` or `imported` entry could reach a count (C-04).
    */
-  private loadEvidenceEntries(): LoadedEntry[] {
+  private loadEvidenceEntries(userId: string): LoadedEntry[] {
+    const handle = this.db.forUser(userId);
     const placeholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
-    const rows = this.db
+    const rows = handle
       .prepare(
         `SELECT e.id, e.entry_date, e.raw_text, e.feeling_source, ef.feeling_key
          FROM diary_entries e
          JOIN entry_feelings ef ON ef.entry_id = e.id
-         WHERE e.feeling_source IN (${placeholders})
+         WHERE e.user_id = ? AND e.feeling_source IN (${placeholders})
          ORDER BY e.entry_date, e.id, ef.position`,
       )
-      .all(...CONFIRMED_FEELING_SOURCES) as Array<{
+      .all(userId, ...CONFIRMED_FEELING_SOURCES) as Array<{
       id: string;
       entry_date: string;
       raw_text: string;
@@ -476,12 +476,12 @@ export class PatternsService {
     // candidate pair. A row for an entry not in `byEntry` (its own feelings were never confirmed)
     // is simply not attached to anything; such an entry contributes no evidence at all already.
     const pairingPlaceholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
-    for (const row of this.db
+    for (const row of handle
       .prepare(
         `SELECT entry_id, topic_id, feeling_key FROM entry_topic_feelings
-         WHERE source IN (${pairingPlaceholders})`,
+         WHERE user_id = ? AND source IN (${pairingPlaceholders})`,
       )
-      .all(...CONFIRMED_FEELING_SOURCES) as Array<{
+      .all(userId, ...CONFIRMED_FEELING_SOURCES) as Array<{
       entry_id: string;
       topic_id: string;
       feeling_key: string;
@@ -495,11 +495,13 @@ export class PatternsService {
     // not once per (entry, feeling) — re-extracting per feeling would delete the links the
     // previous pass had just written.
     for (const entry of byEntry.values()) {
-      this.db
-        .prepare("DELETE FROM entry_topics WHERE entry_id = ? AND extracted_by = 'keyword'")
-        .run(entry.id);
-      this.topics.extractAndLinkTopics(entry.id, entry.rawText);
-      entry.topicIds = this.topics.topicsForEntry(entry.id).map((topic) => topic.id);
+      handle
+        .prepare(
+          "DELETE FROM entry_topics WHERE user_id = ? AND entry_id = ? AND extracted_by = 'keyword'",
+        )
+        .run(userId, entry.id);
+      this.topics.extractAndLinkTopics(userId, entry.id, entry.rawText);
+      entry.topicIds = this.topics.topicsForEntry(userId, entry.id).map((topic) => topic.id);
     }
 
     return [...byEntry.values()];
@@ -509,16 +511,19 @@ export class PatternsService {
   // Recompute
   // -------------------------------------------------------------------------------------------
 
-  async recomputePatterns(): Promise<{ excludedUnpaired: number }> {
+  async recomputePatterns(userId: string): Promise<{ excludedUnpaired: number }> {
     // Consolidation first, so the counting that follows sees one row per idea rather than three
     // fragments of it, and so a user's alias edit takes effect on this read (A4-04/A4-05).
-    this.topics.mergeFragmentedTopics();
+    this.topics.mergeFragmentedTopics(userId);
 
-    const entries = this.loadEvidenceEntries();
+    const entries = this.loadEvidenceEntries(userId);
     const today = todayLocal();
     const topicNames = new Map(
       (
-        this.db.prepare('SELECT id, name FROM topics').all() as Array<{ id: string; name: string }>
+        this.db
+          .forUser(userId)
+          .prepare('SELECT id, name FROM topics WHERE user_id = ?')
+          .all(userId) as Array<{ id: string; name: string }>
       ).map((row) => [row.id, row.name]),
     );
 
@@ -526,10 +531,11 @@ export class PatternsService {
       withinWindow(entry.entryDate, today, RECENCY_WINDOW_DAYS),
     );
 
-    const valences = this.feelingValences();
+    const valences = this.feelingValences(userId);
     const { candidates, excludedUnpaired, excludedFromThreshold, windowCounts } =
       this.buildCandidates(entries, inWindow, topicNames, valences);
     this.storeCandidates(
+      userId,
       candidates,
       topicNames,
       valences,
@@ -933,17 +939,18 @@ export class PatternsService {
    * text. Unlike `loadEvidenceEntries`, this has no side effect on the database: context factors are
    * derived, not extracted, so there is nothing here to re-scan on every call.
    */
-  private loadContextEntries(): ContextLoadedEntry[] {
+  private loadContextEntries(userId: string): ContextLoadedEntry[] {
     const placeholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
     const rows = this.db
+      .forUser(userId)
       .prepare(
         `SELECT e.id, e.entry_date, e.created_at, ef.feeling_key
          FROM diary_entries e
          JOIN entry_feelings ef ON ef.entry_id = e.id
-         WHERE e.feeling_source IN (${placeholders})
+         WHERE e.user_id = ? AND e.feeling_source IN (${placeholders})
          ORDER BY e.entry_date, e.id, ef.position`,
       )
-      .all(...CONFIRMED_FEELING_SOURCES) as Array<{
+      .all(userId, ...CONFIRMED_FEELING_SOURCES) as Array<{
       id: string;
       entry_date: string;
       created_at: string;
@@ -974,10 +981,14 @@ export class PatternsService {
    * these: `buildCandidates` needs it to decide whether an entry's own feelings are mixed-valence,
    * the same map `directionFor`'s valence lookups already used further down the pipeline.
    */
-  private feelingValences(): Map<string, string> {
+  private feelingValences(userId: string): Map<string, string> {
+    // `feelings` is shared reference vocabulary — no `user_id` column exists on it — but reading it
+    // still goes through `forUser(userId)` because that is the only way this class can obtain a
+    // handle at all (M-1b, #46): `ScopedDb`'s guard never fires here since the query names no table
+    // in `USER_DATA_TABLES`, so this is exactly as unscoped in practice as it always was.
     return new Map(
       (
-        this.db.prepare('SELECT "key", valence FROM feelings').all() as Array<{
+        this.db.forUser(userId).prepare('SELECT "key", valence FROM feelings').all() as Array<{
           key: string;
           valence: string;
         }>
@@ -1017,8 +1028,8 @@ export class PatternsService {
    * this method's one production caller, `InsightsController#get`, is also the only one that ever
    * needs to say otherwise.
    */
-  contextPatterns(windowDays: number | null = null): ContextPatternOut[] {
-    const entries = this.loadContextEntries();
+  contextPatterns(userId: string, windowDays: number | null = null): ContextPatternOut[] {
+    const entries = this.loadContextEntries(userId);
     const today = todayLocal();
     const inWindow =
       windowDays === null
@@ -1116,7 +1127,7 @@ export class PatternsService {
         rank(a).localeCompare(rank(b)),
     );
 
-    const valences = this.feelingValences();
+    const valences = this.feelingValences(userId);
     const factorInfo = new Map(CONTEXT_FACTORS.map((factor) => [factor.key, factor]));
 
     return candidates.slice(0, MAX_CONTEXT_PATTERNS).map((candidate): ContextPatternOut => {
@@ -1155,21 +1166,22 @@ export class PatternsService {
         comparison_reason: assoc.comparisonReason,
         comparison_note: contextComparisonNoteFor(assoc.comparisonReason),
         is_strong: isStrong(assoc, assoc.presentCount),
-        evidence: this.evidenceRows(candidate.evidenceIds),
+        evidence: this.evidenceRows(userId, candidate.evidenceIds),
       };
     });
   }
 
   /** The evidence trail for a set of entry ids, in the shape `PatternOut`/`ContextPatternOut` share. */
-  private evidenceRows(entryIds: string[]): EvidenceOut[] {
+  private evidenceRows(userId: string, entryIds: string[]): EvidenceOut[] {
     if (entryIds.length === 0) return [];
+    const handle = this.db.forUser(userId);
     const placeholders = entryIds.map(() => '?').join(', ');
-    const rows = this.db
+    const rows = handle
       .prepare(
         `SELECT e.id, e.entry_date, e.raw_text, e.feeling_source
-         FROM diary_entries e WHERE e.id IN (${placeholders})`,
+         FROM diary_entries e WHERE e.user_id = ? AND e.id IN (${placeholders})`,
       )
-      .all(...entryIds) as Array<{
+      .all(userId, ...entryIds) as Array<{
       id: string;
       entry_date: string;
       raw_text: string;
@@ -1178,12 +1190,13 @@ export class PatternsService {
 
     const feelingsByEntry = new Map<string, string[]>();
     if (rows.length > 0) {
-      for (const row of this.db
+      for (const row of handle
         .prepare(
-          `SELECT entry_id, feeling_key FROM entry_feelings WHERE entry_id IN (${placeholders})
+          `SELECT entry_id, feeling_key FROM entry_feelings
+           WHERE user_id = ? AND entry_id IN (${placeholders})
            ORDER BY entry_id, position`,
         )
-        .all(...entryIds) as Array<{ entry_id: string; feeling_key: string }>) {
+        .all(userId, ...entryIds) as Array<{ entry_id: string; feeling_key: string }>) {
         if (!feelingsByEntry.has(row.entry_id)) feelingsByEntry.set(row.entry_id, []);
         feelingsByEntry.get(row.entry_id)!.push(row.feeling_key);
       }
@@ -1208,6 +1221,7 @@ export class PatternsService {
   // -------------------------------------------------------------------------------------------
 
   private storeCandidates(
+    userId: string,
     candidates: Candidate[],
     topicNames: Map<string, string>,
     valences: Map<string, string>,
@@ -1215,6 +1229,7 @@ export class PatternsService {
     excludedFromThreshold: Set<string>,
     windowCounts: Map<string, number>,
   ): void {
+    const handle = this.db.forUser(userId);
     const existing = new Map<
       string,
       {
@@ -1231,12 +1246,13 @@ export class PatternsService {
         narration_next_attempt_at: string | null;
       }
     >();
-    for (const row of this.db
+    for (const row of handle
       .prepare(
         `SELECT id, topic_id, feeling_key, kind, occurrence_count, narrative_text, suggestion_text,
-                direction, status, narration_attempts, narration_next_attempt_at FROM patterns`,
+                direction, status, narration_attempts, narration_next_attempt_at FROM patterns
+         WHERE user_id = ?`,
       )
-      .all() as Array<{
+      .all(userId) as Array<{
       id: string;
       topic_id: string;
       feeling_key: string;
@@ -1326,19 +1342,19 @@ export class PatternsService {
       let patternId: string;
       if (previous === undefined) {
         patternId = randomUUID();
-        this.db
+        handle
           .prepare(
-            `INSERT INTO patterns (id, topic_id, feeling_key, first_detected_at, last_updated_at,
-             occurrence_count, narrative_text, suggestion_text, direction, kind, lifetime_count,
-             status, last_occurrence_date, present_count, present_total, absent_count, absent_total,
-             lift, comparison_reason, base_rate, is_strong, confounders, narration_attempts,
-             narration_next_attempt_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO patterns (id, user_id, topic_id, feeling_key, first_detected_at,
+             last_updated_at, occurrence_count, narrative_text, suggestion_text, direction, kind,
+             lifetime_count, status, last_occurrence_date, present_count, present_total,
+             absent_count, absent_total, lift, comparison_reason, base_rate, is_strong,
+             confounders, narration_attempts, narration_next_attempt_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(patternId, candidate.topicId, candidate.feelingKey, now, now, ...values);
+          .run(patternId, userId, candidate.topicId, candidate.feelingKey, now, now, ...values);
       } else {
         patternId = previous.id;
-        this.db
+        handle
           .prepare(
             `UPDATE patterns SET occurrence_count = ?, narrative_text = ?, suggestion_text = ?,
              direction = ?, kind = ?, lifetime_count = ?, status = ?, last_occurrence_date = ?,
@@ -1346,30 +1362,34 @@ export class PatternsService {
              comparison_reason = ?, base_rate = ?, is_strong = ?, confounders = ?,
              narration_attempts = ?, narration_next_attempt_at = ?${
                changed ? ', last_updated_at = ?' : ''
-             } WHERE id = ?`,
+             } WHERE id = ? AND user_id = ?`,
           )
-          .run(...values, ...(changed ? [now] : []), patternId);
+          .run(...values, ...(changed ? [now] : []), patternId, userId);
       }
 
-      this.db.prepare('DELETE FROM pattern_entries WHERE pattern_id = ?').run(patternId);
-      const insertLink = this.db.prepare(
-        'INSERT INTO pattern_entries (pattern_id, entry_id) VALUES (?, ?)',
+      handle
+        .prepare('DELETE FROM pattern_entries WHERE user_id = ? AND pattern_id = ?')
+        .run(userId, patternId);
+      const insertLink = handle.prepare(
+        'INSERT INTO pattern_entries (pattern_id, entry_id, user_id) VALUES (?, ?, ?)',
       );
-      for (const entryId of candidate.evidenceIds) insertLink.run(patternId, entryId);
+      for (const entryId of candidate.evidenceIds) insertLink.run(patternId, entryId, userId);
 
       // A2-05: the pattern is back, so any standing withdrawal notice for it is superseded. The
       // user is never told "withdrawn" and "active" about the same pattern at once.
-      this.db
+      handle
         .prepare(
-          'UPDATE pattern_withdrawals SET superseded_at = ? WHERE pattern_key = ? AND superseded_at IS NULL',
+          `UPDATE pattern_withdrawals SET superseded_at = ?
+           WHERE user_id = ? AND pattern_key = ? AND superseded_at IS NULL`,
         )
-        .run(now, candidate.key);
+        .run(now, userId, candidate.key);
     }
 
     // --- Withdrawals (A2) -----------------------------------------------------------------------
     for (const [key, pattern] of existing) {
       if (seen.has(key)) continue;
       this.recordWithdrawal(
+        userId,
         key,
         pattern,
         topicNames,
@@ -1379,11 +1399,13 @@ export class PatternsService {
         excludedFromThreshold,
         windowCounts,
       );
-      this.db.prepare('DELETE FROM pattern_entries WHERE pattern_id = ?').run(pattern.id);
-      this.db.prepare('DELETE FROM patterns WHERE id = ?').run(pattern.id);
+      handle
+        .prepare('DELETE FROM pattern_entries WHERE user_id = ? AND pattern_id = ?')
+        .run(userId, pattern.id);
+      handle.prepare('DELETE FROM patterns WHERE id = ? AND user_id = ?').run(pattern.id, userId);
     }
 
-    this.pruneWithdrawals();
+    this.pruneWithdrawals(userId);
   }
 
   /**
@@ -1394,6 +1416,7 @@ export class PatternsService {
    * diary, and each is worth a different sentence.
    */
   private recordWithdrawal(
+    userId: string,
     key: string,
     pattern: {
       id: string;
@@ -1409,20 +1432,21 @@ export class PatternsService {
     excludedFromThreshold: Set<string>,
     windowCounts: Map<string, number>,
   ): void {
+    const handle = this.db.forUser(userId);
     const topicName = topicNames.get(pattern.topic_id);
     const previousCount = Number(pattern.occurrence_count);
     const pairKey = `${pattern.topic_id} ${pattern.feeling_key}`;
 
     // How much of the pair survives, ignoring whether the feeling was confirmed. It is the one
     // question that separates "the user rewrote the entry" from "the user un-confirmed it".
-    const anySource = this.db
+    const anySource = handle
       .prepare(
         `SELECT COUNT(*) AS n FROM entry_topics et
          JOIN entry_feelings ef ON ef.entry_id = et.entry_id
          JOIN diary_entries e ON e.id = et.entry_id
-         WHERE et.topic_id = ? AND ef.feeling_key = ?`,
+         WHERE et.user_id = ? AND et.topic_id = ? AND ef.feeling_key = ?`,
       )
-      .get(pattern.topic_id, pattern.feeling_key) as { n: number };
+      .get(userId, pattern.topic_id, pattern.feeling_key) as { n: number };
 
     const kind: PatternKind = pattern.kind === 'inverse' ? 'inverse' : 'forward';
     // [E-1d, #109] Forward reads its windowed count from `windowCounts` — `buildCandidates`'s own
@@ -1434,7 +1458,7 @@ export class PatternsService {
     const newCount =
       kind === 'forward'
         ? (windowCounts.get(pairKey) ?? 0)
-        : this.currentWindowCount(pattern.topic_id, pattern.feeling_key, today, kind);
+        : this.currentWindowCount(userId, pattern.topic_id, pattern.feeling_key, today, kind);
 
     // Ordered so each branch is the *only* thing that can have happened, and so the count is known
     // before the reason is chosen — deciding "below threshold" without looking at the count is how
@@ -1484,14 +1508,16 @@ export class PatternsService {
       below_threshold: `${label} was withdrawn: ${occurrences(previousCount)}, now ${newCount} — below the minimum of ${MIN_OCCURRENCE_THRESHOLD}.`,
     }[reason];
 
-    this.db
+    handle
       .prepare(
-        `INSERT INTO pattern_withdrawals (id, pattern_key, topic_id, topic_name, feeling_key, kind,
-         previous_count, new_count, reason, detail_text, withdrawn_at, superseded_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        `INSERT INTO pattern_withdrawals (id, user_id, pattern_key, topic_id, topic_name,
+         feeling_key, kind, previous_count, new_count, reason, detail_text, withdrawn_at,
+         superseded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       )
       .run(
         randomUUID(),
+        userId,
         key,
         pattern.topic_id,
         topicName ?? '(merged)',
@@ -1512,6 +1538,7 @@ export class PatternsService {
    * is true of a pair the user was never shown and false of the one that went away.
    */
   private currentWindowCount(
+    userId: string,
     topicId: string,
     feelingKey: string,
     today: PlainDate,
@@ -1522,29 +1549,35 @@ export class PatternsService {
     // feeling; an inverse one counts entries that carry the feeling and do *not* mention it.
     const membership = kind === 'inverse' ? 'NOT IN' : 'IN';
     const rows = this.db
+      .forUser(userId)
       .prepare(
         `SELECT e.entry_date FROM diary_entries e
          JOIN entry_feelings ef ON ef.entry_id = e.id
-         WHERE ef.feeling_key = ? AND e.feeling_source IN (${placeholders})
-           AND e.id ${membership} (SELECT entry_id FROM entry_topics WHERE topic_id = ?)`,
+         WHERE e.user_id = ? AND ef.feeling_key = ? AND e.feeling_source IN (${placeholders})
+           AND e.id ${membership} (
+             SELECT entry_id FROM entry_topics WHERE user_id = ? AND topic_id = ?
+           )`,
       )
-      .all(feelingKey, ...CONFIRMED_FEELING_SOURCES, topicId) as Array<{ entry_date: string }>;
+      .all(userId, feelingKey, ...CONFIRMED_FEELING_SOURCES, userId, topicId) as Array<{
+      entry_date: string;
+    }>;
     return rows.filter((row) =>
       withinWindow(decodeDate(row.entry_date), today, RECENCY_WINDOW_DAYS),
     ).length;
   }
 
   /** A2-06: a notice board, not an archive. Superseded notices go first, then the oldest. */
-  private pruneWithdrawals(): void {
+  private pruneWithdrawals(userId: string): void {
     this.db
+      .forUser(userId)
       .prepare(
-        `DELETE FROM pattern_withdrawals WHERE id NOT IN (
-           SELECT id FROM pattern_withdrawals
+        `DELETE FROM pattern_withdrawals WHERE user_id = ? AND id NOT IN (
+           SELECT id FROM pattern_withdrawals WHERE user_id = ?
            ORDER BY (superseded_at IS NOT NULL), withdrawn_at DESC, id
            LIMIT ?
          )`,
       )
-      .run(MAX_WITHDRAWAL_RECORDS);
+      .run(userId, userId, MAX_WITHDRAWAL_RECORDS);
   }
 
   // -------------------------------------------------------------------------------------------
@@ -1567,8 +1600,13 @@ export class PatternsService {
    * entry can move — a context factor is a fact about the calendar, not something an entry "gets
    * closer to" by being written.
    */
-  surfacedPatternCount(): number {
-    return (this.db.prepare('SELECT COUNT(*) AS n FROM patterns').get() as { n: number }).n;
+  surfacedPatternCount(userId: string): number {
+    return (
+      this.db
+        .forUser(userId)
+        .prepare('SELECT COUNT(*) AS n FROM patterns WHERE user_id = ?')
+        .get(userId) as { n: number }
+    ).n;
   }
 
   /**
@@ -1592,8 +1630,11 @@ export class PatternsService {
    * Tier-independent on purpose (`InsightsController#get` calls this unconditionally): the fact
    * itself is never gated, only the pattern content the locked state's copy refers to.
    */
-  historySpanDays(): number | null {
-    const row = this.db.prepare('SELECT MIN(entry_date) AS earliest FROM diary_entries').get() as {
+  historySpanDays(userId: string): number | null {
+    const row = this.db
+      .forUser(userId)
+      .prepare('SELECT MIN(entry_date) AS earliest FROM diary_entries WHERE user_id = ?')
+      .get(userId) as {
       earliest: string | null;
     };
     if (!row.earliest) return null;
@@ -1626,8 +1667,9 @@ export class PatternsService {
    * have silently narrowed all three the moment this parameter was added, with no call site
    * telling a reader that was happening.
    */
-  listPatterns(windowDays: number | null = null): PatternOut[] {
+  listPatterns(userId: string, windowDays: number | null = null): PatternOut[] {
     const rows = this.db
+      .forUser(userId)
       .prepare(
         `SELECT p.id, t.name AS topic, p.feeling_key, p.occurrence_count,
                 p.narrative_text, p.suggestion_text, p.last_updated_at, p.kind, p.lifetime_count,
@@ -1636,12 +1678,13 @@ export class PatternsService {
                 f.valence
          FROM patterns p
          JOIN topics t ON t.id = p.topic_id
-         JOIN feelings f ON f.key = p.feeling_key`,
+         JOIN feelings f ON f.key = p.feeling_key
+         WHERE p.user_id = ?`,
       )
-      .all() as Array<Record<string, unknown>>;
+      .all(userId) as Array<Record<string, unknown>>;
 
     const today = todayLocal();
-    const evidence = this.evidenceByPattern();
+    const evidence = this.evidenceByPattern(userId);
 
     const patterns = rows.map((r): PatternOut => {
       const presentTotal = Number(r.present_total);
@@ -1793,14 +1836,16 @@ export class PatternsService {
    * Loaded for every pattern in one pass rather than per card: the alternative is a query per
    * pattern per read, and Insights recomputes on every open.
    */
-  private evidenceByPattern(): Map<string, EvidenceOut[]> {
-    const rows = this.db
+  private evidenceByPattern(userId: string): Map<string, EvidenceOut[]> {
+    const handle = this.db.forUser(userId);
+    const rows = handle
       .prepare(
         `SELECT pe.pattern_id, e.id, e.entry_date, e.raw_text, e.feeling_source
          FROM pattern_entries pe JOIN diary_entries e ON e.id = pe.entry_id
+         WHERE pe.user_id = ?
          ORDER BY e.entry_date, e.id`,
       )
-      .all() as Array<{
+      .all(userId) as Array<{
       pattern_id: string;
       id: string;
       entry_date: string;
@@ -1809,9 +1854,11 @@ export class PatternsService {
     }>;
 
     const feelingsByEntry = new Map<string, string[]>();
-    for (const row of this.db
-      .prepare('SELECT entry_id, feeling_key FROM entry_feelings ORDER BY entry_id, position')
-      .all() as Array<{ entry_id: string; feeling_key: string }>) {
+    for (const row of handle
+      .prepare(
+        'SELECT entry_id, feeling_key FROM entry_feelings WHERE user_id = ? ORDER BY entry_id, position',
+      )
+      .all(userId) as Array<{ entry_id: string; feeling_key: string }>) {
       if (!feelingsByEntry.has(row.entry_id)) feelingsByEntry.set(row.entry_id, []);
       feelingsByEntry.get(row.entry_id)!.push(row.feeling_key);
     }
@@ -1840,17 +1887,18 @@ export class PatternsService {
    * single recompute shares a timestamp to the microsecond, and breaking that tie on a random UUID
    * put the same notices in a different order on each client (C-02).
    */
-  listWithdrawals(): WithdrawalOut[] {
-    const lastSeen = this.readMeta('withdrawals_acknowledged_at');
+  listWithdrawals(userId: string): WithdrawalOut[] {
+    const lastSeen = this.readMeta(userId, 'withdrawals_acknowledged_at');
     return (
       this.db
+        .forUser(userId)
         .prepare(
           `SELECT id, topic_name, feeling_key, kind, previous_count, new_count, reason, detail_text,
                   withdrawn_at
-           FROM pattern_withdrawals WHERE superseded_at IS NULL
+           FROM pattern_withdrawals WHERE user_id = ? AND superseded_at IS NULL
            ORDER BY withdrawn_at DESC, topic_name, feeling_key, kind, id`,
         )
-        .all() as Array<Record<string, unknown>>
+        .all(userId) as Array<Record<string, unknown>>
     ).map((r) => {
       const withdrawnAt = String(r.withdrawn_at);
       return {
@@ -1877,22 +1925,27 @@ export class PatternsService {
    * screen cleared the flag, whichever client opened it first would clear it for the other, and
    * the two would show different numbers for the same diary (C-02).
    */
-  acknowledgeWithdrawals(): void {
-    this.writeMeta('withdrawals_acknowledged_at', encodeDateTime(nowUtc()));
+  acknowledgeWithdrawals(userId: string): void {
+    this.writeMeta(userId, 'withdrawals_acknowledged_at', encodeDateTime(nowUtc()));
   }
 
-  private readMeta(key: string): string | null {
-    const row = this.db.prepare('SELECT value FROM diary_meta WHERE "key" = ?').get(key) as
-      { value: string } | undefined;
+  private readMeta(userId: string, key: string): string | null {
+    const row = this.db
+      .forUser(userId)
+      .prepare('SELECT value FROM diary_meta WHERE user_id = ? AND "key" = ?')
+      .get(userId, key) as { value: string } | undefined;
     return row?.value ?? null;
   }
 
-  private writeMeta(key: string, value: string): void {
-    const updated = this.db
-      .prepare('UPDATE diary_meta SET value = ? WHERE "key" = ?')
-      .run(value, key);
+  private writeMeta(userId: string, key: string, value: string): void {
+    const handle = this.db.forUser(userId);
+    const updated = handle
+      .prepare('UPDATE diary_meta SET value = ? WHERE user_id = ? AND "key" = ?')
+      .run(value, userId, key);
     if (updated.changes === 0) {
-      this.db.prepare('INSERT INTO diary_meta ("key", value) VALUES (?, ?)').run(key, value);
+      handle
+        .prepare('INSERT INTO diary_meta (user_id, "key", value) VALUES (?, ?, ?)')
+        .run(userId, key, value);
     }
   }
 }

@@ -2,8 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { decodeDate, encodeDate, encodeDateTime, nowUtc, todayLocal } from '../db/codecs';
 import type { NaiveDateTime, PlainDate } from '../db/codecs';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import type {
   DiaryEntry,
   EntryOrigin,
@@ -75,7 +74,7 @@ export interface EntryUpdateInput {
 @Injectable()
 export class EntriesService {
   constructor(
-    @Inject(DIARY_DB) private readonly db: DiaryDatabase,
+    @Inject(SCOPED_DB) private readonly db: ScopedDb,
     private readonly repo: EntriesRepository,
     @Inject(ENTRY_INFERENCE) private readonly inference: EntryInference,
   ) {}
@@ -94,7 +93,10 @@ export class EntriesService {
    *    survives even if local inference is unavailable. The API process never connects to Ollama
    *    and never waits for it.
    */
-  createEntry(data: EntryCreateInput): {
+  createEntry(
+    userId: string,
+    data: EntryCreateInput,
+  ): {
     entry: DiaryEntry;
     suggestion: SuggestedFeeling | null;
   } {
@@ -113,10 +115,17 @@ export class EntriesService {
       orderIndex: number;
     }> = [];
 
+    const handle = this.db.forUser(userId);
+
     if (data.mode === 'guided' && data.guided_answers?.length) {
+      // `guiding_questions` is shared reference vocabulary (`schema.ts`'s M-1b note), not user
+      // data — no `user_id` column exists on it, so this read is intentionally not routed through
+      // `handle`, matching `FeelingsRepository`/`GuidingQuestionsRepository`'s own choice to stay on
+      // the raw `DiaryDatabase`. `ScopedDb`'s guard never inspects this statement either way, since
+      // it names no table in `USER_DATA_TABLES`.
       const questions = new Map(
         (
-          this.db.prepare('SELECT "key", prompt_text FROM guiding_questions').all() as Array<{
+          handle.prepare('SELECT "key", prompt_text FROM guiding_questions').all() as Array<{
             key: string;
             prompt_text: string;
           }>
@@ -148,28 +157,37 @@ export class EntriesService {
     const id = randomUUID();
     const created = encodeDateTime(nowUtc());
 
-    this.db.transaction(() => {
-      this.db
+    handle.transaction(() => {
+      handle
         .prepare(
           `INSERT INTO diary_entries
-           (id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source, version)
-           VALUES (?, ?, ?, ?, ?, ?, NULL, 'unset', 1)`,
+           (id, user_id, created_at, updated_at, entry_date, mode, raw_text, feeling_key,
+            feeling_source, version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'unset', 1)`,
         )
-        .run(id, created, created, entryDate, data.mode, text);
+        .run(id, userId, created, created, entryDate, data.mode, text);
 
-      const insertAnswer = this.db.prepare(
+      const insertAnswer = handle.prepare(
         `INSERT INTO guiding_question_answers
-         (id, entry_id, question_key, question_text_snapshot, answer_text, order_index)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         (id, user_id, entry_id, question_key, question_text_snapshot, answer_text, order_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const row of guidedRows) {
-        insertAnswer.run(row.id, id, row.questionKey, row.snapshot, row.answerText, row.orderIndex);
+        insertAnswer.run(
+          row.id,
+          userId,
+          id,
+          row.questionKey,
+          row.snapshot,
+          row.answerText,
+          row.orderIndex,
+        );
       }
     });
 
-    const suggestion = text.trim() ? this.analyzeStoredEntry(id) : null;
+    const suggestion = text.trim() ? this.analyzeStoredEntry(userId, id) : null;
 
-    return { entry: this.repo.findById(id)!, suggestion };
+    return { entry: this.repo.findById(userId, id)!, suggestion };
   }
 
   /**
@@ -196,7 +214,7 @@ export class EntriesService {
    *    to write for a few days" — and years of imported history is exactly what it would reject.
    *    Only "not in the future" is enforced here; the 30-day floor is not this method's business.
    */
-  createImportedEntry(input: ImportedEntryInput): DiaryEntry {
+  createImportedEntry(userId: string, input: ImportedEntryInput): DiaryEntry {
     const age = daysBetween(input.entryDate, todayLocal());
     if (age < 0) {
       throw new InvalidEntryDateError('Entry date cannot be in the future.');
@@ -204,17 +222,19 @@ export class EntriesService {
 
     const id = randomUUID();
     const createdAt = encodeDateTime(input.createdAt);
+    const handle = this.db.forUser(userId);
 
-    this.db.transaction(() => {
-      this.db
+    handle.transaction(() => {
+      handle
         .prepare(
           `INSERT INTO diary_entries
-           (id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source,
-            version, origin)
-           VALUES (?, ?, ?, ?, 'freeform', ?, ?, 'overridden', 1, ?)`,
+           (id, user_id, created_at, updated_at, entry_date, mode, raw_text, feeling_key,
+            feeling_source, version, origin)
+           VALUES (?, ?, ?, ?, ?, 'freeform', ?, ?, 'overridden', 1, ?)`,
         )
         .run(
           id,
+          userId,
           createdAt,
           // `updated_at` mirrors `created_at`: nothing has touched this row's content since the
           // moment it describes, and that moment is the historical one from the CSV — not the
@@ -225,10 +245,10 @@ export class EntriesService {
           input.feelingKey,
           input.origin,
         );
-      this.replaceFeelings(id, [input.feelingKey]);
+      this.replaceFeelings(userId, id, [input.feelingKey]);
     });
 
-    return this.repo.findById(id)!;
+    return this.repo.findById(userId, id)!;
   }
 
   /**
@@ -263,6 +283,7 @@ export class EntriesService {
    * must already be inside a transaction.
    */
   private replaceFeelings(
+    userId: string,
     entryId: string,
     keys: string[],
     intensities: Record<string, number | null> = {},
@@ -270,42 +291,48 @@ export class EntriesService {
     // De-duplicated while preserving order: the set is a set, and `entry_feelings` has a composite
     // primary key that a repeated word would collide with.
     const ordered = [...new Set(keys)];
-    this.db.prepare('DELETE FROM entry_feelings WHERE entry_id = ?').run(entryId);
-    const insert = this.db.prepare(
-      'INSERT INTO entry_feelings (entry_id, feeling_key, position, intensity) VALUES (?, ?, ?, ?)',
+    const handle = this.db.forUser(userId);
+    handle
+      .prepare('DELETE FROM entry_feelings WHERE user_id = ? AND entry_id = ?')
+      .run(userId, entryId);
+    const insert = handle.prepare(
+      `INSERT INTO entry_feelings (entry_id, user_id, feeling_key, position, intensity)
+       VALUES (?, ?, ?, ?, ?)`,
     );
     // A rating for a feeling that is not on the entry is dropped rather than stored: the map is
     // read through the set, never beside it, so the two cannot drift apart.
     ordered.forEach((key, position) =>
-      insert.run(entryId, key, position, intensities[key] ?? null),
+      insert.run(entryId, userId, key, position, intensities[key] ?? null),
     );
   }
 
   /** Begin a guided entry before the first answer so every subsequent PUT is independently safe. */
-  createGuidedDraft(): string {
-    const existing = this.db
+  createGuidedDraft(userId: string): string {
+    const handle = this.db.forUser(userId);
+    const existing = handle
       .prepare(
-        'SELECT id FROM diary_entries WHERE raw_text = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+        'SELECT id FROM diary_entries WHERE user_id = ? AND raw_text = ? ORDER BY created_at DESC, id DESC LIMIT 1',
       )
-      .get(GUIDED_DRAFT_SENTINEL) as { id: string } | undefined;
+      .get(userId, GUIDED_DRAFT_SENTINEL) as { id: string } | undefined;
     if (existing) return existing.id;
 
     const id = randomUUID();
     const created = encodeDateTime(nowUtc());
-    this.db
+    handle
       .prepare(
         `INSERT INTO diary_entries
-         (id, created_at, updated_at, entry_date, mode, raw_text, feeling_key, feeling_source, version)
-         VALUES (?, ?, ?, ?, 'guided', ?, NULL, 'unset', 1)`,
+         (id, user_id, created_at, updated_at, entry_date, mode, raw_text, feeling_key,
+          feeling_source, version)
+         VALUES (?, ?, ?, ?, ?, 'guided', ?, NULL, 'unset', 1)`,
       )
-      .run(id, created, created, encodeDate(todayLocal()), GUIDED_DRAFT_SENTINEL);
+      .run(id, userId, created, created, encodeDate(todayLocal()), GUIDED_DRAFT_SENTINEL);
     return id;
   }
 
-  getGuidedDraft(entryId: string): { answers: GuidedAnswerInput[] } {
-    this.assertGuidedDraft(entryId);
+  getGuidedDraft(userId: string, entryId: string): { answers: GuidedAnswerInput[] } {
+    this.assertGuidedDraft(userId, entryId);
     return {
-      answers: this.repo.findGuidedAnswers(entryId).map((answer) => ({
+      answers: this.repo.findGuidedAnswers(userId, entryId).map((answer) => ({
         question_key: answer.questionKey,
         answer_text: answer.answerText,
       })),
@@ -314,36 +341,43 @@ export class EntriesService {
 
   /** PUT semantics: retrying the same question replaces its answer instead of duplicating it. */
   saveGuidedDraftAnswer(
+    userId: string,
     entryId: string,
     questionKey: string,
     answerText: string,
     orderIndex: number,
   ): void {
-    this.db.transaction(() => {
-      this.assertGuidedDraft(entryId);
-      const question = this.db
+    const handle = this.db.forUser(userId);
+    handle.transaction(() => {
+      this.assertGuidedDraft(userId, entryId);
+      // `guiding_questions` is shared reference vocabulary — see `createEntry`'s note on the same
+      // read above for why it is not filtered by `user_id`.
+      const question = handle
         .prepare('SELECT prompt_text FROM guiding_questions WHERE "key" = ?')
         .get(questionKey) as { prompt_text: string } | undefined;
-      const existing = this.db
-        .prepare('SELECT id FROM guiding_question_answers WHERE entry_id = ? AND question_key = ?')
-        .get(entryId, questionKey) as { id: string } | undefined;
+      const existing = handle
+        .prepare(
+          'SELECT id FROM guiding_question_answers WHERE user_id = ? AND entry_id = ? AND question_key = ?',
+        )
+        .get(userId, entryId, questionKey) as { id: string } | undefined;
 
       if (existing) {
-        this.db
+        handle
           .prepare(
             `UPDATE guiding_question_answers SET answer_text = ?, order_index = ?,
-             question_text_snapshot = ? WHERE id = ?`,
+             question_text_snapshot = ? WHERE id = ? AND user_id = ?`,
           )
-          .run(answerText, orderIndex, question?.prompt_text ?? questionKey, existing.id);
+          .run(answerText, orderIndex, question?.prompt_text ?? questionKey, existing.id, userId);
       } else {
-        this.db
+        handle
           .prepare(
             `INSERT INTO guiding_question_answers
-             (id, entry_id, question_key, question_text_snapshot, answer_text, order_index)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+             (id, user_id, entry_id, question_key, question_text_snapshot, answer_text, order_index)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             randomUUID(),
+            userId,
             entryId,
             questionKey,
             question?.prompt_text ?? questionKey,
@@ -351,42 +385,55 @@ export class EntriesService {
             orderIndex,
           );
       }
-      this.db
-        .prepare('UPDATE diary_entries SET updated_at = ? WHERE id = ?')
-        .run(encodeDateTime(nowUtc()), entryId);
+      handle
+        .prepare('UPDATE diary_entries SET updated_at = ? WHERE id = ? AND user_id = ?')
+        .run(encodeDateTime(nowUtc()), entryId, userId);
     });
   }
 
-  finalizeGuidedDraft(entryId: string): {
+  finalizeGuidedDraft(
+    userId: string,
+    entryId: string,
+  ): {
     entry: DiaryEntry;
     suggestion: SuggestedFeeling | null;
   } {
-    this.assertGuidedDraft(entryId);
-    const answers = this.repo.findGuidedAnswers(entryId);
+    this.assertGuidedDraft(userId, entryId);
+    const answers = this.repo.findGuidedAnswers(userId, entryId);
     if (answers.length === 0) throw new EmptyGuidedDraftError('Draft has no answers');
     const text = answers
       .map((answer) => `${answer.questionTextSnapshot} ${answer.answerText}`)
       .join(' ');
     this.db
-      .prepare('UPDATE diary_entries SET raw_text = ?, updated_at = ? WHERE id = ?')
-      .run(text, encodeDateTime(nowUtc()), entryId);
-    const suggestion = this.analyzeStoredEntry(entryId);
-    return { entry: this.repo.findById(entryId)!, suggestion };
+      .forUser(userId)
+      .prepare('UPDATE diary_entries SET raw_text = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+      .run(text, encodeDateTime(nowUtc()), entryId, userId);
+    const suggestion = this.analyzeStoredEntry(userId, entryId);
+    return { entry: this.repo.findById(userId, entryId)!, suggestion };
   }
 
-  deleteGuidedDraft(entryId: string): void {
-    this.db.transaction(() => {
-      this.assertGuidedDraft(entryId);
-      this.db.prepare('DELETE FROM guiding_question_answers WHERE entry_id = ?').run(entryId);
-      this.db.prepare('DELETE FROM entry_feelings WHERE entry_id = ?').run(entryId);
-      this.db.prepare('DELETE FROM inference_jobs WHERE entry_id = ?').run(entryId);
-      this.db.prepare('DELETE FROM diary_entries WHERE id = ?').run(entryId);
+  deleteGuidedDraft(userId: string, entryId: string): void {
+    const handle = this.db.forUser(userId);
+    handle.transaction(() => {
+      this.assertGuidedDraft(userId, entryId);
+      handle
+        .prepare('DELETE FROM guiding_question_answers WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM entry_feelings WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM inference_jobs WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle.prepare('DELETE FROM diary_entries WHERE id = ? AND user_id = ?').run(entryId, userId);
     });
   }
 
-  private assertGuidedDraft(entryId: string): void {
-    const row = this.db.prepare('SELECT raw_text FROM diary_entries WHERE id = ?').get(entryId) as
-      { raw_text: string } | undefined;
+  private assertGuidedDraft(userId: string, entryId: string): void {
+    const row = this.db
+      .forUser(userId)
+      .prepare('SELECT raw_text FROM diary_entries WHERE id = ? AND user_id = ?')
+      .get(entryId, userId) as { raw_text: string } | undefined;
     if (!row || row.raw_text !== GUIDED_DRAFT_SENTINEL) {
       throw new GuidedDraftNotFoundError(entryId);
     }
@@ -404,29 +451,34 @@ export class EntriesService {
    * `'confirmed'` or `'overridden'`, a client showing "we suggest: happy" under a feeling the user
    * already confirmed as happy is noise, and that is the only case this suppresses.
    */
-  analysisFor(entryId: string): {
+  analysisFor(
+    userId: string,
+    entryId: string,
+  ): {
     suggested: SuggestedFeeling | null;
     suggestedAll: SuggestedFeeling[];
     pending: boolean;
   } {
+    const handle = this.db.forUser(userId);
     const pending =
-      (this.db
+      (handle
         .prepare(
           `SELECT 1 FROM inference_jobs
-           WHERE entry_id = ? AND kind = 'entry_analysis' AND status IN ('queued', 'running')
+           WHERE user_id = ? AND entry_id = ? AND kind = 'entry_analysis'
+             AND status IN ('queued', 'running')
            LIMIT 1`,
         )
-        .get(entryId) as unknown) !== undefined;
+        .get(userId, entryId) as unknown) !== undefined;
     const nothing = { suggested: null, suggestedAll: [], pending };
 
-    const done = this.db
+    const done = handle
       .prepare(
         `SELECT result_json FROM inference_jobs
-         WHERE entry_id = ? AND kind = 'entry_analysis' AND status = 'completed'
+         WHERE user_id = ? AND entry_id = ? AND kind = 'entry_analysis' AND status = 'completed'
            AND result_json IS NOT NULL
          ORDER BY completed_at DESC LIMIT 1`,
       )
-      .get(entryId) as { result_json: string } | undefined;
+      .get(userId, entryId) as { result_json: string } | undefined;
 
     if (!done) return nothing;
 
@@ -440,7 +492,7 @@ export class EntriesService {
     const suggestions = readSuggestedFeelings(parsed);
     if (suggestions.length === 0) return nothing;
 
-    const entry = this.repo.findById(entryId);
+    const entry = this.repo.findById(userId, entryId);
     if (!entry) return nothing;
 
     // Nothing to propose when a *user* has already chosen exactly what the analyser is proposing
@@ -460,19 +512,21 @@ export class EntriesService {
     return { suggested: suggestions[0], suggestedAll: suggestions, pending };
   }
 
-  private analyzeStoredEntry(entryId: string): SuggestedFeeling | null {
-    const analysis = this.inference.enqueueEntry(entryId);
+  private analyzeStoredEntry(userId: string, entryId: string): SuggestedFeeling | null {
+    const analysis = this.inference.enqueueEntry(userId, entryId);
     if (!analysis || analysis.feelings.length === 0) return null;
     // Normally the worker has already applied this. The idempotent write keeps tests deterministic.
-    return this.db.transaction(() => {
-      const applied = this.db
+    const handle = this.db.forUser(userId);
+    return handle.transaction(() => {
+      const applied = handle
         .prepare(
           `UPDATE diary_entries SET feeling_key = ?, feeling_source = 'suggested', updated_at = ?
-           WHERE id = ? AND feeling_source = 'unset'`,
+           WHERE id = ? AND user_id = ? AND feeling_source = 'unset'`,
         )
-        .run(analysis.feelings[0].key, encodeDateTime(nowUtc()), entryId);
+        .run(analysis.feelings[0].key, encodeDateTime(nowUtc()), entryId, userId);
       if (applied.changes === 1) {
         this.replaceFeelings(
+          userId,
           entryId,
           analysis.feelings.map((suggestion) => suggestion.key),
         );
@@ -488,9 +542,10 @@ export class EntriesService {
    * rejected write must be a complete no-op, or FR-023's "never silently pick a winner" is violated
    * by a half-applied edit.
    */
-  updateEntry(entryId: string, data: EntryUpdateInput): DiaryEntry {
-    return this.db.transaction(() => {
-      const entry = this.repo.findById(entryId);
+  updateEntry(userId: string, entryId: string, data: EntryUpdateInput): DiaryEntry {
+    const handle = this.db.forUser(userId);
+    return handle.transaction(() => {
+      const entry = this.repo.findById(userId, entryId);
       if (!entry) throw new EntryNotFoundError(entryId);
       if (entry.version !== data.version) throw new StaleEntryError(entry);
 
@@ -551,35 +606,50 @@ export class EntriesService {
       // calendar and older clients keep reading a number that is true about the dot they draw.
       const intensity = feelingKey ? (ratings[feelingKey] ?? null) : null;
 
-      this.db
+      handle
         .prepare(
           `UPDATE diary_entries SET raw_text = ?, feeling_key = ?, feeling_source = ?,
-           feeling_intensity = ?, updated_at = ?, version = version + 1 WHERE id = ?`,
+           feeling_intensity = ?, updated_at = ?, version = version + 1
+           WHERE id = ? AND user_id = ?`,
         )
-        .run(rawText, feelingKey, feelingSource, intensity, encodeDateTime(nowUtc()), entryId);
+        .run(
+          rawText,
+          feelingKey,
+          feelingSource,
+          intensity,
+          encodeDateTime(nowUtc()),
+          entryId,
+          userId,
+        );
 
       // Rewritten even when the feelings themselves did not change, because an intensity-only
       // edit — the user rating a second feeling on an entry they already wrote — changes nothing
       // else and must still be stored.
-      if (finalKeys.length > 0) this.replaceFeelings(entryId, finalKeys, ratings);
+      if (finalKeys.length > 0) this.replaceFeelings(userId, entryId, finalKeys, ratings);
 
       // Edited text is different text: the topics extracted from the old wording no longer describe
       // this entry, and leaving them in place quietly poisons pattern detection with words the
       // entry no longer contains. So the links are dropped and the entry goes back through the
       // pipeline. A feeling-only edit changes nothing the analyser reads, so it is left alone.
       if (textChanged && rawText.trim()) {
-        this.db.prepare('DELETE FROM entry_topics WHERE entry_id = ?').run(entryId);
+        handle
+          .prepare('DELETE FROM entry_topics WHERE user_id = ? AND entry_id = ?')
+          .run(userId, entryId);
         // A pairing is a claim about *this wording* of the entry — once the topics it named are
         // gone, a stored pairing (suggested or confirmed alike) no longer describes anything real,
         // the same reasoning that drops `entry_topics` here.
-        this.db.prepare('DELETE FROM entry_topic_feelings WHERE entry_id = ?').run(entryId);
-        this.db
-          .prepare(`DELETE FROM inference_jobs WHERE entry_id = ? AND kind = 'entry_analysis'`)
-          .run(entryId);
-        this.inference.enqueueEntry(entryId);
+        handle
+          .prepare('DELETE FROM entry_topic_feelings WHERE user_id = ? AND entry_id = ?')
+          .run(userId, entryId);
+        handle
+          .prepare(
+            `DELETE FROM inference_jobs WHERE user_id = ? AND entry_id = ? AND kind = 'entry_analysis'`,
+          )
+          .run(userId, entryId);
+        this.inference.enqueueEntry(userId, entryId);
       }
 
-      return this.repo.findById(entryId)!;
+      return this.repo.findById(userId, entryId)!;
     });
   }
 
@@ -590,25 +660,44 @@ export class EntriesService {
    * `PRAGMA foreign_keys` is on, and that is deliberately off (see database.ts) — so without these
    * statements the diary would accumulate orphaned answers and topic links that inflate counts.
    */
-  deleteEntry(entryId: string, version: number): void {
-    this.db.transaction(() => {
-      const entry = this.repo.findById(entryId);
+  deleteEntry(userId: string, entryId: string, version: number): void {
+    const handle = this.db.forUser(userId);
+    handle.transaction(() => {
+      const entry = this.repo.findById(userId, entryId);
       if (!entry) throw new EntryNotFoundError(entryId);
       if (entry.version !== version) throw new StaleEntryError(entry);
 
-      this.db.prepare('DELETE FROM guiding_question_answers WHERE entry_id = ?').run(entryId);
-      this.db.prepare('DELETE FROM entry_feelings WHERE entry_id = ?').run(entryId);
-      this.db.prepare('DELETE FROM entry_topics WHERE entry_id = ?').run(entryId);
-      this.db.prepare('DELETE FROM entry_topic_feelings WHERE entry_id = ?').run(entryId);
-      this.db.prepare('DELETE FROM pattern_entries WHERE entry_id = ?').run(entryId);
-      this.db.prepare('DELETE FROM inference_jobs WHERE entry_id = ?').run(entryId);
-      this.db.prepare('DELETE FROM diary_entries WHERE id = ?').run(entryId);
-      this.db
+      handle
+        .prepare('DELETE FROM guiding_question_answers WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM entry_feelings WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM entry_topics WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM entry_topic_feelings WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM pattern_entries WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM inference_jobs WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle.prepare('DELETE FROM diary_entries WHERE id = ? AND user_id = ?').run(entryId, userId);
+      // Scoped to this user's own topics only — a topic another user still references (through
+      // their own `entry_topics`/`patterns` rows) must never be considered for cleanup here; this
+      // user deleting their last entry that named "work" must not touch a different account's own
+      // "work" topic (a distinct row since `schema.ts`'s M-1b step 2: `topics.name` is unique per
+      // user, not globally).
+      handle
         .prepare(
-          `DELETE FROM topics WHERE id NOT IN (SELECT topic_id FROM entry_topics)
-           AND id NOT IN (SELECT topic_id FROM patterns)`,
+          `DELETE FROM topics WHERE user_id = ?
+           AND id NOT IN (SELECT topic_id FROM entry_topics WHERE user_id = ?)
+           AND id NOT IN (SELECT topic_id FROM patterns WHERE user_id = ?)`,
         )
-        .run();
+        .run(userId, userId, userId);
     });
   }
 
@@ -628,14 +717,16 @@ export class EntriesService {
    * the same call.
    */
   setTopicFeelingPairings(
+    userId: string,
     entryId: string,
     pairs: TopicFeelingPairingInput[],
   ): TopicFeelingPairing[] {
-    return this.db.transaction(() => {
-      const entry = this.repo.findById(entryId);
+    const handle = this.db.forUser(userId);
+    return handle.transaction(() => {
+      const entry = this.repo.findById(userId, entryId);
       if (!entry) throw new EntryNotFoundError(entryId);
 
-      const validTopicIds = new Set(this.repo.entryTopicIds(entryId));
+      const validTopicIds = new Set(this.repo.entryTopicIds(userId, entryId));
       const validFeelingKeys = new Set(entry.feelingKeys);
       for (const pair of pairs) {
         if (!validTopicIds.has(pair.topicId)) {
@@ -653,26 +744,28 @@ export class EntriesService {
 
       const previouslySuggested = new Set(
         (
-          this.db
+          handle
             .prepare(
               `SELECT topic_id, feeling_key FROM entry_topic_feelings
-               WHERE entry_id = ? AND source = 'suggested'`,
+               WHERE user_id = ? AND entry_id = ? AND source = 'suggested'`,
             )
-            .all(entryId) as Array<{ topic_id: string; feeling_key: string }>
+            .all(userId, entryId) as Array<{ topic_id: string; feeling_key: string }>
         ).map((row) => `${row.topic_id} ${row.feeling_key}`),
       );
 
-      this.db.prepare('DELETE FROM entry_topic_feelings WHERE entry_id = ?').run(entryId);
-      const insert = this.db.prepare(
-        `INSERT INTO entry_topic_feelings (entry_id, topic_id, feeling_key, source)
-         VALUES (?, ?, ?, ?)`,
+      handle
+        .prepare('DELETE FROM entry_topic_feelings WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      const insert = handle.prepare(
+        `INSERT INTO entry_topic_feelings (entry_id, topic_id, feeling_key, user_id, source)
+         VALUES (?, ?, ?, ?, ?)`,
       );
       for (const [key, pair] of deduped) {
         const source = previouslySuggested.has(key) ? 'confirmed' : 'overridden';
-        insert.run(entryId, pair.topicId, pair.feelingKey, source);
+        insert.run(entryId, pair.topicId, pair.feelingKey, userId, source);
       }
 
-      return this.repo.findTopicFeelingPairings(entryId);
+      return this.repo.findTopicFeelingPairings(userId, entryId);
     });
   }
 }

@@ -105,10 +105,11 @@ export class InsightsController {
    */
   @Get()
   async get(@Req() req: Request): Promise<InsightsOut> {
-    const { excludedUnpaired } = await this.patterns.recomputePatterns();
+    const userId = req.userId as string;
+    const { excludedUnpaired } = await this.patterns.recomputePatterns(userId);
     const windowDays = this.windowDaysFor(req);
-    const patterns = this.patterns.listPatterns(windowDays);
-    const withdrawals = this.patterns.listWithdrawals();
+    const patterns = this.patterns.listPatterns(userId, windowDays);
+    const withdrawals = this.patterns.listWithdrawals(userId);
     return {
       patterns,
       // A2-03/A2-09: a withdrawal is computed, so it ships whatever else is unfinished. It is
@@ -122,16 +123,16 @@ export class InsightsController {
       // #21: computed fresh on every read, same as `patterns` — but never persisted, so there is no
       // recompute step for it to depend on. Ordering after `recomputePatterns()` regardless, so a
       // request that also just wrote entries sees the same up-to-date `diary_entries` rows.
-      context_patterns: this.patterns.contextPatterns(windowDays),
+      context_patterns: this.patterns.contextPatterns(userId, windowDays),
       excluded_unpaired: excludedUnpaired,
-      history_span_days: this.patterns.historySpanDays(),
+      history_span_days: this.patterns.historySpanDays(userId),
     };
   }
 
   /** I5. Served separately because it answers a different question and costs a different query. */
   @Get('when')
-  getWhen(): WhenInsights {
-    return this.when.get();
+  getWhen(@Req() req: Request): WhenInsights {
+    return this.when.get(req.userId as string);
   }
 
   /**
@@ -161,7 +162,13 @@ export class InsightsController {
     // day-granularity ceiling. Free reuses `RECENCY_WINDOW_DAYS` (the same 30 as the patterns
     // window) rather than a second literal; premium passes `null`, "full ranges" per the issue.
     try {
-      return this.series.getSeries(from, to, parsedGranularity, this.windowDaysFor(req));
+      return this.series.getSeries(
+        req.userId as string,
+        from,
+        to,
+        parsedGranularity,
+        this.windowDaysFor(req),
+      );
     } catch (err) {
       if (err instanceof InvalidSeriesRangeError) {
         throw new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY);
@@ -177,8 +184,8 @@ export class InsightsController {
    */
   @Post('withdrawals/acknowledge')
   @HttpCode(HttpStatus.NO_CONTENT)
-  acknowledge(): void {
-    this.patterns.acknowledgeWithdrawals();
+  acknowledge(@Req() req: Request): void {
+    this.patterns.acknowledgeWithdrawals(req.userId as string);
   }
 }
 

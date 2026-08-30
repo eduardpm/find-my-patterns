@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { decodeJson, encodeDate, encodeJson, todayLocal } from '../db/codecs';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import { isMixedValence } from './analysis';
 import { CONFIRMED_FEELING_SOURCES } from './constants';
 import { TopicsService } from '../topics/topics.service';
@@ -41,7 +40,7 @@ const ECHO_LOG_KEY = 'pattern_echo_log';
 @Injectable()
 export class EchoService {
   constructor(
-    @Inject(DIARY_DB) private readonly db: DiaryDatabase,
+    @Inject(SCOPED_DB) private readonly db: ScopedDb,
     private readonly patterns: PatternsService,
     private readonly topics: TopicsService,
   ) {}
@@ -53,10 +52,13 @@ export class EchoService {
    * nothing at all, because inventing a "maybe this matters" line would be the app talking rather
    * than the diary (I4-09).
    */
-  forEntry(entryId: string): EchoOut[] {
-    const entry = this.db
-      .prepare('SELECT id, entry_date, raw_text, feeling_source FROM diary_entries WHERE id = ?')
-      .get(entryId) as
+  forEntry(userId: string, entryId: string): EchoOut[] {
+    const handle = this.db.forUser(userId);
+    const entry = handle
+      .prepare(
+        'SELECT id, entry_date, raw_text, feeling_source FROM diary_entries WHERE id = ? AND user_id = ?',
+      )
+      .get(entryId, userId) as
       { id: string; entry_date: string; raw_text: string; feeling_source: string } | undefined;
     if (!entry) return [];
 
@@ -64,14 +66,16 @@ export class EchoService {
     // those links are written by the recompute and an entry saved a second ago has none yet. The
     // computation is the same deterministic keyword match, minus the writes.
     const topicIds = new Set([
-      ...this.topics.topicsForEntry(entryId).map((topic) => topic.id),
-      ...this.topics.matchExistingTopics(entry.raw_text).map((topic) => topic.id),
+      ...this.topics.topicsForEntry(userId, entryId).map((topic) => topic.id),
+      ...this.topics.matchExistingTopics(userId, entry.raw_text).map((topic) => topic.id),
     ]);
     if (topicIds.size === 0) return [];
 
     const patternTopics = new Map(
       (
-        this.db.prepare('SELECT p.id, p.topic_id FROM patterns p').all() as Array<{
+        handle
+          .prepare('SELECT p.id, p.topic_id FROM patterns p WHERE p.user_id = ?')
+          .all(userId) as Array<{
           id: string;
           topic_id: string;
         }>
@@ -89,14 +93,14 @@ export class EchoService {
     // feeling to test for a mix and the check below never fires for it, unchanged from before.
     const entryFeelingKeys = CONFIRMED_FEELING_SOURCES.includes(entry.feeling_source)
       ? (
-          this.db
-            .prepare('SELECT feeling_key FROM entry_feelings WHERE entry_id = ?')
-            .all(entryId) as Array<{ feeling_key: string }>
+          handle
+            .prepare('SELECT feeling_key FROM entry_feelings WHERE user_id = ? AND entry_id = ?')
+            .all(userId, entryId) as Array<{ feeling_key: string }>
         ).map((row) => row.feeling_key)
       : [];
     const valenceOf = new Map(
       (
-        this.db.prepare('SELECT "key", valence FROM feelings').all() as Array<{
+        handle.prepare('SELECT "key", valence FROM feelings').all() as Array<{
           key: string;
           valence: string;
         }>
@@ -106,12 +110,12 @@ export class EchoService {
     const confirmedPairingPlaceholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
     const confirmedPairs = new Set(
       (
-        this.db
+        handle
           .prepare(
             `SELECT topic_id, feeling_key FROM entry_topic_feelings
-             WHERE entry_id = ? AND source IN (${confirmedPairingPlaceholders})`,
+             WHERE user_id = ? AND entry_id = ? AND source IN (${confirmedPairingPlaceholders})`,
           )
-          .all(entryId, ...CONFIRMED_FEELING_SOURCES) as Array<{
+          .all(userId, entryId, ...CONFIRMED_FEELING_SOURCES) as Array<{
           topic_id: string;
           feeling_key: string;
         }>
@@ -121,7 +125,7 @@ export class EchoService {
     // I4-05: an echo is only ever an *active* pattern, and only a forward one — "you felt X in 8 of
     // 12 entries mentioning this" is an observation about the entry in hand. An inverse pattern is
     // about the entries that do *not* mention it, so echoing it here would be a non sequitur.
-    const matches = this.patterns.listPatterns().filter((pattern) => {
+    const matches = this.patterns.listPatterns(userId).filter((pattern) => {
       if (pattern.status !== 'active' || pattern.kind !== 'forward') return false;
       const topicId = patternTopics.get(pattern.id);
       if (!topicId || !topicIds.has(topicId)) return false;
@@ -138,7 +142,7 @@ export class EchoService {
     });
 
     const today = encodeDate(todayLocal());
-    const log = this.readLog();
+    const log = this.readLog(userId);
     const allowed = matches.filter((pattern) => {
       const seen = log[pattern.id];
       // I4-06: once per pattern per day. Re-reading the same entry's echo is deliberately still
@@ -148,7 +152,7 @@ export class EchoService {
 
     if (allowed.length > 0) {
       for (const pattern of allowed) log[pattern.id] = { date: today, entryId };
-      this.writeLog(log, today);
+      this.writeLog(userId, log, today);
     }
 
     return allowed.map((pattern) => ({
@@ -165,10 +169,11 @@ export class EchoService {
     }));
   }
 
-  private readLog(): Record<string, { date: string; entryId: string }> {
+  private readLog(userId: string): Record<string, { date: string; entryId: string }> {
     const row = this.db
-      .prepare('SELECT value FROM diary_meta WHERE "key" = ?')
-      .get(ECHO_LOG_KEY) as { value: string } | undefined;
+      .forUser(userId)
+      .prepare('SELECT value FROM diary_meta WHERE user_id = ? AND "key" = ?')
+      .get(userId, ECHO_LOG_KEY) as { value: string } | undefined;
     if (!row) return {};
     try {
       return decodeJson<Record<string, { date: string; entryId: string }>>(row.value);
@@ -180,18 +185,23 @@ export class EchoService {
   }
 
   /** Yesterday's entries are dropped on write, so the log stays one day wide. */
-  private writeLog(log: Record<string, { date: string; entryId: string }>, today: string): void {
+  private writeLog(
+    userId: string,
+    log: Record<string, { date: string; entryId: string }>,
+    today: string,
+  ): void {
     const pruned = Object.fromEntries(
       Object.entries(log).filter(([, seen]) => seen.date === today),
     );
     const value = encodeJson(pruned);
-    const updated = this.db
-      .prepare('UPDATE diary_meta SET value = ? WHERE "key" = ?')
-      .run(value, ECHO_LOG_KEY);
+    const handle = this.db.forUser(userId);
+    const updated = handle
+      .prepare('UPDATE diary_meta SET value = ? WHERE user_id = ? AND "key" = ?')
+      .run(value, userId, ECHO_LOG_KEY);
     if (updated.changes === 0) {
-      this.db
-        .prepare('INSERT INTO diary_meta ("key", value) VALUES (?, ?)')
-        .run(ECHO_LOG_KEY, value);
+      handle
+        .prepare('INSERT INTO diary_meta (user_id, "key", value) VALUES (?, ?, ?)')
+        .run(userId, ECHO_LOG_KEY, value);
     }
   }
 }

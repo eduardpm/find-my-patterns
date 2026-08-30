@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { decodeJson } from '../db/codecs';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import { GUIDED_DRAFT_SENTINEL } from '../entries/guided-draft';
 import { mentions } from '../topics/canonicalization';
 
@@ -106,16 +105,17 @@ interface QuestionAccumulator {
  */
 @Injectable()
 export class QuestionYieldService {
-  constructor(@Inject(DIARY_DB) private readonly db: DiaryDatabase) {}
+  constructor(@Inject(SCOPED_DB) private readonly db: ScopedDb) {}
 
-  compute(range: QuestionYieldRange): QuestionYieldReport {
-    const { clause, params } = whereClause(range);
+  compute(userId: string, range: QuestionYieldRange): QuestionYieldReport {
+    const handle = this.db.forUser(userId);
+    const { clause, params } = whereClause(userId, range);
 
-    const totalRow = this.db
+    const totalRow = handle
       .prepare(`SELECT COUNT(*) AS cnt FROM diary_entries e WHERE ${clause}`)
       .get(...params) as CountRow;
 
-    const yieldingRow = this.db
+    const yieldingRow = handle
       .prepare(
         `SELECT COUNT(DISTINCT e.id) AS cnt
          FROM diary_entries e
@@ -124,7 +124,7 @@ export class QuestionYieldService {
       )
       .get(...params) as CountRow;
 
-    const topicRows = this.db
+    const topicRows = handle
       .prepare(
         `SELECT e.id AS entry_id, t.name AS name, t.aliases AS aliases
          FROM diary_entries e
@@ -144,7 +144,7 @@ export class QuestionYieldService {
 
     // Oldest first, so — per question key — the last row processed carries the most recent
     // snapshot, and that is what ends up stored as `wording_snapshot_latest`.
-    const answerRows = this.db
+    const answerRows = handle
       .prepare(
         `SELECT e.id AS entry_id, e.created_at AS entry_created_at, a.question_key AS question_key,
                 a.question_text_snapshot AS question_text_snapshot, a.answer_text AS answer_text
@@ -198,9 +198,12 @@ export class QuestionYieldService {
   }
 }
 
-function whereClause(range: QuestionYieldRange): { clause: string; params: string[] } {
-  const clauses = [`e.mode = 'guided'`, 'e.raw_text <> ?'];
-  const params: string[] = [GUIDED_DRAFT_SENTINEL];
+function whereClause(
+  userId: string,
+  range: QuestionYieldRange,
+): { clause: string; params: string[] } {
+  const clauses = ['e.user_id = ?', `e.mode = 'guided'`, 'e.raw_text <> ?'];
+  const params: string[] = [userId, GUIDED_DRAFT_SENTINEL];
   if (range.from) {
     clauses.push('e.entry_date >= ?');
     params.push(range.from);

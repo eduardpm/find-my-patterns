@@ -1,8 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { decodeJson, encodeDateTime, encodeJson, nowUtc } from '../db/codecs';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import {
   canonicalTopicName,
   findCuratedMatches,
@@ -48,20 +47,26 @@ export class InvalidAliasError extends Error {}
 
 @Injectable()
 export class TopicsService {
-  constructor(@Inject(DIARY_DB) private readonly db: DiaryDatabase) {}
+  constructor(@Inject(SCOPED_DB) private readonly db: ScopedDb) {}
 
-  private knownTopics(): KnownTopic[] {
+  private knownTopics(userId: string): KnownTopic[] {
     return (
-      this.db.prepare('SELECT name, aliases FROM topics ORDER BY name').all() as Array<{
+      this.db
+        .forUser(userId)
+        .prepare('SELECT name, aliases FROM topics WHERE user_id = ? ORDER BY name')
+        .all(userId) as Array<{
         name: string;
         aliases: string;
       }>
     ).map((row) => ({ name: row.name, aliases: decodeJson<string[]>(row.aliases ?? '[]') }));
   }
 
-  private findExistingTopicMatches(textLower: string): Set<string> {
+  private findExistingTopicMatches(userId: string, textLower: string): Set<string> {
     const matches = new Set<string>();
-    const rows = this.db.prepare('SELECT * FROM topics').all() as TopicRow[];
+    const rows = this.db
+      .forUser(userId)
+      .prepare('SELECT * FROM topics WHERE user_id = ?')
+      .all(userId) as TopicRow[];
     for (const row of rows) {
       const names = [row.name, ...decodeJson<string[]>(row.aliases ?? '[]')];
       if (names.some((name) => name && mentions(textLower, name.toLowerCase()))) {
@@ -71,22 +76,33 @@ export class TopicsService {
     return matches;
   }
 
-  private getOrCreateTopic(name: string): Topic {
-    const existing = this.db.prepare('SELECT * FROM topics WHERE name = ?').get(name) as
-      TopicRow | undefined;
+  /**
+   * `topics.name` is unique per user (`UNIQUE (user_id, name)`, `schema.ts`'s M-1b step 2 note) —
+   * two accounts can each hold their own "coffee" row. The `SELECT` below is scoped to `userId` for
+   * the same reason every other query in this class is: it is what makes this user find (or fail
+   * to find) only their own prior topic, never adopt a different user's row for the same name.
+   */
+  private getOrCreateTopic(userId: string, name: string): Topic {
+    const handle = this.db.forUser(userId);
+    const existing = handle
+      .prepare('SELECT * FROM topics WHERE user_id = ? AND name = ?')
+      .get(userId, name) as TopicRow | undefined;
     const now = encodeDateTime(nowUtc());
 
     if (existing) {
-      this.db.prepare('UPDATE topics SET last_seen_at = ? WHERE id = ?').run(now, existing.id);
+      handle
+        .prepare('UPDATE topics SET last_seen_at = ? WHERE id = ? AND user_id = ?')
+        .run(now, existing.id, userId);
       return { id: existing.id, name: existing.name };
     }
 
     const id = randomUUID();
-    this.db
+    handle
       .prepare(
-        'INSERT INTO topics (id, name, aliases, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?)',
+        `INSERT INTO topics (id, user_id, name, aliases, first_seen_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, name, encodeJson([]), now, now);
+      .run(id, userId, name, encodeJson([]), now, now);
     return { id, name };
   }
 
@@ -96,17 +112,17 @@ export class TopicsService {
    * Idempotent: pattern recomputation re-scans every eligible entry on each run, so this must never
    * duplicate a link or a topic row.
    */
-  extractAndLinkTopics(entryId: string, rawText: string): Topic[] {
+  extractAndLinkTopics(userId: string, entryId: string, rawText: string): Topic[] {
     const textLower = (rawText ?? '').toLowerCase();
     if (!textLower.trim()) return [];
 
     const candidates = new Set([
       ...findCuratedMatches(textLower),
-      ...this.findExistingTopicMatches(textLower),
+      ...this.findExistingTopicMatches(userId, textLower),
     ]);
     if (candidates.size === 0) return [];
 
-    return this.linkTopics(entryId, [...candidates], 'keyword');
+    return this.linkTopics(userId, entryId, [...candidates], 'keyword');
   }
 
   /**
@@ -123,8 +139,13 @@ export class TopicsService {
    * contains — a `'keyword'` link here would vanish the moment `GET /insights` next ran. Only
    * `'keyword'` rows are ever swept that way, so `'import'` (like `'llm'`) persists untouched.
    */
-  linkTopics(entryId: string, names: string[], extractedBy: 'keyword' | 'llm' | 'import'): Topic[] {
-    const known = this.knownTopics();
+  linkTopics(
+    userId: string,
+    entryId: string,
+    names: string[],
+    extractedBy: 'keyword' | 'llm' | 'import',
+  ): Topic[] {
+    const known = this.knownTopics(userId);
     const canonical = new Set<string>();
     for (const name of names) {
       const resolved = canonicalTopicName(name, known);
@@ -132,9 +153,12 @@ export class TopicsService {
     }
     if (canonical.size === 0) return [];
 
+    const handle = this.db.forUser(userId);
     const alreadyLinked = new Set(
       (
-        this.db.prepare('SELECT topic_id FROM entry_topics WHERE entry_id = ?').all(entryId) as {
+        handle
+          .prepare('SELECT topic_id FROM entry_topics WHERE user_id = ? AND entry_id = ?')
+          .all(userId, entryId) as {
           topic_id: string;
         }[]
       ).map((r) => r.topic_id),
@@ -142,14 +166,16 @@ export class TopicsService {
 
     const linked: Topic[] = [];
     for (const name of canonical) {
-      const topic = this.getOrCreateTopic(name);
+      const topic = this.getOrCreateTopic(userId, name);
       linked.push(topic);
       if (!alreadyLinked.has(topic.id)) {
         // `extracted_by` records how the link was found. The column is nullable but is never
         // written as NULL.
-        this.db
-          .prepare('INSERT INTO entry_topics (entry_id, topic_id, extracted_by) VALUES (?, ?, ?)')
-          .run(entryId, topic.id, extractedBy);
+        handle
+          .prepare(
+            'INSERT INTO entry_topics (entry_id, topic_id, user_id, extracted_by) VALUES (?, ?, ?, ?)',
+          )
+          .run(entryId, topic.id, userId, extractedBy);
       }
     }
     return linked;
@@ -162,13 +188,14 @@ export class TopicsService {
    * only ever be about a topic that already carries a pattern. Creating a row here would let a
    * *read* of a saved entry quietly grow the topic table.
    */
-  matchExistingTopics(rawText: string): Topic[] {
+  matchExistingTopics(userId: string, rawText: string): Topic[] {
     const textLower = (rawText ?? '').toLowerCase();
     if (!textLower.trim()) return [];
 
     const rows = this.db
-      .prepare('SELECT id, name, aliases FROM topics ORDER BY name')
-      .all() as Array<{
+      .forUser(userId)
+      .prepare('SELECT id, name, aliases FROM topics WHERE user_id = ? ORDER BY name')
+      .all(userId) as Array<{
       id: string;
       name: string;
       aliases: string;
@@ -184,12 +211,14 @@ export class TopicsService {
       .map((row) => ({ id: row.id, name: row.name }));
   }
 
-  topicsForEntry(entryId: string): Topic[] {
+  topicsForEntry(userId: string, entryId: string): Topic[] {
     return this.db
+      .forUser(userId)
       .prepare(
-        'SELECT t.id, t.name FROM topics t JOIN entry_topics et ON et.topic_id = t.id WHERE et.entry_id = ?',
+        `SELECT t.id, t.name FROM topics t JOIN entry_topics et ON et.topic_id = t.id
+         WHERE et.user_id = ? AND et.entry_id = ?`,
       )
-      .all(entryId) as Topic[];
+      .all(userId, entryId) as Topic[];
   }
 
   // -------------------------------------------------------------------------------------------
@@ -212,10 +241,11 @@ export class TopicsService {
    * the dangling reference and withdraws that pattern with the reason `topic_merged` (A2-02),
    * which is how the user is told their pattern moved rather than vanished.
    */
-  mergeFragmentedTopics(): number {
-    const rows = this.db
-      .prepare('SELECT id, name, aliases FROM topics ORDER BY name')
-      .all() as Array<{ id: string; name: string; aliases: string }>;
+  mergeFragmentedTopics(userId: string): number {
+    const handle = this.db.forUser(userId);
+    const rows = handle
+      .prepare('SELECT id, name, aliases FROM topics WHERE user_id = ? ORDER BY name')
+      .all(userId) as Array<{ id: string; name: string; aliases: string }>;
     if (rows.length === 0) return 0;
 
     const byName = new Map(rows.map((row) => [row.name, row]));
@@ -240,7 +270,7 @@ export class TopicsService {
 
     if (merges.length === 0) return 0;
 
-    return this.db.transaction(() => {
+    return handle.transaction(() => {
       let moved = 0;
       for (const { from, toName } of merges) {
         const target = byName.get(toName)!;
@@ -248,23 +278,28 @@ export class TopicsService {
 
         // `OR IGNORE`, because an entry that mentioned both the fragment and the canonical topic
         // already has the canonical link — and counting it twice is exactly what A4-06 forbids.
-        this.db
+        handle
           .prepare(
-            `INSERT OR IGNORE INTO entry_topics (entry_id, topic_id, extracted_by)
-             SELECT entry_id, ?, extracted_by FROM entry_topics WHERE topic_id = ?`,
+            `INSERT OR IGNORE INTO entry_topics (entry_id, topic_id, user_id, extracted_by)
+             SELECT entry_id, ?, user_id, extracted_by FROM entry_topics
+             WHERE user_id = ? AND topic_id = ?`,
           )
-          .run(target.id, from.id);
-        this.db.prepare('DELETE FROM entry_topics WHERE topic_id = ?').run(from.id);
+          .run(target.id, userId, from.id);
+        handle
+          .prepare('DELETE FROM entry_topics WHERE user_id = ? AND topic_id = ?')
+          .run(userId, from.id);
 
         const aliases = new Set(decodeJson<string[]>(target.aliases ?? '[]'));
         aliases.add(from.name);
         for (const alias of decodeJson<string[]>(from.aliases ?? '[]')) aliases.add(alias);
         aliases.delete(target.name);
         const encoded = encodeJson([...aliases].sort());
-        this.db.prepare('UPDATE topics SET aliases = ? WHERE id = ?').run(encoded, target.id);
+        handle
+          .prepare('UPDATE topics SET aliases = ? WHERE id = ? AND user_id = ?')
+          .run(encoded, target.id, userId);
         target.aliases = encoded;
 
-        this.db.prepare('DELETE FROM topics WHERE id = ?').run(from.id);
+        handle.prepare('DELETE FROM topics WHERE id = ? AND user_id = ?').run(from.id, userId);
         moved += 1;
       }
       return moved;
@@ -275,15 +310,17 @@ export class TopicsService {
   // The alias table the user edits (A4-04)
   // -------------------------------------------------------------------------------------------
 
-  listTopics(): TopicDetail[] {
+  listTopics(userId: string): TopicDetail[] {
     return (
       this.db
+        .forUser(userId)
         .prepare(
           `SELECT t.id, t.name, t.aliases,
-                  (SELECT COUNT(*) FROM entry_topics et WHERE et.topic_id = t.id) AS entry_count
-           FROM topics t ORDER BY t.name`,
+                  (SELECT COUNT(*) FROM entry_topics et
+                   WHERE et.user_id = t.user_id AND et.topic_id = t.id) AS entry_count
+           FROM topics t WHERE t.user_id = ? ORDER BY t.name`,
         )
-        .all() as Array<{ id: string; name: string; aliases: string; entry_count: number }>
+        .all(userId) as Array<{ id: string; name: string; aliases: string; entry_count: number }>
     ).map((row) => ({
       id: row.id,
       name: row.name,
@@ -292,20 +329,21 @@ export class TopicsService {
     }));
   }
 
-  addAlias(topicId: string, alias: string): TopicDetail {
+  addAlias(userId: string, topicId: string, alias: string): TopicDetail {
     const normalized = normalizeTopicName(alias);
     if (!normalized) throw new InvalidAliasError('An alias must contain at least one word.');
-    return this.db.transaction(() => {
-      const topic = this.db
-        .prepare('SELECT id, name, aliases FROM topics WHERE id = ?')
-        .get(topicId) as { id: string; name: string; aliases: string } | undefined;
+    const handle = this.db.forUser(userId);
+    return handle.transaction(() => {
+      const topic = handle
+        .prepare('SELECT id, name, aliases FROM topics WHERE id = ? AND user_id = ?')
+        .get(topicId, userId) as { id: string; name: string; aliases: string } | undefined;
       if (!topic) throw new TopicNotFoundError(topicId);
       if (normalizeTopicName(topic.name) === normalized) {
         throw new InvalidAliasError('That is already the topic\u2019s own name.');
       }
       // An alias that already points somewhere else would make the same phrase resolve two ways,
       // and which one won would depend on row order.
-      const clash = this.knownTopics().find(
+      const clash = this.knownTopics(userId).find(
         (other) =>
           other.name !== topic.name &&
           (normalizeTopicName(other.name) === normalized ||
@@ -317,26 +355,28 @@ export class TopicsService {
 
       const aliases = new Set(decodeJson<string[]>(topic.aliases ?? '[]'));
       aliases.add(normalized);
-      this.db
-        .prepare('UPDATE topics SET aliases = ? WHERE id = ?')
-        .run(encodeJson([...aliases].sort()), topicId);
-      return this.listTopics().find((row) => row.id === topicId)!;
+      handle
+        .prepare('UPDATE topics SET aliases = ? WHERE id = ? AND user_id = ?')
+        .run(encodeJson([...aliases].sort()), topicId, userId);
+      return this.listTopics(userId).find((row) => row.id === topicId)!;
     });
   }
 
-  removeAlias(topicId: string, alias: string): TopicDetail {
+  removeAlias(userId: string, topicId: string, alias: string): TopicDetail {
     const normalized = normalizeTopicName(alias);
-    return this.db.transaction(() => {
-      const topic = this.db.prepare('SELECT id, aliases FROM topics WHERE id = ?').get(topicId) as
-        { id: string; aliases: string } | undefined;
+    const handle = this.db.forUser(userId);
+    return handle.transaction(() => {
+      const topic = handle
+        .prepare('SELECT id, aliases FROM topics WHERE id = ? AND user_id = ?')
+        .get(topicId, userId) as { id: string; aliases: string } | undefined;
       if (!topic) throw new TopicNotFoundError(topicId);
       const remaining = decodeJson<string[]>(topic.aliases ?? '[]').filter(
         (existing) => normalizeTopicName(existing) !== normalized,
       );
-      this.db
-        .prepare('UPDATE topics SET aliases = ? WHERE id = ?')
-        .run(encodeJson(remaining.sort()), topicId);
-      return this.listTopics().find((row) => row.id === topicId)!;
+      handle
+        .prepare('UPDATE topics SET aliases = ? WHERE id = ? AND user_id = ?')
+        .run(encodeJson(remaining.sort()), topicId, userId);
+      return this.listTopics(userId).find((row) => row.id === topicId)!;
     });
   }
 }

@@ -5,12 +5,15 @@ import {
   HttpException,
   HttpStatus,
   Post,
+  Req,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { DaylioCsvFormatError } from './daylio-csv-parser';
 import {
+  DaylioContentHashCollisionError,
   DaylioImportService,
   DaylioReportHashMismatchError,
   type CollisionEntry,
@@ -120,10 +123,13 @@ export class DaylioImportController {
   @Post('dry-run')
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileInterceptor('file', UPLOAD_OPTIONS))
-  dryRun(@UploadedFile() file: UploadedCsvFile | undefined): Record<string, unknown> {
+  dryRun(
+    @UploadedFile() file: UploadedCsvFile | undefined,
+    @Req() req: Request,
+  ): Record<string, unknown> {
     const upload = requireFile(file);
     try {
-      return toDryRunOut(this.imports.dryRun(upload.buffer));
+      return toDryRunOut(this.imports.dryRun(req.userId as string, upload.buffer));
     } catch (err) {
       if (err instanceof DaylioCsvFormatError) {
         throw new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY);
@@ -138,6 +144,7 @@ export class DaylioImportController {
   commit(
     @UploadedFile() file: UploadedCsvFile | undefined,
     @Body('report_hash') reportHash: string | undefined,
+    @Req() req: Request,
   ): Record<string, unknown> {
     const upload = requireFile(file);
     if (!reportHash || !/^[0-9a-f]{64}$/i.test(reportHash)) {
@@ -147,10 +154,18 @@ export class DaylioImportController {
       );
     }
     try {
-      return toCommitOut(this.imports.commit(upload.buffer, reportHash));
+      return toCommitOut(this.imports.commit(req.userId as string, upload.buffer, reportHash));
     } catch (err) {
       if (err instanceof DaylioCsvFormatError || err instanceof DaylioReportHashMismatchError) {
         throw new HttpException(err.message, HttpStatus.UNPROCESSABLE_ENTITY);
+      }
+      // See `DaylioContentHashCollisionError`'s doc comment (`daylio-import.service.ts`):
+      // `csv_imports.content_hash` is still a global primary key, so this is a real, tracked,
+      // deliberately-deferred multi-tenant limitation, not a bug this ticket introduces. 409, not
+      // 422: the request was perfectly well-formed, the file's identity just collides with a
+      // resource (another account's import record) this caller cannot see or resolve.
+      if (err instanceof DaylioContentHashCollisionError) {
+        throw new HttpException(err.message, HttpStatus.CONFLICT);
       }
       throw err;
     }

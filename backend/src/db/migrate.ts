@@ -303,6 +303,11 @@ export function migrateDiary(targetPath: string): MigrationReport {
         // SQLite has no `IF NOT EXISTS` for columns, and re-running the migration must be a no-op.
         if (statement.table && statement.column) {
           if (tableColumns(db, statement.table).has(statement.column)) continue;
+        } else if (statement.skipIf?.(db)) {
+          // A guard `table`/`column` cannot express — see `MigrationStatement.skipIf`'s doc
+          // comment (`schema.ts`) and `topicsAlreadyRebuilt` for the one statement group that
+          // needs this today.
+          continue;
         }
         db.exec(statement.sql);
       }

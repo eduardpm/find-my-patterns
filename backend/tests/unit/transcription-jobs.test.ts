@@ -12,22 +12,28 @@ describe('asynchronous transcription jobs', () => {
     } as unknown as TranscriptionService;
     const entries = { saveGuidedDraftAnswer: vi.fn() } as unknown as EntriesService;
     const formatting = {
-      formatTranscript: vi.fn(async (_entryId: string, transcript: string) => transcript),
+      formatTranscript: vi.fn(
+        async (_userId: string, _entryId: string, transcript: string) => transcript,
+      ),
     } as TranscriptFormatting;
     const jobs = new TranscriptionJobsService(transcription, entries, formatting);
 
-    const id = jobs.start(Buffer.from('audio'), {
+    const id = jobs.start('user-1', Buffer.from('audio'), {
       entryId: 'draft-1',
       questionKey: 'mind_body',
       orderIndex: 1,
     });
-    expect(jobs.find(id)).toEqual({ status: 'pending' });
+    expect(jobs.find('user-1', id)).toEqual({ status: 'pending' });
 
     finish('Kept transcript');
     await vi.waitFor(() =>
-      expect(jobs.find(id)).toEqual({ status: 'completed', transcript: 'Kept transcript' }),
+      expect(jobs.find('user-1', id)).toEqual({
+        status: 'completed',
+        transcript: 'Kept transcript',
+      }),
     );
     expect(entries.saveGuidedDraftAnswer).toHaveBeenCalledWith(
+      'user-1',
       'draft-1',
       'mind_body',
       'Kept transcript',

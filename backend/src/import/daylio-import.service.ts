@@ -2,8 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { encodeDate, encodeDateTime, encodeJson, nowUtc } from '../db/codecs';
 import type { PlainDate } from '../db/codecs';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import type { FeelingKey } from '../db/feeling-vocabulary';
 import { EntriesService } from '../entries/entries.service';
 import { TopicsService } from '../topics/topics.service';
@@ -19,6 +18,24 @@ import { interpretDaylioRow, parseDaylioCsv, type DaylioParsedRow } from './dayl
 
 /** The submitted `report_hash` does not match a fresh dry-run of this exact file. */
 export class DaylioReportHashMismatchError extends Error {}
+
+/**
+ * `csv_imports.content_hash` is still a bare, globally-unique primary key (`schema.ts`'s M-1b
+ * note names this as a real, deliberately-deferred multi-tenant defect: fixing it means rebuilding
+ * the table's key to `(user_id, content_hash)`, which belongs in its own reviewable, migration-
+ * tested PR rather than folded into this already-large one). The practical consequence: two
+ * different accounts can never both import the same byte-identical export.
+ *
+ * Before this ticket, that showed up as a *silent* no-op for whichever account imported second —
+ * `buildReport`'s `alreadyImported` check unfiltered by owner would tell a second account "this was
+ * already imported," which is a false claim about *their* diary. Filtering that check by `user_id`
+ * (below) removes the false claim, but exposes the real one: a second account's dry-run correctly
+ * says "never imported," and its commit then collides with the first account's row on the bare
+ * primary key. This error turns that collision into an honest, catchable failure instead of an
+ * unhandled 500 — a real improvement within this ticket's scope, though not the actual fix, which
+ * is the follow-up ticket the PR description names.
+ */
+export class DaylioContentHashCollisionError extends Error {}
 
 export interface MoodMappingEntry {
   daylioMood: string;
@@ -102,7 +119,7 @@ interface ImportableRow {
 @Injectable()
 export class DaylioImportService {
   constructor(
-    @Inject(DIARY_DB) private readonly db: DiaryDatabase,
+    @Inject(SCOPED_DB) private readonly db: ScopedDb,
     private readonly entries: EntriesService,
     private readonly topics: TopicsService,
   ) {}
@@ -111,10 +128,14 @@ export class DaylioImportService {
    * Parses, maps and reports on a file — the whole of what `dry-run` does, and the first half of
    * what `commit` does. Never writes to `diary_entries`; `commit` is the only place that does.
    */
-  private buildReport(buffer: Buffer): {
+  private buildReport(
+    userId: string,
+    buffer: Buffer,
+  ): {
     report: DaylioDryRunReport;
     importable: ImportableRow[];
   } {
+    const handle = this.db.forUser(userId);
     const contentHash = sha256Hex(buffer);
     const text = buffer.toString('utf-8');
 
@@ -163,9 +184,11 @@ export class DaylioImportService {
     const collisions: CollisionEntry[] = [];
     for (const { row } of importable) {
       const rawText = composeRawText(row.noteTitle, row.note);
-      const existing = this.db
-        .prepare('SELECT 1 FROM diary_entries WHERE entry_date = ? AND raw_text = ? LIMIT 1')
-        .get(encodeDate(row.entryDate), rawText);
+      const existing = handle
+        .prepare(
+          'SELECT 1 FROM diary_entries WHERE user_id = ? AND entry_date = ? AND raw_text = ? LIMIT 1',
+        )
+        .get(userId, encodeDate(row.entryDate), rawText);
       if (existing !== undefined) {
         collisions.push({
           rowNumber: row.rowNumber,
@@ -218,9 +241,14 @@ export class DaylioImportService {
 
     const reportCore = { ...hashedFields, collisions: sortedCollisions };
 
-    const previousRow = this.db
-      .prepare('SELECT imported_at, entry_count FROM csv_imports WHERE content_hash = ?')
-      .get(contentHash) as { imported_at: string; entry_count: number } | undefined;
+    // Filtered by `user_id`, per this method's own doc comment on `DaylioContentHashCollisionError`:
+    // whether *this account* already imported this exact file, never whether some other account
+    // did.
+    const previousRow = handle
+      .prepare(
+        'SELECT imported_at, entry_count FROM csv_imports WHERE user_id = ? AND content_hash = ?',
+      )
+      .get(userId, contentHash) as { imported_at: string; entry_count: number } | undefined;
     const previousImport: PreviousImport | undefined = previousRow
       ? { importedAt: previousRow.imported_at, entryCount: Number(previousRow.entry_count) }
       : undefined;
@@ -237,8 +265,8 @@ export class DaylioImportService {
   }
 
   /** Parses and reports on a file. Never writes. */
-  dryRun(buffer: Buffer): DaylioDryRunReport {
-    return this.buildReport(buffer).report;
+  dryRun(userId: string, buffer: Buffer): DaylioDryRunReport {
+    return this.buildReport(userId, buffer).report;
   }
 
   /**
@@ -261,8 +289,8 @@ export class DaylioImportService {
    * see in the report and chose to commit anyway would be a worse surprise than an occasional
    * duplicate they can see and delete.
    */
-  commit(buffer: Buffer, reportHash: string): DaylioCommitResult {
-    const { report, importable } = this.buildReport(buffer);
+  commit(userId: string, buffer: Buffer, reportHash: string): DaylioCommitResult {
+    const { report, importable } = this.buildReport(userId, buffer);
 
     if (report.reportHash !== reportHash) {
       throw new DaylioReportHashMismatchError(
@@ -282,38 +310,65 @@ export class DaylioImportService {
       };
     }
 
+    const handle = this.db.forUser(userId);
+
     // The whole write — every entry, every topic link, and the `csv_imports` row that marks the
     // file done — is one transaction. better-sqlite3 nests `EntriesService.createImportedEntry`'s
     // own transaction inside this one via a savepoint, so a failure partway through a large import
     // rolls the entire commit back rather than leaving some entries written and the file still
     // unmarked — which is exactly the state a retry could turn into a double-import.
-    const entryIds = this.db.transaction((): string[] => {
-      const ids: string[] = [];
-      for (const { row, feelingKey } of importable) {
-        const entry = this.entries.createImportedEntry({
-          rawText: composeRawText(row.noteTitle, row.note),
-          entryDate: row.entryDate,
-          createdAt: row.createdAt,
-          feelingKey,
-          origin: 'daylio_import',
-        });
-        ids.push(entry.id);
-        if (row.activities.length > 0) {
-          // 'import' (L-1b, #35): a Daylio activity tag, not text a keyword scan found — see
-          // TopicsService.linkTopics's doc comment for why this must not be 'keyword'.
-          this.topics.linkTopics(entry.id, row.activities, 'import');
+    let entryIds: string[];
+    try {
+      entryIds = handle.transaction((): string[] => {
+        const ids: string[] = [];
+        for (const { row, feelingKey } of importable) {
+          const entry = this.entries.createImportedEntry(userId, {
+            rawText: composeRawText(row.noteTitle, row.note),
+            entryDate: row.entryDate,
+            createdAt: row.createdAt,
+            feelingKey,
+            origin: 'daylio_import',
+          });
+          ids.push(entry.id);
+          if (row.activities.length > 0) {
+            // 'import' (L-1b, #35): a Daylio activity tag, not text a keyword scan found — see
+            // TopicsService.linkTopics's doc comment for why this must not be 'keyword'.
+            this.topics.linkTopics(userId, entry.id, row.activities, 'import');
+          }
         }
+
+        handle
+          .prepare(
+            `INSERT INTO csv_imports (content_hash, user_id, source, imported_at, entry_count,
+             report_json)
+             VALUES (?, ?, 'daylio', ?, ?, ?)`,
+          )
+          .run(
+            report.contentHash,
+            userId,
+            encodeDateTime(nowUtc()),
+            ids.length,
+            encodeJson(report),
+          );
+
+        return ids;
+      });
+    } catch (error) {
+      // See `DaylioContentHashCollisionError`'s doc comment: `csv_imports.content_hash` is still a
+      // bare, global primary key, so a different account committing this exact file first collides
+      // here rather than being caught by the (correctly per-user-scoped) `alreadyImported` check
+      // above.
+      if (
+        error instanceof Error &&
+        /UNIQUE constraint failed: csv_imports\.content_hash/.test(error.message)
+      ) {
+        throw new DaylioContentHashCollisionError(
+          'This exact file was already imported by a different account. Per-account import ' +
+            'history for identical files is a known limitation, tracked separately.',
+        );
       }
-
-      this.db
-        .prepare(
-          `INSERT INTO csv_imports (content_hash, source, imported_at, entry_count, report_json)
-           VALUES (?, 'daylio', ?, ?, ?)`,
-        )
-        .run(report.contentHash, encodeDateTime(nowUtc()), ids.length, encodeJson(report));
-
-      return ids;
-    });
+      throw error;
+    }
 
     return {
       idempotent: false,

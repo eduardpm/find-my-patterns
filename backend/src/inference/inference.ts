@@ -2,8 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { loadConfig } from '../config';
 import { encodeDateTime, nowUtc } from '../db/codecs';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import type { SuggestedFeeling } from '../domain/types';
 
 /**
@@ -44,14 +43,14 @@ export interface EntryAnalysis {
 
 export interface EntryInference {
   /** Enqueue analysis and return without waiting for the worker. */
-  enqueueEntry(entryId: string): EntryAnalysis | null;
+  enqueueEntry(userId: string, entryId: string): EntryAnalysis | null;
 }
 
 export const ENTRY_INFERENCE = Symbol('ENTRY_INFERENCE');
 export const TRANSCRIPT_FORMATTING = Symbol('TRANSCRIPT_FORMATTING');
 
 export interface TranscriptFormatting {
-  formatTranscript(entryId: string, transcript: string): Promise<string>;
+  formatTranscript(userId: string, entryId: string, transcript: string): Promise<string>;
 }
 
 interface JobRow {
@@ -68,18 +67,19 @@ const delay = (milliseconds: number): Promise<void> =>
  */
 @Injectable()
 export class QueuedEntryInference implements EntryInference {
-  constructor(@Inject(DIARY_DB) private readonly db: DiaryDatabase) {}
+  constructor(@Inject(SCOPED_DB) private readonly db: ScopedDb) {}
 
-  enqueueEntry(entryId: string): null {
+  enqueueEntry(userId: string, entryId: string): null {
     const id = randomUUID();
     this.db
+      .forUser(userId)
       .prepare(
         `INSERT INTO inference_jobs
-         (id, kind, entry_id, status, result_json, error_text, attempts, created_at,
+         (id, user_id, kind, entry_id, status, result_json, error_text, attempts, created_at,
           started_at, completed_at)
-         VALUES (?, 'entry_analysis', ?, 'queued', NULL, NULL, 0, ?, NULL, NULL)`,
+         VALUES (?, ?, 'entry_analysis', ?, 'queued', NULL, NULL, 0, ?, NULL, NULL)`,
       )
-      .run(id, entryId, encodeDateTime(nowUtc()));
+      .run(id, userId, entryId, encodeDateTime(nowUtc()));
     return null;
   }
 }
@@ -89,31 +89,32 @@ export class QueuedEntryInference implements EntryInference {
 export class QueuedTranscriptFormatting implements TranscriptFormatting {
   private readonly waitMs = loadConfig().transcriptFormattingWaitMs;
 
-  constructor(@Inject(DIARY_DB) private readonly db: DiaryDatabase) {}
+  constructor(@Inject(SCOPED_DB) private readonly db: ScopedDb) {}
 
-  async formatTranscript(entryId: string, transcript: string): Promise<string> {
+  async formatTranscript(userId: string, entryId: string, transcript: string): Promise<string> {
     const id = randomUUID();
-    this.db
+    const handle = this.db.forUser(userId);
+    handle
       .prepare(
         `INSERT INTO inference_jobs
-         (id, kind, entry_id, status, result_json, error_text, attempts, created_at,
+         (id, user_id, kind, entry_id, status, result_json, error_text, attempts, created_at,
           started_at, completed_at)
-         VALUES (?, 'transcript_format', ?, 'queued', ?, NULL, 0, ?, NULL, NULL)`,
+         VALUES (?, ?, 'transcript_format', ?, 'queued', ?, NULL, 0, ?, NULL, NULL)`,
       )
-      .run(id, entryId, JSON.stringify({ input: transcript }), encodeDateTime(nowUtc()));
+      .run(id, userId, entryId, JSON.stringify({ input: transcript }), encodeDateTime(nowUtc()));
 
     const deadline = Date.now() + this.waitMs;
     for (;;) {
-      const job = this.db
-        .prepare('SELECT status, result_json FROM inference_jobs WHERE id = ?')
-        .get(id) as JobRow | undefined;
+      const job = handle
+        .prepare('SELECT status, result_json FROM inference_jobs WHERE id = ? AND user_id = ?')
+        .get(id, userId) as JobRow | undefined;
       if (!job) return transcript;
       if (job.status === 'failed') {
-        this.db.prepare('DELETE FROM inference_jobs WHERE id = ?').run(id);
+        handle.prepare('DELETE FROM inference_jobs WHERE id = ? AND user_id = ?').run(id, userId);
         return transcript;
       }
       if (job.status === 'completed') {
-        this.db.prepare('DELETE FROM inference_jobs WHERE id = ?').run(id);
+        handle.prepare('DELETE FROM inference_jobs WHERE id = ? AND user_id = ?').run(id, userId);
         if (!job.result_json) return transcript;
         const result = JSON.parse(job.result_json) as { text?: unknown };
         return typeof result.text === 'string' ? result.text : transcript;
@@ -132,7 +133,7 @@ export class ImmediateTestInference implements EntryInference {
 }
 
 export class ImmediateTestTranscriptFormatting implements TranscriptFormatting {
-  async formatTranscript(_entryId: string, transcript: string): Promise<string> {
+  async formatTranscript(_userId: string, _entryId: string, transcript: string): Promise<string> {
     return transcript;
   }
 }

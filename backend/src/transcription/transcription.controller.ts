@@ -29,12 +29,12 @@ export class TranscriptionController {
       throw new HttpException('The recording is empty.', HttpStatus.UNPROCESSABLE_ENTITY);
     }
 
-    return { id: this.jobs.start(request.body), status: 'pending' };
+    return { id: this.jobs.start(request.userId as string, request.body), status: 'pending' };
   }
 
   @Get(':jobId')
-  get(@Param('jobId') jobId: string): TranscriptionJob {
-    const job = this.jobs.find(jobId);
+  get(@Param('jobId') jobId: string, @Req() request: Request): TranscriptionJob {
+    const job = this.jobs.find(request.userId as string, jobId);
     if (!job) throw new HttpException('Transcription not found.', HttpStatus.NOT_FOUND);
     return job;
   }

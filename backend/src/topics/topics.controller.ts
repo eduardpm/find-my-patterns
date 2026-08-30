@@ -8,7 +8,9 @@ import {
   HttpStatus,
   Param,
   Post,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { parseOrThrow, topicAliasSchema } from '../common/validation';
 import {
   InvalidAliasError,
@@ -33,25 +35,29 @@ export class TopicsController {
   constructor(private readonly topics: TopicsService) {}
 
   @Get()
-  list(): { topics: TopicDetail[] } {
-    return { topics: this.topics.listTopics() };
+  list(@Req() req: Request): { topics: TopicDetail[] } {
+    return { topics: this.topics.listTopics(req.userId as string) };
   }
 
   @Post(':topicId/aliases')
   @HttpCode(HttpStatus.OK)
-  add(@Param('topicId') topicId: string, @Body() body: unknown): TopicDetail {
+  add(@Param('topicId') topicId: string, @Body() body: unknown, @Req() req: Request): TopicDetail {
     const input = parseOrThrow(topicAliasSchema, body ?? {});
     try {
-      return this.topics.addAlias(topicId, input.alias);
+      return this.topics.addAlias(req.userId as string, topicId, input.alias);
     } catch (err) {
       throw translate(err);
     }
   }
 
   @Delete(':topicId/aliases/:alias')
-  remove(@Param('topicId') topicId: string, @Param('alias') alias: string): TopicDetail {
+  remove(
+    @Param('topicId') topicId: string,
+    @Param('alias') alias: string,
+    @Req() req: Request,
+  ): TopicDetail {
     try {
-      return this.topics.removeAlias(topicId, decodeURIComponent(alias));
+      return this.topics.removeAlias(req.userId as string, topicId, decodeURIComponent(alias));
     } catch (err) {
       throw translate(err);
     }

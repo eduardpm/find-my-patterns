@@ -76,7 +76,7 @@ function daysInMonth(year: number, month: number): number {
 export class MonthlySummaryService {
   constructor(private readonly entries: EntriesRepository) {}
 
-  get(month: string): MonthlySummary {
+  get(userId: string, month: string): MonthlySummary {
     const { year, month: monthNum } = parseMonth(month);
     const monthLength = daysInMonth(year, monthNum);
 
@@ -88,6 +88,7 @@ export class MonthlySummaryService {
         : monthLength;
 
     const entries = this.entries.findInDateRange(
+      userId,
       { year, month: monthNum, day: 1 },
       { year, month: monthNum, day: monthLength },
     );

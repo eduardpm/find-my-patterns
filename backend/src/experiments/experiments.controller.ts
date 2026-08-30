@@ -7,7 +7,9 @@ import {
   HttpStatus,
   Param,
   Post,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { decodeDate } from '../db/codecs';
 import { experimentCreateSchema, parseOrThrow } from '../common/validation';
 import { RequiresPremium } from '../billing/requires-premium.guard';
@@ -50,7 +52,7 @@ export class ExperimentsController {
 
   @Post()
   @RequiresPremium()
-  async create(@Body() body: unknown): Promise<ExperimentOut> {
+  async create(@Body() body: unknown, @Req() req: Request): Promise<ExperimentOut> {
     const input = parseOrThrow(experimentCreateSchema, body ?? {});
     // `experimentCreateSchema` only checks `start_date`'s shape (`YYYY-MM-DD`); a value that is
     // the right shape but not a real calendar date (`2026-02-30`) is caught here, before the
@@ -66,7 +68,7 @@ export class ExperimentsController {
       );
     }
     try {
-      return await this.experiments.create({
+      return await this.experiments.create(req.userId as string, {
         patternTopic: input.pattern_topic,
         patternFeeling: input.pattern_feeling,
         hypothesisKind: input.hypothesis_kind,
@@ -79,9 +81,9 @@ export class ExperimentsController {
   }
 
   @Get('active')
-  getActive(): ExperimentOut {
+  getActive(@Req() req: Request): ExperimentOut {
     try {
-      return this.experiments.getActive();
+      return this.experiments.getActive(req.userId as string);
     } catch (err) {
       throw translate(err);
     }
@@ -89,18 +91,18 @@ export class ExperimentsController {
 
   @Post(':id/abandon')
   @HttpCode(HttpStatus.OK)
-  abandon(@Param('id') id: string): ExperimentOut {
+  abandon(@Param('id') id: string, @Req() req: Request): ExperimentOut {
     try {
-      return this.experiments.abandon(id);
+      return this.experiments.abandon(req.userId as string, id);
     } catch (err) {
       throw translate(err);
     }
   }
 
   @Get(':id/results')
-  results(@Param('id') id: string): ExperimentResultsOut {
+  results(@Param('id') id: string, @Req() req: Request): ExperimentResultsOut {
     try {
-      return this.experiments.results(id);
+      return this.experiments.results(req.userId as string, id);
     } catch (err) {
       throw translate(err);
     }
