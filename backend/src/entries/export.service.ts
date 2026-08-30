@@ -93,28 +93,28 @@ export class ExportService {
     private readonly feelings: FeelingsRepository,
   ) {}
 
-  toJson(): ExportDocument {
+  toJson(userId: string): ExportDocument {
     return {
       schema_version: EXPORT_SCHEMA_VERSION,
-      entries: this.bundles().map(toJsonEntry),
+      entries: this.bundles(userId).map(toJsonEntry),
     };
   }
 
-  toMarkdown(): string {
+  toMarkdown(userId: string): string {
     const labelFor = this.feelingLabelLookup();
-    const sections = this.bundles().map((bundle) => renderMarkdownEntry(bundle, labelFor));
+    const sections = this.bundles(userId).map((bundle) => renderMarkdownEntry(bundle, labelFor));
     // A trailing newline, same as every other text file in the repo — not for a reader browsing
     // rendered Markdown, but so a diff or a byte-for-byte determinism check never trips on a
     // missing EOF newline that has nothing to do with diary content.
     return sections.length > 0 ? `${sections.join('\n\n')}\n` : '';
   }
 
-  private bundles(): EntryBundle[] {
-    return this.entries.findAll().map((entry) => ({
+  private bundles(userId: string): EntryBundle[] {
+    return this.entries.findAll(userId).map((entry) => ({
       entry,
-      guidedAnswers: this.entries.findGuidedAnswers(entry.id),
-      topics: this.entries.findTopics(entry.id),
-      topicFeelings: this.entries.findTopicFeelingPairings(entry.id),
+      guidedAnswers: this.entries.findGuidedAnswers(userId, entry.id),
+      topics: this.entries.findTopics(userId, entry.id),
+      topicFeelings: this.entries.findTopicFeelingPairings(userId, entry.id),
     }));
   }
 

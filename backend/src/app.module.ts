@@ -14,7 +14,9 @@ import {
 } from './billing/play-verifier';
 import { RequiresPremiumGuard } from './billing/requires-premium.guard';
 import { loadConfig } from './config';
-import { createDiaryProvider } from './db/database.provider';
+import { createDiaryProvider, DIARY_DB } from './db/database.provider';
+import { createScopedDb, SCOPED_DB } from './db/scoped-db';
+import type { DiaryDatabase } from './db/database';
 import {
   EntriesController,
   FeelingsController,
@@ -108,6 +110,15 @@ export class AppModule {
       ],
       providers: [
         createDiaryProvider(databasePath),
+        {
+          // M-1b step 2 (#46): every repository/service that touches a per-user table is wired to
+          // this token instead of the raw `DIARY_DB` — see `scoped-db.ts`'s doc comment for why
+          // `ScopedDb.forUser(userId)` being the only way to obtain a `Statement` is the compile-time
+          // half of this ticket's enforcement mechanism (acceptance criterion 4).
+          provide: SCOPED_DB,
+          useFactory: (raw: DiaryDatabase) => createScopedDb(raw),
+          inject: [DIARY_DB],
+        },
         AuthService,
         EntitlementsService,
         RequiresPremiumGuard,

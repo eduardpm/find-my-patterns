@@ -11,9 +11,10 @@ import {
   Post,
   Put,
   Query,
+  Req,
   Res,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { decodeDate, serializeDate, serializeDateTime } from '../db/codecs';
 import { StaleEntryError, staleEntryBody } from '../common/stale-entry';
 import {
@@ -141,16 +142,17 @@ export class EntriesController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  create(@Body() body: unknown): Record<string, unknown> {
+  create(@Body() body: unknown, @Req() req: Request): Record<string, unknown> {
+    const userId = req.userId as string;
     const input = parseOrThrow(entryCreateSchema, body ?? {});
     try {
-      const { entry, suggestion } = this.service.createEntry(input);
-      const pairings = this.entries.findTopicFeelingPairings(entry.id);
-      const topics = this.topics.topicsForEntry(entry.id);
+      const { entry, suggestion } = this.service.createEntry(userId, input);
+      const pairings = this.entries.findTopicFeelingPairings(userId, entry.id);
+      const topics = this.topics.topicsForEntry(userId, entry.id);
       if (suggestion) {
         return toEntryOut(entry, suggestion, false, [suggestion], null, pairings, topics);
       }
-      const analysis = this.service.analysisFor(entry.id);
+      const analysis = this.service.analysisFor(userId, entry.id);
       return toEntryOut(
         entry,
         analysis.suggested,
@@ -169,11 +171,17 @@ export class EntriesController {
   }
 
   @Patch(':entryId')
-  update(@Param('entryId') entryId: string, @Body() body: unknown, @Res() res: Response): void {
+  update(
+    @Param('entryId') entryId: string,
+    @Body() body: unknown,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): void {
+    const userId = req.userId as string;
     const input = parseOrThrow(entryUpdateSchema, body ?? {});
     try {
-      const updated = this.service.updateEntry(entryId, input);
-      const analysis = this.service.analysisFor(entryId);
+      const updated = this.service.updateEntry(userId, entryId, input);
+      const analysis = this.service.analysisFor(userId, entryId);
       res
         .status(HttpStatus.OK)
         .json(
@@ -182,9 +190,9 @@ export class EntriesController {
             analysis.suggested,
             analysis.pending,
             analysis.suggestedAll,
-            this.entries.findGuidedAnswers(updated.id),
-            this.entries.findTopicFeelingPairings(updated.id),
-            this.topics.topicsForEntry(updated.id),
+            this.entries.findGuidedAnswers(userId, updated.id),
+            this.entries.findTopicFeelingPairings(userId, updated.id),
+            this.topics.topicsForEntry(userId, updated.id),
           ),
         );
     } catch (err) {
@@ -210,10 +218,13 @@ export class EntriesController {
   setTopicFeelings(
     @Param('entryId') entryId: string,
     @Body() body: unknown,
+    @Req() req: Request,
   ): Record<string, unknown> {
+    const userId = req.userId as string;
     const input = parseOrThrow(topicFeelingsUpdateSchema, body ?? {});
     try {
       this.service.setTopicFeelingPairings(
+        userId,
         entryId,
         input.pairings.map((pairing) => ({
           topicId: pairing.topic_id,
@@ -232,17 +243,17 @@ export class EntriesController {
     // The service call above already proved the entry exists (it throws EntryNotFoundError
     // otherwise), so a null here would mean it was deleted in the instant between that write and
     // this read — treated the same as never having existed rather than a crash.
-    const entry = this.entries.findById(entryId);
+    const entry = this.entries.findById(userId, entryId);
     if (!entry) throw new HttpException('Entry not found', HttpStatus.NOT_FOUND);
-    const analysis = this.service.analysisFor(entryId);
+    const analysis = this.service.analysisFor(userId, entryId);
     return toEntryOut(
       entry,
       analysis.suggested,
       analysis.pending,
       analysis.suggestedAll,
-      this.entries.findGuidedAnswers(entryId),
-      this.entries.findTopicFeelingPairings(entryId),
-      this.topics.topicsForEntry(entryId),
+      this.entries.findGuidedAnswers(userId, entryId),
+      this.entries.findTopicFeelingPairings(userId, entryId),
+      this.topics.topicsForEntry(userId, entryId),
     );
   }
 
@@ -250,6 +261,7 @@ export class EntriesController {
   remove(
     @Param('entryId') entryId: string,
     @Query('version') version: string | undefined,
+    @Req() req: Request,
     @Res() res: Response,
   ): void {
     if (version === undefined) {
@@ -257,7 +269,7 @@ export class EntriesController {
     }
     const parsed = parseOrThrow(versionQuerySchema, version);
     try {
-      this.service.deleteEntry(entryId, parsed);
+      this.service.deleteEntry(req.userId as string, entryId, parsed);
       res.status(HttpStatus.NO_CONTENT).send();
     } catch (err) {
       if (err instanceof EntryNotFoundError) {
@@ -272,7 +284,10 @@ export class EntriesController {
   }
 
   @Get()
-  list(@Query('date') date?: string): { entries: Record<string, unknown>[] } {
+  list(
+    @Query('date') date: string | undefined,
+    @Req() req: Request,
+  ): { entries: Record<string, unknown>[] } {
     if (!date) {
       throw new HttpException('Field required: date', HttpStatus.UNPROCESSABLE_ENTITY);
     }
@@ -285,9 +300,10 @@ export class EntriesController {
         HttpStatus.UNPROCESSABLE_ENTITY,
       );
     }
+    const userId = req.userId as string;
     return {
-      entries: this.entries.findByDate(parsed).map((e) => {
-        const analysis = this.service.analysisFor(e.id);
+      entries: this.entries.findByDate(userId, parsed).map((e) => {
+        const analysis = this.service.analysisFor(userId, e.id);
         // Answers are served with the list because this is the endpoint a client opens an entry
         // from — there is no separate per-entry read on the way to the detail screen, so leaving
         // them out here would mean showing the entry before it can be laid out properly.
@@ -296,9 +312,9 @@ export class EntriesController {
           analysis.suggested,
           analysis.pending,
           analysis.suggestedAll,
-          this.entries.findGuidedAnswers(e.id),
-          this.entries.findTopicFeelingPairings(e.id),
-          this.topics.topicsForEntry(e.id),
+          this.entries.findGuidedAnswers(userId, e.id),
+          this.entries.findTopicFeelingPairings(userId, e.id),
+          this.topics.topicsForEntry(userId, e.id),
         );
       }),
     };
@@ -316,25 +332,33 @@ export class EntriesController {
    * could not get from this one already returning both.
    */
   @Get(':entryId/echo')
-  echo(@Param('entryId') entryId: string): { echoes: EchoOut[]; progress: ProgressOut | null } {
-    const entry = this.entries.findById(entryId);
+  echo(
+    @Param('entryId') entryId: string,
+    @Req() req: Request,
+  ): { echoes: EchoOut[]; progress: ProgressOut | null } {
+    const userId = req.userId as string;
+    const entry = this.entries.findById(userId, entryId);
     if (!entry) throw new HttpException('Entry not found', HttpStatus.NOT_FOUND);
-    return { echoes: this.echoes.forEntry(entryId), progress: this.progress.forEntry(entryId) };
+    return {
+      echoes: this.echoes.forEntry(userId, entryId),
+      progress: this.progress.forEntry(userId, entryId),
+    };
   }
 
   @Get(':entryId')
-  getOne(@Param('entryId') entryId: string): Record<string, unknown> {
-    const entry = this.entries.findById(entryId);
+  getOne(@Param('entryId') entryId: string, @Req() req: Request): Record<string, unknown> {
+    const userId = req.userId as string;
+    const entry = this.entries.findById(userId, entryId);
     if (!entry) throw new HttpException('Entry not found', HttpStatus.NOT_FOUND);
-    const analysis = this.service.analysisFor(entryId);
+    const analysis = this.service.analysisFor(userId, entryId);
     return toEntryOut(
       entry,
       analysis.suggested,
       analysis.pending,
       analysis.suggestedAll,
-      this.entries.findGuidedAnswers(entryId),
-      this.entries.findTopicFeelingPairings(entryId),
-      this.topics.topicsForEntry(entryId),
+      this.entries.findGuidedAnswers(userId, entryId),
+      this.entries.findTopicFeelingPairings(userId, entryId),
+      this.topics.topicsForEntry(userId, entryId),
     );
   }
 }

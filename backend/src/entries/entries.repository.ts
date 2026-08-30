@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { decodeBool, decodeDate, decodeDateTime, decodeJson, encodeDate } from '../db/codecs';
 import { DIARY_DB } from '../db/database.provider';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import type { DiaryDatabase } from '../db/database';
 import type {
   DiaryEntry,
@@ -66,7 +67,7 @@ function toEntry(
 
 @Injectable()
 export class EntriesRepository {
-  constructor(@Inject(DIARY_DB) private readonly db: DiaryDatabase) {}
+  constructor(@Inject(SCOPED_DB) private readonly db: ScopedDb) {}
 
   /**
    * The feeling sets for a batch of entries, in one query.
@@ -74,17 +75,23 @@ export class EntriesRepository {
    * Per-entry lookups would be simpler to write and are the reason list endpoints quietly become
    * N+1 queries; a day or a month of entries is read in one go everywhere else in this class, and
    * their feelings are read the same way.
+   *
+   * `entryIds` are always this same `userId`'s own — every caller sources them from a query already
+   * filtered by `user_id` (`hydrate`'s own callers) — but the `WHERE user_id = ?` here is not
+   * redundant with that: it is what makes this statement itself, read on its own, an honest
+   * per-user query rather than one that only happens to be safe because of what called it.
    */
-  private feelingKeysFor(entryIds: string[]): Map<string, FeelingSet> {
+  private feelingKeysFor(userId: string, entryIds: string[]): Map<string, FeelingSet> {
     const byEntry = new Map<string, FeelingSet>();
     if (entryIds.length === 0) return byEntry;
     const rows = this.db
+      .forUser(userId)
       .prepare(
         `SELECT entry_id, feeling_key, intensity FROM entry_feelings
-         WHERE entry_id IN (${entryIds.map(() => '?').join(', ')})
+         WHERE user_id = ? AND entry_id IN (${entryIds.map(() => '?').join(', ')})
          ORDER BY entry_id, position, feeling_key`,
       )
-      .all(...entryIds) as Array<{
+      .all(userId, ...entryIds) as Array<{
       entry_id: string;
       feeling_key: string;
       intensity: number | null;
@@ -105,52 +112,65 @@ export class EntriesRepository {
     return byEntry;
   }
 
-  private hydrate(rows: EntryRow[]): DiaryEntry[] {
-    const feelings = this.feelingKeysFor(rows.map((row) => row.id));
+  private hydrate(userId: string, rows: EntryRow[]): DiaryEntry[] {
+    const feelings = this.feelingKeysFor(
+      userId,
+      rows.map((row) => row.id),
+    );
     return rows.map((row) => {
       const set = feelings.get(row.id);
       return toEntry(row, set?.keys ?? [], set?.intensities ?? {});
     });
   }
 
-  findByDate(date: PlainDate): DiaryEntry[] {
+  findByDate(userId: string, date: PlainDate): DiaryEntry[] {
     // Ordered by created_at — User Story 1's acceptance criteria.
     const rows = this.db
+      .forUser(userId)
       .prepare<EntryRow>(
-        'SELECT * FROM diary_entries WHERE entry_date = ? AND raw_text <> ? ORDER BY created_at',
+        'SELECT * FROM diary_entries WHERE user_id = ? AND entry_date = ? AND raw_text <> ? ORDER BY created_at',
       )
-      .all(encodeDate(date), GUIDED_DRAFT_SENTINEL) as EntryRow[];
-    return this.hydrate(rows);
+      .all(userId, encodeDate(date), GUIDED_DRAFT_SENTINEL) as EntryRow[];
+    return this.hydrate(userId, rows);
   }
 
-  findById(id: string): DiaryEntry | null {
+  findById(userId: string, id: string): DiaryEntry | null {
     const row = this.db
-      .prepare<EntryRow>('SELECT * FROM diary_entries WHERE id = ? AND raw_text <> ?')
-      .get(id, GUIDED_DRAFT_SENTINEL) as EntryRow | undefined;
-    return row ? this.hydrate([row])[0] : null;
-  }
-
-  findAll(): DiaryEntry[] {
-    const rows = this.db
-      .prepare<EntryRow>('SELECT * FROM diary_entries WHERE raw_text <> ? ORDER BY created_at')
-      .all(GUIDED_DRAFT_SENTINEL) as EntryRow[];
-    return this.hydrate(rows);
-  }
-
-  findInDateRange(start: PlainDate, end: PlainDate): DiaryEntry[] {
-    const rows = this.db
+      .forUser(userId)
       .prepare<EntryRow>(
-        `SELECT * FROM diary_entries WHERE entry_date >= ? AND entry_date <= ? AND raw_text <> ?
+        'SELECT * FROM diary_entries WHERE id = ? AND user_id = ? AND raw_text <> ?',
+      )
+      .get(id, userId, GUIDED_DRAFT_SENTINEL) as EntryRow | undefined;
+    return row ? this.hydrate(userId, [row])[0] : null;
+  }
+
+  findAll(userId: string): DiaryEntry[] {
+    const rows = this.db
+      .forUser(userId)
+      .prepare<EntryRow>(
+        'SELECT * FROM diary_entries WHERE user_id = ? AND raw_text <> ? ORDER BY created_at',
+      )
+      .all(userId, GUIDED_DRAFT_SENTINEL) as EntryRow[];
+    return this.hydrate(userId, rows);
+  }
+
+  findInDateRange(userId: string, start: PlainDate, end: PlainDate): DiaryEntry[] {
+    const rows = this.db
+      .forUser(userId)
+      .prepare<EntryRow>(
+        `SELECT * FROM diary_entries
+         WHERE user_id = ? AND entry_date >= ? AND entry_date <= ? AND raw_text <> ?
          ORDER BY created_at`,
       )
-      .all(encodeDate(start), encodeDate(end), GUIDED_DRAFT_SENTINEL) as EntryRow[];
-    return this.hydrate(rows);
+      .all(userId, encodeDate(start), encodeDate(end), GUIDED_DRAFT_SENTINEL) as EntryRow[];
+    return this.hydrate(userId, rows);
   }
 
-  findGuidedAnswers(entryId: string): GuidedAnswer[] {
+  findGuidedAnswers(userId: string, entryId: string): GuidedAnswer[] {
     const rows = this.db
-      .prepare('SELECT * FROM guiding_question_answers WHERE entry_id = ? ORDER BY order_index')
-      .all(entryId) as Array<{
+      .forUser(userId)
+      .prepare('SELECT * FROM guiding_question_answers WHERE user_id = ? AND entry_id = ? ORDER BY order_index')
+      .all(userId, entryId) as Array<{
       id: string;
       entry_id: string;
       question_key: string;
@@ -175,15 +195,22 @@ export class EntriesRepository {
    * `topic` is still carried here even though the entry payload also serves `topics` directly
    * (#81, via `TopicsService.topicsForEntry()`): a pairing row's own topic name is what makes each
    * pairing self-describing without a client having to cross-reference the two lists.
+   *
+   * Filtered on `etf.user_id` — the join's own owning table — rather than `t.user_id`: both are
+   * always the same value for a real row (a pairing can only ever name a topic its own owner also
+   * owns), but filtering the table actually being selected from is what the `ScopedDb` guard is
+   * checking for, and it is also the filter that costs nothing extra should that assumption ever
+   * become false.
    */
-  findTopicFeelingPairings(entryId: string): TopicFeelingPairing[] {
+  findTopicFeelingPairings(userId: string, entryId: string): TopicFeelingPairing[] {
     const rows = this.db
+      .forUser(userId)
       .prepare(
         `SELECT etf.topic_id, t.name AS topic, etf.feeling_key, etf.source
          FROM entry_topic_feelings etf JOIN topics t ON t.id = etf.topic_id
-         WHERE etf.entry_id = ? ORDER BY t.name, etf.feeling_key`,
+         WHERE etf.user_id = ? AND etf.entry_id = ? ORDER BY t.name, etf.feeling_key`,
       )
-      .all(entryId) as Array<{
+      .all(userId, entryId) as Array<{
       topic_id: string;
       topic: string;
       feeling_key: string;
@@ -206,22 +233,24 @@ export class EntriesRepository {
    * resolved to (`docs/export.md` "Topics" explains why the export repeats the canonical name for
    * both fields rather than inventing one).
    */
-  findTopics(entryId: string): Topic[] {
+  findTopics(userId: string, entryId: string): Topic[] {
     const rows = this.db
+      .forUser(userId)
       .prepare(
         `SELECT t.id, t.name FROM entry_topics et JOIN topics t ON t.id = et.topic_id
-         WHERE et.entry_id = ? ORDER BY t.name`,
+         WHERE et.user_id = ? AND et.entry_id = ? ORDER BY t.name`,
       )
-      .all(entryId) as Array<{ id: string; name: string }>;
+      .all(userId, entryId) as Array<{ id: string; name: string }>;
     return rows.map((r) => ({ id: r.id, name: r.name }));
   }
 
   /** The topic ids currently linked to an entry — the set a pairing write is validated against. */
-  entryTopicIds(entryId: string): string[] {
+  entryTopicIds(userId: string, entryId: string): string[] {
     return (
       this.db
-        .prepare('SELECT topic_id FROM entry_topics WHERE entry_id = ?')
-        .all(entryId) as Array<{
+        .forUser(userId)
+        .prepare('SELECT topic_id FROM entry_topics WHERE user_id = ? AND entry_id = ?')
+        .all(userId, entryId) as Array<{
         topic_id: string;
       }>
     ).map((r) => r.topic_id);

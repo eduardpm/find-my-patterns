@@ -31,14 +31,14 @@ export class GuidedDraftsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  create(): { draft_key: string } {
-    return { draft_key: this.entries.createGuidedDraft() };
+  create(@Req() request: Request): { draft_key: string } {
+    return { draft_key: this.entries.createGuidedDraft(request.userId as string) };
   }
 
   @Get(':draftKey')
-  get(@Param('draftKey') draftKey: string): { answers: unknown[] } {
+  get(@Param('draftKey') draftKey: string, @Req() request: Request): { answers: unknown[] } {
     try {
-      return this.entries.getGuidedDraft(draftKey);
+      return this.entries.getGuidedDraft(request.userId as string, draftKey);
     } catch (error) {
       this.rethrowDraftError(error);
     }
@@ -50,10 +50,12 @@ export class GuidedDraftsController {
     @Param('draftKey') draftKey: string,
     @Param('questionKey') questionKey: string,
     @Body() body: unknown,
+    @Req() request: Request,
   ): void {
     const answer = parseOrThrow(guidedDraftAnswerSchema, body ?? {});
     try {
       this.entries.saveGuidedDraftAnswer(
+        request.userId as string,
         draftKey,
         questionKey,
         answer.answer_text,
@@ -72,6 +74,7 @@ export class GuidedDraftsController {
     @Query('order') order: string | undefined,
     @Req() request: Request,
   ): { id: string; status: 'pending' } {
+    const userId = request.userId as string;
     const contentType = request.get('content-type')?.split(';', 1)[0].trim().toLowerCase() ?? '';
     if (!contentType.startsWith('audio/')) {
       throw new HttpException(
@@ -87,9 +90,9 @@ export class GuidedDraftsController {
     }
     const orderIndex = parseOrThrow(orderIndexQuerySchema, order);
     try {
-      this.entries.getGuidedDraft(draftKey);
+      this.entries.getGuidedDraft(userId, draftKey);
       return {
-        id: this.transcriptionJobs.start(request.body, {
+        id: this.transcriptionJobs.start(userId, request.body, {
           entryId: draftKey,
           questionKey,
           orderIndex,
@@ -107,13 +110,14 @@ export class GuidedDraftsController {
    * what reports that honestly instead of a hardcoded `analysis_pending: false`.
    */
   @Post(':draftKey/finalize')
-  finalize(@Param('draftKey') draftKey: string): Record<string, unknown> {
+  finalize(@Param('draftKey') draftKey: string, @Req() request: Request): Record<string, unknown> {
+    const userId = request.userId as string;
     try {
-      const { entry, suggestion } = this.entries.finalizeGuidedDraft(draftKey);
-      const pairings = this.entriesRepo.findTopicFeelingPairings(entry.id);
-      const topics = this.topics.topicsForEntry(entry.id);
+      const { entry, suggestion } = this.entries.finalizeGuidedDraft(userId, draftKey);
+      const pairings = this.entriesRepo.findTopicFeelingPairings(userId, entry.id);
+      const topics = this.topics.topicsForEntry(userId, entry.id);
       if (suggestion) return toEntryOut(entry, suggestion, false, [], null, pairings, topics);
-      const analysis = this.entries.analysisFor(entry.id);
+      const analysis = this.entries.analysisFor(userId, entry.id);
       return toEntryOut(
         entry,
         analysis.suggested,
@@ -133,9 +137,9 @@ export class GuidedDraftsController {
 
   @Delete(':draftKey')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('draftKey') draftKey: string): void {
+  remove(@Param('draftKey') draftKey: string, @Req() request: Request): void {
     try {
-      this.entries.deleteGuidedDraft(draftKey);
+      this.entries.deleteGuidedDraft(request.userId as string, draftKey);
     } catch (error) {
       this.rethrowDraftError(error);
     }
