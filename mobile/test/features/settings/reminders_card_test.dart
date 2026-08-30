@@ -185,6 +185,11 @@ void main() {
           reminders: [ReminderTime(hour: 9, minute: 0, enabled: true)],
         ),
       );
+      // Simulates the alarm already being armed on the platform, the way a
+      // real cold start would have left it (`app.dart#_armReminders`) --
+      // this widget test pumps `RemindersCard` on its own, never the app
+      // shell that would have scheduled it.
+      harness.remindersPlugin.pendingIds.add(9 * 60);
       await tester.pumpWidget(harness.scope(app()));
       await tester.pumpAndSettle();
 
@@ -196,6 +201,9 @@ void main() {
         const [ReminderTime(hour: 9, minute: 0)],
       );
       expect(harness.remindersPlugin.scheduledCalls, isEmpty);
+      // #153: the old alarm must be cancelled by id, not just left
+      // unscheduled going forward.
+      expect(harness.remindersPlugin.cancelledIds, contains(9 * 60));
       expect(
         find.textContaining('Notifications are off for this app'),
         findsNothing,
@@ -280,24 +288,30 @@ void main() {
     expect(find.text('21:00'), findsOneWidget);
   });
 
-  testWidgets('removing the only enabled reminder cancels every alarm', (
-    tester,
-  ) async {
-    final harness = Harness(
-      settings: const AppSettings(
-        reminders: [ReminderTime(hour: 9, minute: 0, enabled: true)],
-      ),
-    );
-    await tester.pumpWidget(harness.scope(app()));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'removing the only enabled reminder cancels its alarm by id, not '
+    'cancelAll (#153)',
+    (tester) async {
+      final harness = Harness(
+        settings: const AppSettings(
+          reminders: [ReminderTime(hour: 9, minute: 0, enabled: true)],
+        ),
+      );
+      // See the "turning an enabled reminder off" test above for why this
+      // is seeded rather than scheduled through the widget first.
+      harness.remindersPlugin.pendingIds.add(9 * 60);
+      await tester.pumpWidget(harness.scope(app()));
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Remove 09:00 reminder'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Remove 09:00 reminder'));
+      await tester.pumpAndSettle();
 
-    expect(harness.store.savedReminders.last, isEmpty);
-    expect(harness.remindersPlugin.cancelAllCallCount, greaterThan(0));
-    expect(harness.remindersPlugin.scheduledCalls, isEmpty);
-  });
+      expect(harness.store.savedReminders.last, isEmpty);
+      expect(harness.remindersPlugin.cancelledIds, contains(9 * 60));
+      expect(harness.remindersPlugin.cancelAllCallCount, 0);
+      expect(harness.remindersPlugin.scheduledCalls, isEmpty);
+    },
+  );
 
   testWidgets('each reminder switch is labelled with its time', (
     tester,

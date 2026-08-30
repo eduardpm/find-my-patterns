@@ -39,6 +39,26 @@ void main() {
       expect(harness.client.backend.host, '10.0.2.2');
     });
 
+    testWidgets(
+      'cold start cancels a leaked reminder alarm no current setting names '
+      '(#153)',
+      (tester) async {
+        // No enabled reminder anywhere in settings -- the default,
+        // both-off `kDefaultReminders` -- yet the platform already has an
+        // alarm armed at 12:00, the exact shape of the leak the issue
+        // found: a slot id with no corresponding setting anywhere in the
+        // UI, left over from some earlier configuration or a lost race.
+        final harness = Harness();
+        harness.remindersPlugin.pendingIds.add(12 * 60);
+
+        await tester.pumpWidget(harness.scope(const FindMyPatternsApp()));
+        await tester.pumpAndSettle();
+
+        expect(harness.remindersPlugin.cancelledIds, contains(12 * 60));
+        expect(harness.remindersPlugin.pendingIds, isEmpty);
+      },
+    );
+
     testWidgets('applies the stored theme mode', (tester) async {
       await tester.pumpWidget(
         Harness(

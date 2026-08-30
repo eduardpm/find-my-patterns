@@ -51,6 +51,17 @@ abstract interface class NotificationsPlugin {
   /// touch a reminder that happens to be armed at the same time.
   Future<void> cancel({required int id});
 
+  /// Every notification currently scheduled through this plugin and not yet
+  /// delivered.
+  ///
+  /// `ReminderService.reconcileReminders` (#153) reads this to find out what
+  /// the platform actually has armed, rather than trusting this app's own
+  /// bookkeeping of which ids it meant to schedule -- a mismatch between the
+  /// two is exactly how a reminder's alarm outlived its setting being turned
+  /// off. Maps straight onto
+  /// `FlutterLocalNotificationsPlugin.pendingNotificationRequests()`.
+  Future<List<PendingNotificationRequest>> pendingNotificationRequests();
+
   /// Shows a notification immediately, rather than scheduling it for later.
   ///
   /// `ReminderService` uses this for the first-pattern celebration (#38):
@@ -148,6 +159,10 @@ class const DefaultNotificationsPlugin() implements NotificationsPlugin {
 
   @override
   Future<void> cancel({required int id}) => _plugin.cancel(id: id);
+
+  @override
+  Future<List<PendingNotificationRequest>> pendingNotificationRequests() =>
+      _plugin.pendingNotificationRequests();
 
   @override
   Future<void> show({

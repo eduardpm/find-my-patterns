@@ -176,15 +176,22 @@ void main() {
       );
     });
 
-    test('cancels every scheduled alarm before rescheduling', () async {
-      await container.read(remindersControllerProvider.future);
+    test(
+      'reconciles against the plugin rather than calling cancelAll (#153)',
+      () async {
+        await container.read(remindersControllerProvider.future);
 
-      await container.read(remindersControllerProvider.notifier).save(const [
-        ReminderTime(hour: 8, minute: 0, enabled: true),
-      ]);
+        await container.read(remindersControllerProvider.notifier).save(const [
+          ReminderTime(hour: 8, minute: 0, enabled: true),
+        ]);
 
-      expect(plugin.cancelAllCallCount, 1);
-    });
+        expect(plugin.cancelAllCallCount, 0);
+        expect(
+          plugin.scheduledCalls.map((call) => call.id),
+          contains(8 * 60),
+        );
+      },
+    );
 
     test(
       'cancels every alarm and schedules nothing when no reminder is '
@@ -196,8 +203,95 @@ void main() {
           ReminderTime(hour: 8, minute: 0),
         ]);
 
-        expect(plugin.cancelAllCallCount, 1);
+        expect(plugin.cancelAllCallCount, 0);
         expect(plugin.scheduledCalls, isEmpty);
+      },
+    );
+
+    test(
+      'turning a reminder off cancels the alarm it used to hold (#153)',
+      () async {
+        await container.read(remindersControllerProvider.future);
+        await container.read(remindersControllerProvider.notifier).save(const [
+          ReminderTime(hour: 9, minute: 0, enabled: true),
+        ]);
+        expect(plugin.scheduledCalls.map((c) => c.id), contains(9 * 60));
+
+        await container.read(remindersControllerProvider.notifier).save(const [
+          ReminderTime(hour: 9, minute: 0),
+        ]);
+
+        expect(plugin.cancelledIds, contains(9 * 60));
+        expect(plugin.pendingIds, isEmpty);
+      },
+    );
+
+    test(
+      'removing a reminder cancels the alarm it used to hold (#153)',
+      () async {
+        await container.read(remindersControllerProvider.future);
+        await container.read(remindersControllerProvider.notifier).save(const [
+          ReminderTime(hour: 9, minute: 0, enabled: true),
+          ReminderTime(hour: 21, minute: 0, enabled: true),
+        ]);
+        expect(
+          plugin.scheduledCalls.map((c) => c.id).toSet(),
+          {9 * 60, 21 * 60},
+        );
+
+        await container.read(remindersControllerProvider.notifier).save(const [
+          ReminderTime(hour: 21, minute: 0, enabled: true),
+        ]);
+
+        expect(plugin.cancelledIds, contains(9 * 60));
+        expect(plugin.pendingIds, {21 * 60});
+      },
+    );
+
+    test(
+      'changing a reminder\'s time cancels the old id and schedules the '
+      'new one (#153)',
+      () async {
+        await container.read(remindersControllerProvider.future);
+        await container.read(remindersControllerProvider.notifier).save(const [
+          ReminderTime(hour: 9, minute: 0, enabled: true),
+        ]);
+        expect(plugin.scheduledCalls.map((c) => c.id), contains(9 * 60));
+
+        await container.read(remindersControllerProvider.notifier).save(const [
+          ReminderTime(hour: 10, minute: 30, enabled: true),
+        ]);
+
+        expect(plugin.cancelledIds, contains(9 * 60));
+        expect(plugin.pendingIds, {10 * 60 + 30});
+      },
+    );
+
+    test(
+      'two concurrent saves apply in call order, so the later call\'s '
+      'cancel is not overwritten by the earlier call\'s schedule (#153)',
+      () async {
+        await container.read(remindersControllerProvider.future);
+        final notifier = container.read(remindersControllerProvider.notifier);
+
+        // Mirrors `reminders_card.dart`'s `unawaited(controller.save(...))`
+        // on every toggle, time change, add and remove: neither call is
+        // awaited before the next one fires, so both bodies can be in
+        // flight together.
+        final first = notifier.save(const [
+          ReminderTime(hour: 21, minute: 0, enabled: true),
+        ]);
+        final second = notifier.save(const [ReminderTime(hour: 21, minute: 0)]);
+        await Future.wait([first, second]);
+
+        // `second` was issued after `first`, so it must be the state both
+        // the persisted settings and the scheduled alarms agree on: nothing
+        // armed at 21:00, matching the "off" setting `second` saved.
+        expect(
+          store.savedReminders.last,
+          const [ReminderTime(hour: 21, minute: 0)],
+        );
+        expect(plugin.pendingIds, isEmpty);
       },
     );
 

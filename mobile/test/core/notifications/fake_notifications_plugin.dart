@@ -56,6 +56,15 @@ class FakeNotificationsPlugin implements NotificationsPlugin {
   /// Every id handed to `cancel`, in order.
   final List<int> cancelledIds = [];
 
+  /// The ids `pendingNotificationRequests` currently reports as scheduled.
+  ///
+  /// Kept in step with `zonedSchedule` (adds the id), `cancel` (removes it)
+  /// and `cancelAll` (clears it), the same bookkeeping a real platform does
+  /// -- but also directly mutable, so a test can seed a leftover id that was
+  /// never scheduled through this fake at all, standing in for an alarm a
+  /// previous app version or a lost race left armed (#153).
+  final Set<int> pendingIds = {};
+
   /// Set to make the next `zonedSchedule` call throw, standing in for the
   /// exact-alarm permission being revoked.
   PlatformException? nextZonedScheduleError;
@@ -110,17 +119,27 @@ class FakeNotificationsPlugin implements NotificationsPlugin {
         payload: payload,
       ),
     );
+    pendingIds.add(id);
   }
 
   @override
   Future<void> cancelAll() async {
     cancelAllCallCount++;
+    pendingIds.clear();
   }
 
   @override
   Future<void> cancel({required int id}) async {
     cancelledIds.add(id);
+    pendingIds.remove(id);
   }
+
+  @override
+  Future<List<PendingNotificationRequest>>
+  pendingNotificationRequests() async => [
+    for (final id in pendingIds)
+      PendingNotificationRequest(id, null, null, null),
+  ];
 
   @override
   Future<void> show({
