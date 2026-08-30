@@ -1602,4 +1602,263 @@ void main() {
       },
     );
   });
+
+  group('dynamic type (#155b)', () {
+    testWidgets(
+      "the restored-draft notice's dismiss button measures at least "
+      '48x48 with no explicit constraints override (#155)',
+      (tester) async {
+        // Unlike `today_screen.dart`'s backdate-nudge dismiss (#150 task
+        // 4, which needed an explicit `BoxConstraints` floor after a bare
+        // `BoxConstraints()` removed the platform default), this
+        // `IconButton` at ~line 466 sets neither `constraints:` nor
+        // `padding:`, so it should already fall back to `IconButton`'s
+        // own 48dp default -- confirmed here by measurement rather than
+        // by reading the constructor, per ACCESSIBILITY.md §4.
+        await tester.pumpWidget(
+          buildTestable(
+            replies: bootReplies(),
+            initialDraft: ComposerDraft(
+              mode: ComposerDraftMode.guided,
+              guidedAnswers: const {'general': 'Feeling okay.'},
+              savedAt: DateTime.utc(2026),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.bySemanticsLabel('Dismiss'), findsOneWidget);
+        final dismissSize = tester.getSize(find.byTooltip('Dismiss'));
+        expect(dismissSize.width, greaterThanOrEqualTo(48));
+        expect(dismissSize.height, greaterThanOrEqualTo(48));
+      },
+    );
+
+    testWidgets(
+      "the AppBar's Cancel button also measures at least 48x48 (#155)",
+      (tester) async {
+        await tester.pumpWidget(buildTestable(replies: bootReplies()));
+        await tester.pumpAndSettle();
+
+        expect(find.bySemanticsLabel('Cancel'), findsOneWidget);
+        final cancelSize = tester.getSize(find.byTooltip('Cancel'));
+        expect(cancelSize.width, greaterThanOrEqualTo(48));
+        expect(cancelSize.height, greaterThanOrEqualTo(48));
+      },
+    );
+
+    testWidgets(
+      'the backdated header chip (#36) wraps its date phrase instead of '
+      'overflowing the screen at 320dp/2x',
+      (tester) async {
+        // #155: `_TargetDateChip`'s `Row` (icon + "Writing about ..."
+        // text) had no `Flexible` around the text -- the family of
+        // overflow ACCESSIBILITY.md §3 describes, and a genuine
+        // `RenderFlex` overflow (unlike the FAB defect fixed in
+        // `today_screen.dart`), so `takeException()` alone would have
+        // caught it. This test instead measures the chip's own rendered
+        // rect: `guided_question_flow.dart` and `voice_answer_recorder.dart`
+        // carry their own pre-existing overflows on this same screen at
+        // this scale (both files this split does not own -- reported in
+        // the PR body, not fixed here), so a blanket
+        // `expect(tester.takeException(), isNull)` here would fail for
+        // reasons outside this fix's scope.
+        tester.view.physicalSize = const Size(320, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await tester.pumpWidget(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: buildTestable(
+                replies: bootReplies(),
+                targetDate: const CalendarDate(2026, 8, 26),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        // Drains the guided stage's own pre-existing, out-of-scope
+        // overflow (see the comment above) so it does not fail this test
+        // at teardown -- flutter_test fails a test for any exception
+        // still un-drained when it ends, whether or not the test itself
+        // ever asserts on `takeException()`.
+        tester.takeException();
+        // Off the guided stage onto freeform, where the chip is simplest
+        // to measure cleanly.
+        await tester.tap(find.text('Write freely instead'));
+        await tester.pump();
+        // Same drain, for freeform's own pre-existing, out-of-scope
+        // `VoiceAnswerRecorder` overflow.
+        tester.takeException();
+
+        final chip = find.text('Writing about Wednesday, August 26');
+        expect(chip, findsOneWidget);
+        final chipRect = tester.getRect(chip);
+        expect(
+          chipRect.left,
+          greaterThanOrEqualTo(0),
+          reason: 'the chip text must not render past the left screen edge',
+        );
+        expect(
+          chipRect.right,
+          lessThanOrEqualTo(320),
+          reason: 'the chip text must not render past the right screen edge',
+        );
+      },
+    );
+
+    testWidgets(
+      'the pending-suggestion banner wraps its label instead of '
+      'overflowing the picker at 320dp/2x',
+      (tester) async {
+        // #155: `_ReadingEntryBanner`'s `Row` (spinner + "Reading your
+        // entry…" text) had no `Flexible` around the text either.
+        // Measured (in this suite's own text-rendering environment) at
+        // over 200px past the picker's own right edge -- and, unlike
+        // `_TargetDateChip` above, *silently*: this `Row` sits in a
+        // non-stretched `Column` child inside a `SingleChildScrollView`,
+        // and nothing here threw a `RenderFlex` overflow, the same
+        // "renders wrong without throwing" shape `today_screen.dart`'s
+        // FAB had. The scroll view's own measured right edge is the
+        // ceiling the banner must not cross.
+        tester.view.physicalSize = const Size(320, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        final delay = ManualDelay();
+        await tester.pumpWidget(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: buildTestable(
+                replies: [
+                  ...bootReplies(),
+                  FakeReply(201, body: entryJson(analysisPending: true)),
+                  FakeReply(200, body: entryJson(analysisPending: true)),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        // Drains the guided stage's own pre-existing, out-of-scope
+        // overflow -- see the backdated-chip test above for why.
+        tester.takeException();
+        containerOf(
+                  tester,
+                )
+                .read(
+                  entryComposerControllerProvider(CalendarDate.today())
+                      .notifier,
+                )
+                .pollDelay =
+            delay.call;
+
+        await tester.tap(find.text('Write freely instead'));
+        await tester.pump();
+        // Drains freeform's own pre-existing, out-of-scope
+        // `VoiceAnswerRecorder` overflow.
+        tester.takeException();
+        await tester.enterText(find.byType(TextFormField), 'A long day.');
+        await tester.pump();
+        await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+        tester.takeException();
+        final banner = find.text('Reading your entry…');
+        await pumpUntilFound(tester, banner);
+        tester.takeException();
+
+        expect(banner, findsOneWidget);
+        final bannerRect = tester.getRect(banner);
+        final scrollViewRect = tester.getRect(
+          find.byType(SingleChildScrollView).last,
+        );
+        expect(
+          bannerRect.right,
+          lessThanOrEqualTo(scrollViewRect.right),
+          reason:
+              'the banner text must not render past the picker\'s own '
+              'right edge',
+        );
+        // The manual picker is not gated behind the pending banner (see
+        // the class doc comment on `_ReadingEntryBanner`) -- still true
+        // once the label wraps to more than one line.
+        expect(find.text('Uplifted'), findsOneWidget);
+      },
+    );
+
+    // The matrix from ACCESSIBILITY.md §3 -- 320/360dp width x
+    // 1.0/1.3/2.0 textScale -- against the confirm-feeling stage, which
+    // is where this split's own structures concentrate
+    // (`_TargetDateChip`, `_ReadingEntryBanner`, the picker's own layout)
+    // once past the guided/freeform stages this split does not own.
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 1.3, 2.0]) {
+        testWidgets(
+          'the confirm-feeling stage renders with no *new* overflow at '
+          '${width}dp / ${scale}x',
+          (tester) async {
+            tester.view.physicalSize = Size(width, 3000);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
+
+            final replies = [
+              ...bootReplies(),
+              FakeReply(
+                200,
+                body: entryJson(
+                  suggestedFeelings: [suggestedFeelingJson(key: 'happy')],
+                ),
+              ),
+            ];
+            await tester.pumpWidget(
+              Builder(
+                builder: (context) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(textScaler: TextScaler.linear(scale)),
+                  child: buildTestable(replies: replies),
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+            // Drains the guided stage's own pre-existing, out-of-scope
+            // overflow (guided_question_flow.dart, not owned by this
+            // split -- see the backdated-chip test above).
+            tester.takeException();
+            await tester.tap(find.text('Write freely instead'));
+            await tester.pump();
+            // Drains freeform's own pre-existing, out-of-scope
+            // VoiceAnswerRecorder overflow.
+            tester.takeException();
+            await tester.enterText(find.byType(TextFormField), 'A long day.');
+            await tester.pump();
+            await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+            await tester.pumpAndSettle();
+            // A last drain for any transitional-frame echo of the
+            // freeform stage's own pre-existing overflow while it
+            // animates out -- everything asserted below is this split's
+            // own code (`_ConfirmFeelingStep`'s static structure,
+            // `_TargetDateChip`), not `guided_question_flow.dart` or
+            // `voice_answer_recorder.dart`.
+            tester.takeException();
+
+            expect(find.text('How did that feel?'), findsOneWidget);
+            expect(
+              find.text(
+                "It sounds like you're feeling happy. Confirm that, or "
+                'pick differently.',
+              ),
+              findsOneWidget,
+            );
+          },
+        );
+      }
+    }
+  });
 }

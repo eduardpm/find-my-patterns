@@ -338,10 +338,22 @@ class _TargetDateChip extends StatelessWidget {
                 color: theme.colorScheme.onSurfaceVariant,
               ),
               const SizedBox(width: JournalSpacing.x2),
-              Text(
-                'Writing about ${_targetDateFormat.format(date.toDateTime())}',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              // #155: this `Text` had no `Flexible` around it -- the
+              // family of overflow ACCESSIBILITY.md §3 describes. At
+              // 320dp/textScale 2.0 the full date phrase overflowed this
+              // `Row` by several hundred pixels (measured in this suite's
+              // own text-rendering environment) without wrapping, since
+              // `Align`'s loose constraint let the `Row` size to its
+              // children's unclamped intrinsic width. Wrapping, not
+              // shrinking or truncating, matches the fix used everywhere
+              // else in this app for a label beside a fixed icon.
+              Flexible(
+                child: Text(
+                  'Writing about '
+                  '${_targetDateFormat.format(date.toDateTime())}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -463,10 +475,23 @@ class _RestoredDraftNotice extends StatelessWidget {
               label: 'Dismiss',
               onTap: onDismiss,
               child: ExcludeSemantics(
+                // #155: measured at 40x40 with no override at all --
+                // Material 3's default (unstyled) `IconButton` visual
+                // container is 40dp, not the 48dp `kMinInteractiveDimension`
+                // Material 2 defaulted to, so nothing here was actually
+                // falling back to a 48dp floor the way it looked like it
+                // should. Same fix `today_screen.dart`'s backdate-nudge
+                // dismiss already needed (#150 task 4): an explicit
+                // `constraints` floor at `JournalSpacing.x7`.
                 child: IconButton(
                   icon: const Icon(Icons.close, size: 18),
                   tooltip: 'Dismiss',
                   onPressed: onDismiss,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: JournalSpacing.x7,
+                    minHeight: JournalSpacing.x7,
+                  ),
                 ),
               ),
             ),
@@ -772,10 +797,22 @@ class _ReadingEntryBanner extends StatelessWidget {
               ),
             ),
             const SizedBox(width: JournalSpacing.x2),
-            Text(
-              'Reading your entry…',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+            // #155: no `Flexible` around this `Text` -- at 320dp/textScale
+            // 2.0 it rendered past the picker's own right edge by well
+            // over 200px (measured in this suite's own text-rendering
+            // environment), silently: this `Row` sits in a
+            // non-stretched `Column` child inside a `SingleChildScrollView`,
+            // and it painted past the scroll view's own measured bound
+            // without a `RenderFlex` overflow ever being thrown, the same
+            // "renders wrong without throwing" shape `today_screen.dart`'s
+            // FAB had. Wrapping the label, not shrinking or truncating it,
+            // matches every other fix for this defect family in this app.
+            Flexible(
+              child: Text(
+                'Reading your entry…',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ],

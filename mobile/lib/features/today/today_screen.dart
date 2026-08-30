@@ -199,6 +199,24 @@ class _TodayScreenState extends ConsumerState<TodayScreen>
     // composer — so while reading a past day the button says which day it
     // would write into, and pressing it brings the page back to today.
     final fabLabel = isToday ? 'Write an entry' : 'Write for today';
+    // #155: `FloatingActionButton.extended`'s `extendedSizeConstraints`
+    // locks its *height* but leaves its width, and its label `Text`,
+    // completely unconstrained -- Flutter sizes the pill to whatever the
+    // label needs. At 320dp/textScale 2.0 "Write an entry" alone measures
+    // well past the screen width, so the button was rendering off both
+    // the left and right edges, silently (no `RenderFlex` overflow, so
+    // nothing threw). Wrapping the label to a second line is not an
+    // option either -- the button's *height* is genuinely fixed, so a
+    // two-line label would just overflow vertically instead. The existing
+    // scroll-driven collapse-to-"+" already has everywhere this needs: a
+    // real measurement decides whether the label fits *before* asking for
+    // it, and the icon already carries the accessible name once collapsed.
+    final canExtendFab = _extendedFabLabelFits(
+      context,
+      label: fabLabel,
+      viewportWidth: MediaQuery.sizeOf(context).width,
+    );
+    final showExtendedFab = _expandFab && canExtendFab;
 
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
@@ -206,12 +224,13 @@ class _TodayScreenState extends ConsumerState<TodayScreen>
           if (!isToday) controller.showToday();
           newEntry();
         },
-        isExtended: _expandFab,
+        isExtended: showExtendedFab,
         icon: Icon(
           Icons.add,
           // The label is the accessible name while it is on screen; once
-          // the button collapses the icon has to carry it.
-          semanticLabel: _expandFab ? null : fabLabel,
+          // the button collapses (by scroll position or because it would
+          // not fit) the icon has to carry it.
+          semanticLabel: showExtendedFab ? null : fabLabel,
         ),
         label: Text(fabLabel),
       ),
@@ -450,6 +469,48 @@ class _DayStepButton extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// The Material 3 geometry `_FABDefaultsM3` (in
+/// `package:flutter/src/material/floating_action_button.dart`, not exposed
+/// as public constants) gives an *extended* [FloatingActionButton] around
+/// its label: the icon, the icon-label gap, and the horizontal content
+/// padding either side. [_extendedFabLabelFits] needs these to know how
+/// much width is actually left for the label itself.
+const double _fabIconSize = 24;
+const double _fabIconLabelGap = 8; // extendedIconLabelSpacing
+const double _fabExtendedPadding = 16 + 20; // extendedPadding start + end
+
+/// Whether [label] fits on one line inside an extended
+/// [FloatingActionButton] at [viewportWidth] without the button growing
+/// wider than the screen -- see the call site in [_TodayScreenState.build]
+/// for why this has to be measured rather than assumed. Uses the real
+/// [TextStyle] Flutter's M3 default gives an extended FAB's label
+/// (`textTheme.labelLarge`, see `_FABDefaultsM3.extendedTextStyle`) and the
+/// real [TextScaler] from [context], the way `day_summary_card.dart`'s
+/// `_measure` and `calendar_screen.dart`'s `_measureHeight` already
+/// measure their own screens' real geometry rather than guessing from a
+/// character count.
+bool _extendedFabLabelFits(
+  BuildContext context, {
+  required String label,
+  required double viewportWidth,
+}) {
+  final painter = TextPainter(
+    text: TextSpan(
+      text: label,
+      style: Theme.of(context).textTheme.labelLarge,
+    ),
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+  )..layout();
+  final available =
+      viewportWidth -
+      2 * kFloatingActionButtonMargin -
+      _fabIconSize -
+      _fabIconLabelGap -
+      _fabExtendedPadding;
+  return painter.width <= available;
 }
 
 /// On today and yesterday the title is the word for the day and the
