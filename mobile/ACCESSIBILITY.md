@@ -247,3 +247,54 @@ to stay reachable individually for some other reason, wrap it directly in
 `ExcludeSemantics`. Never give a purely decorative icon its own
 `Semantics.label` — that produces a second, redundant stop a screen reader
 has to sit through for information it already has.
+
+## 6. The whole-app layout sweep
+
+Sections 3 and 4 tell you how to measure one screen. `test/screen_layout_matrix_test.dart`
+measures **all of them**, so that a screen nobody has audited is no longer a
+screen with no coverage.
+
+Before it, dynamic-type coverage was opt-in: seventeen hand-written per-screen
+tests out of forty-six widget-bearing files, each added by whichever ticket
+happened to be looking at that screen — and nothing said which screens were
+still unmeasured. Eighteen instances of one layout bug family shipped that way.
+
+It checks three invariants, at 320/360dp × textScale 1.0/1.3/2.0. Only the
+first is the classic:
+
+1. **Nothing throws.** A `RenderFlex` overflow, which
+   `expect(tester.takeException(), isNull)` already catches.
+2. **No text paints outside the screen horizontally.** Silent. #164's extended
+   `FloatingActionButton` rendered off *both* edges without throwing, because
+   `FloatingActionButton.extended` fixes its height and leaves its width
+   unconstrained.
+3. **No single-word label is broken across lines while the screen had room.**
+   Silent. A fixed-width sibling starves an `Expanded`/`Wrap`, and since a
+   `Wrap` cannot split one child in two, the child's own label breaks mid-word
+   instead — "Relaxed" rendered as "Relaxe"/"d" in `entry_card.dart` (#168),
+   which needed 196px and was given 43.5px.
+
+Invariants 2 and 3 exist because the family's failure mode moved: it is no
+longer only "the test asserted the widget tree rather than the render", it is
+now also "**the test's own harness was more generous than the real screen**".
+`pattern_card.dart`'s dynamic-type test passes while the card overflows in the
+real `InsightsScreen` (#163), because its harness gives the card more width
+than the screen's padding leaves it.
+
+**These are invariants, not layout assertions.** `CONSTITUTION.md` Article 3
+rules out asserting pixel positions, and rightly — a test pinning a label to
+x=16 breaks on every visual tweak. These assert only that text renders
+*somewhere inside the screen* and that words are not broken in half. No
+legitimate visual change can break them.
+
+### Adding a screen
+
+Register a `ScreenCase` in that file. The `every widget file is accounted for`
+guard walks `lib/` and fails when a widget file is neither registered, nor
+covered by its own `TextScaler` test, nor named in `kUnsweptSurfaces` — so a
+new screen cannot be added without someone deciding which it is. That list is
+the visible backlog: shrinking it is the work, and it must never grow.
+
+A cell that fails for a defect you are not fixing goes in `knownFailures` with
+its issue number, which shows up in the test name — a known defect stays
+visible rather than disappearing the way an unwritten test does.

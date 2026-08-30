@@ -123,6 +123,14 @@ class _ServerFormState extends ConsumerState<ServerForm> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SegmentedButton<BackendScheme>(
+          // No selected-check icon: Material reserves room for one inside
+          // each segment, and at 320dp/2x that left "HTTP" 106px of the
+          // 112px it needs, so the label broke mid-word to "HTT"/"P" (found
+          // by `test/screen_layout_matrix_test.dart`). Nothing overflowed
+          // and nothing threw. The segment's own fill already shows which
+          // scheme is selected, so the icon was carrying no information the
+          // control did not already convey.
+          showSelectedIcon: false,
           segments: [
             for (final scheme in BackendScheme.values)
               ButtonSegment(value: scheme, label: Text(scheme.label)),

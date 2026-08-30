@@ -68,33 +68,38 @@ class EntryCard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                          // One shared `Wrap`, not a `Row` with the time
+                          // pinned in a fixed-width slot ahead of an
+                          // `Expanded(Wrap(...))` (#168). That shape starves
+                          // the `Expanded` at large text scales, and a
+                          // `Wrap` cannot break a single child in two, so
+                          // each `FeelingChip` was squeezed until its own
+                          // one-word label broke mid-word instead -- at
+                          // 320dp/2x "Relaxed" wanted 196px and was given
+                          // 43.5px. Nothing overflowed and nothing threw,
+                          // which is why it survived a sweep.
+                          //
+                          // `day_entries_screen.dart`'s `_DayEntryCard` was
+                          // moved off the identical shape by #155; this is
+                          // the same fix, and `WrapAlignment.end` goes with
+                          // it -- with the time inside the same `Wrap`,
+                          // end-alignment would push the whole row right and
+                          // leave the gutter it was creating before.
+                          Wrap(
+                            spacing: JournalSpacing.x2,
+                            runSpacing: JournalSpacing.x1,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                  right: JournalSpacing.x2,
-                                ),
-                                child: Eyebrow(
-                                  DateFormat.jm().format(
-                                    entry.createdAt.toLocal(),
-                                  ),
+                              Eyebrow(
+                                DateFormat.jm().format(
+                                  entry.createdAt.toLocal(),
                                 ),
                               ),
-                              Expanded(
-                                child: Wrap(
-                                  alignment: WrapAlignment.end,
-                                  spacing: JournalSpacing.x2,
-                                  runSpacing: JournalSpacing.x1,
-                                  children: [
-                                    for (final feeling in entry.feelings)
-                                      FeelingChip(
-                                        label: feeling.label,
-                                        color: feeling.accent(journal),
-                                      ),
-                                  ],
+                              for (final feeling in entry.feelings)
+                                FeelingChip(
+                                  label: feeling.label,
+                                  color: feeling.accent(journal),
                                 ),
-                              ),
                             ],
                           ),
                           const SizedBox(height: JournalSpacing.x2),
