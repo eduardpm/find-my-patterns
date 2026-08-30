@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { encodeDate, encodeDateTime, nowUtc, todayLocal } from '../src/db/codecs';
 import { initDiary } from '../src/db/init';
 import { openDiary, type DiaryDatabase } from '../src/db/database';
+import { createScopedDb } from '../src/db/scoped-db';
 import { QueuedEntryInference } from '../src/inference/inference';
+import { DEFAULT_USER_ID } from '../src/auth/default-user';
 
 let dir: string;
 let db: DiaryDatabase;
@@ -31,7 +33,10 @@ afterEach(() => {
 describe('QueuedEntryInference', () => {
   it('durably queues analysis and returns immediately without polling for a result', () => {
     const started = performance.now();
-    const result = new QueuedEntryInference(db).enqueueEntry('entry-1');
+    const result = new QueuedEntryInference(createScopedDb(db)).enqueueEntry(
+      DEFAULT_USER_ID,
+      'entry-1',
+    );
     const elapsed = performance.now() - started;
 
     expect(result).toBeNull();

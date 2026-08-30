@@ -11,8 +11,7 @@ import {
   todayLocal,
   type PlainDate,
 } from '../db/codecs';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import { CONFIRMED_FEELING_SOURCES } from '../insights/constants';
 import { PatternsService } from '../insights/patterns.service';
 import {
@@ -116,7 +115,7 @@ interface ExperimentRow {
 @Injectable()
 export class ExperimentsService {
   constructor(
-    @Inject(DIARY_DB) private readonly db: DiaryDatabase,
+    @Inject(SCOPED_DB) private readonly db: ScopedDb,
     private readonly patterns: PatternsService,
   ) {}
 
@@ -129,12 +128,14 @@ export class ExperimentsService {
    * This is the one place that happens, run at the top of every public method so a client never
    * sees a stale `active` row for a window that has already closed, however it got here.
    */
-  private syncFinished(today: PlainDate): void {
+  private syncFinished(userId: string, today: PlainDate): void {
     this.db
+      .forUser(userId)
       .prepare(
-        `UPDATE experiments SET status = 'finished' WHERE status = 'active' AND end_date < ?`,
+        `UPDATE experiments SET status = 'finished'
+         WHERE user_id = ? AND status = 'active' AND end_date < ?`,
       )
-      .run(encodeDate(today));
+      .run(userId, encodeDate(today));
   }
 
   private toOut(row: ExperimentRow): ExperimentOut {
@@ -155,9 +156,10 @@ export class ExperimentsService {
   // Create
   // -------------------------------------------------------------------------------------------
 
-  async create(input: CreateExperimentInput): Promise<ExperimentOut> {
+  async create(userId: string, input: CreateExperimentInput): Promise<ExperimentOut> {
     const today = todayLocal();
-    this.syncFinished(today);
+    this.syncFinished(userId, today);
+    const handle = this.db.forUser(userId);
 
     const lengthDays = input.lengthDays ?? MIN_EXPERIMENT_LENGTH_DAYS;
     if (
@@ -171,9 +173,9 @@ export class ExperimentsService {
       );
     }
 
-    const activeRow = this.db
-      .prepare(`SELECT id FROM experiments WHERE status = 'active'`)
-      .get() as { id: string } | undefined;
+    const activeRow = handle
+      .prepare(`SELECT id FROM experiments WHERE user_id = ? AND status = 'active'`)
+      .get(userId) as { id: string } | undefined;
     if (activeRow) {
       throw new ActiveExperimentExistsError('An experiment is already active.');
     }
@@ -181,9 +183,9 @@ export class ExperimentsService {
     // The only place this module ever asks the pattern engine to compute anything — and it asks
     // to *read*, exactly what a client would see on the Insights view a moment before pressing
     // "start an experiment". No statistics are re-derived here.
-    await this.patterns.recomputePatterns();
+    await this.patterns.recomputePatterns(userId);
     const qualifies = this.patterns
-      .listPatterns()
+      .listPatterns(userId)
       .some(
         (pattern) =>
           pattern.kind === 'forward' &&
@@ -204,14 +206,16 @@ export class ExperimentsService {
     const id = randomUUID();
     const createdAt = encodeDateTime(nowUtc());
 
-    this.db
+    handle
       .prepare(
         `INSERT INTO experiments
-           (id, pattern_topic, pattern_feeling, hypothesis_kind, start_date, end_date, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
+           (id, user_id, pattern_topic, pattern_feeling, hypothesis_kind, start_date, end_date,
+            status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
       )
       .run(
         id,
+        userId,
         input.patternTopic,
         input.patternFeeling,
         input.hypothesisKind,
@@ -220,24 +224,28 @@ export class ExperimentsService {
         createdAt,
       );
 
-    return this.toOut(this.mustFind(id));
+    return this.toOut(this.mustFind(userId, id));
   }
 
   // -------------------------------------------------------------------------------------------
   // Read
   // -------------------------------------------------------------------------------------------
 
-  getActive(): ExperimentOut {
-    this.syncFinished(todayLocal());
-    const row = this.db.prepare(`SELECT * FROM experiments WHERE status = 'active'`).get() as
-      ExperimentRow | undefined;
+  getActive(userId: string): ExperimentOut {
+    this.syncFinished(userId, todayLocal());
+    const row = this.db
+      .forUser(userId)
+      .prepare(`SELECT * FROM experiments WHERE user_id = ? AND status = 'active'`)
+      .get(userId) as ExperimentRow | undefined;
     if (!row) throw new NoActiveExperimentError('No experiment is currently active.');
     return this.toOut(row);
   }
 
-  private mustFind(id: string): ExperimentRow {
-    const row = this.db.prepare('SELECT * FROM experiments WHERE id = ?').get(id) as
-      ExperimentRow | undefined;
+  private mustFind(userId: string, id: string): ExperimentRow {
+    const row = this.db
+      .forUser(userId)
+      .prepare('SELECT * FROM experiments WHERE id = ? AND user_id = ?')
+      .get(id, userId) as ExperimentRow | undefined;
     if (!row) throw new ExperimentNotFoundError(`No experiment with id ${id}.`);
     return row;
   }
@@ -246,25 +254,28 @@ export class ExperimentsService {
   // Abandon
   // -------------------------------------------------------------------------------------------
 
-  abandon(id: string): ExperimentOut {
-    this.syncFinished(todayLocal());
-    const row = this.mustFind(id);
+  abandon(userId: string, id: string): ExperimentOut {
+    this.syncFinished(userId, todayLocal());
+    const row = this.mustFind(userId, id);
     if (row.status !== 'active') {
       throw new ExperimentNotActiveError(
         `Experiment ${id} is ${row.status}, not active, and cannot be abandoned.`,
       );
     }
-    this.db.prepare(`UPDATE experiments SET status = 'abandoned' WHERE id = ?`).run(id);
-    return this.toOut(this.mustFind(id));
+    this.db
+      .forUser(userId)
+      .prepare(`UPDATE experiments SET status = 'abandoned' WHERE id = ? AND user_id = ?`)
+      .run(id, userId);
+    return this.toOut(this.mustFind(userId, id));
   }
 
   // -------------------------------------------------------------------------------------------
   // Results
   // -------------------------------------------------------------------------------------------
 
-  results(id: string): ExperimentResultsOut {
-    this.syncFinished(todayLocal());
-    const row = this.mustFind(id);
+  results(userId: string, id: string): ExperimentResultsOut {
+    this.syncFinished(userId, todayLocal());
+    const row = this.mustFind(userId, id);
     const experimentOut = this.toOut(row);
 
     const start = decodeDate(row.start_date);
@@ -276,11 +287,13 @@ export class ExperimentsService {
     const baselineRange = baselineWindowFor(start, experimentDays);
 
     const topicId = this.db
-      .prepare('SELECT id FROM topics WHERE name = ?')
-      .get(row.pattern_topic) as { id: string } | undefined;
+      .forUser(userId)
+      .prepare('SELECT id FROM topics WHERE user_id = ? AND name = ?')
+      .get(userId, row.pattern_topic) as { id: string } | undefined;
 
     const experimentAssoc = windowAssociation(
       this.windowCounts(
+        userId,
         topicId?.id ?? null,
         row.pattern_feeling,
         experimentRange.start,
@@ -291,6 +304,7 @@ export class ExperimentsService {
     );
     const baselineAssoc = windowAssociation(
       this.windowCounts(
+        userId,
         topicId?.id ?? null,
         row.pattern_feeling,
         baselineRange.start,
@@ -325,6 +339,7 @@ export class ExperimentsService {
    * or looser set of it.
    */
   private windowCounts(
+    userId: string,
     topicId: string | null,
     feelingKey: string,
     start: PlainDate,
@@ -332,19 +347,23 @@ export class ExperimentsService {
   ): WindowCounts {
     const placeholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
     const rows = this.db
+      .forUser(userId)
       .prepare(
         `SELECT e.entry_date,
                 CASE WHEN et.entry_id IS NOT NULL THEN 1 ELSE 0 END AS has_topic,
                 CASE WHEN ef.entry_id IS NOT NULL THEN 1 ELSE 0 END AS has_feeling
          FROM diary_entries e
-         LEFT JOIN entry_topics et ON et.entry_id = e.id AND et.topic_id = ?
-         LEFT JOIN entry_feelings ef ON ef.entry_id = e.id AND ef.feeling_key = ?
-         WHERE e.feeling_source IN (${placeholders})
+         LEFT JOIN entry_topics et ON et.entry_id = e.id AND et.topic_id = ? AND et.user_id = ?
+         LEFT JOIN entry_feelings ef ON ef.entry_id = e.id AND ef.feeling_key = ? AND ef.user_id = ?
+         WHERE e.user_id = ? AND e.feeling_source IN (${placeholders})
            AND e.entry_date >= ? AND e.entry_date <= ?`,
       )
       .all(
         topicId ?? '',
+        userId,
         feelingKey,
+        userId,
+        userId,
         ...CONFIRMED_FEELING_SOURCES,
         encodeDate(start),
         encodeDate(end),

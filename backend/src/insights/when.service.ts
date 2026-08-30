@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { decodeDate, decodeDateTime } from '../db/codecs';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import {
   averageValence,
   hourBlockKey,
@@ -77,22 +76,23 @@ interface Scored {
 
 @Injectable()
 export class WhenInsightsService {
-  constructor(@Inject(DIARY_DB) private readonly db: DiaryDatabase) {}
+  constructor(@Inject(SCOPED_DB) private readonly db: ScopedDb) {}
 
-  get(): WhenInsights {
+  get(userId: string): WhenInsights {
     const placeholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
     // I5-07: unconfirmed feelings are not evidence here either. The filter is in the SQL so there
     // is no path through this service on which one could reach an average.
     const rows = this.db
+      .forUser(userId)
       .prepare(
         `SELECT e.id, e.entry_date, e.created_at, f.valence
          FROM diary_entries e
          JOIN entry_feelings ef ON ef.entry_id = e.id
          JOIN feelings f ON f."key" = ef.feeling_key
-         WHERE e.feeling_source IN (${placeholders})
+         WHERE e.user_id = ? AND e.feeling_source IN (${placeholders})
          ORDER BY e.entry_date, e.id, ef.position`,
       )
-      .all(...CONFIRMED_FEELING_SOURCES) as Array<{
+      .all(userId, ...CONFIRMED_FEELING_SOURCES) as Array<{
       id: string;
       entry_date: string;
       created_at: string;

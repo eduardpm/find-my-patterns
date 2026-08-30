@@ -68,6 +68,7 @@ export class SeriesService {
    * points and hand it over anyway, defeating the cap in spirit while honouring it in letter.
    */
   getSeries(
+    userId: string,
     fromRaw: string,
     toRaw: string,
     granularity: SeriesGranularity = 'day',
@@ -93,7 +94,7 @@ export class SeriesService {
       );
     }
 
-    const days = this.dayPoints(from, to);
+    const days = this.dayPoints(userId, from, to);
     const points = granularity === 'day' ? days : aggregate(days, granularity);
     // Same reasoning as `InsightsController#get`'s `constants` block: report the window this
     // response was actually bound by, not always the engine's default — a premium reader who hit
@@ -102,8 +103,8 @@ export class SeriesService {
   }
 
   /** Every day with at least one entry in `[from, to]`, in one pass over one query's rows. */
-  private dayPoints(from: PlainDate, to: PlainDate): SeriesPoint[] {
-    const entries = this.entries.findInDateRange(from, to);
+  private dayPoints(userId: string, from: PlainDate, to: PlainDate): SeriesPoint[] {
+    const entries = this.entries.findInDateRange(userId, from, to);
     const valenceOf = new Map(
       this.feelings.findAll().map((feeling) => [feeling.key, VALENCE_SCORE[feeling.valence]]),
     );

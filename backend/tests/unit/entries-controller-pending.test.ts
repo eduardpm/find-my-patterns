@@ -17,10 +17,18 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import type { Request } from 'express';
 import { EntriesController } from '../../src/entries/entries.controller';
 import { GuidedDraftsController } from '../../src/entries/guided-drafts.controller';
 import type { EntriesService } from '../../src/entries/entries.service';
 import type { DiaryEntry, SuggestedFeeling } from '../../src/domain/types';
+
+/** M-1b (#46): every controller handler now reads `req.userId`, set by `IdentityGate` in a real
+ *  request. These tests call the controller directly, bypassing that middleware, so this stands
+ *  in for it — the actual value is arbitrary, since nothing here asserts on which user was read. */
+function fakeRequest(): Request {
+  return { userId: 'user-1' } as unknown as Request;
+}
 
 function fakeEntry(overrides: Partial<DiaryEntry> = {}): DiaryEntry {
   return {
@@ -57,7 +65,7 @@ function stubService(options: {
   const service = {
     createEntry: () => options.createResult,
     finalizeGuidedDraft: () => options.finalizeResult,
-    analysisFor: (entryId: string) => {
+    analysisFor: (_userId: string, entryId: string) => {
       analysisForCalls.push(entryId);
       return options.analysis;
     },
@@ -98,7 +106,10 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubTopicsService() as never,
     );
 
-    const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
+    const body = controller.create(
+      { mode: 'freeform', raw_text: entry.rawText },
+      fakeRequest(),
+    );
 
     expect(body.analysis_pending).toBe(true);
     expect(body.suggested_feeling).toBeNull();
@@ -121,7 +132,10 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubTopicsService() as never,
     );
 
-    const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
+    const body = controller.create(
+      { mode: 'freeform', raw_text: entry.rawText },
+      fakeRequest(),
+    );
 
     expect(body.analysis_pending).toBe(false);
     expect(body.suggested_feeling).toEqual(suggestion);
@@ -143,7 +157,10 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubTopicsService() as never,
     );
 
-    const body = controller.create({ mode: 'freeform', raw_text: entry.rawText });
+    const body = controller.create(
+      { mode: 'freeform', raw_text: entry.rawText },
+      fakeRequest(),
+    );
 
     expect(body.analysis_pending).toBe(false);
     expect(body.suggested_feeling).toEqual(suggestion);
@@ -165,7 +182,7 @@ describe('POST /guided-entry-drafts/{key}/finalize -- analysis_pending honesty',
       stubTopicsService() as never,
     );
 
-    const body = controller.finalize('draft-1');
+    const body = controller.finalize('draft-1', fakeRequest());
 
     expect(body.analysis_pending).toBe(true);
     expect(body.suggested_feelings).toEqual([]);

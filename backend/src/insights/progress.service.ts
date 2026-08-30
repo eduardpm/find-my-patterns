@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { DIARY_DB } from '../db/database.provider';
-import type { DiaryDatabase } from '../db/database';
+import { SCOPED_DB, type ScopedDb } from '../db/scoped-db';
 import { isMixedValence, isPairExcluded } from './analysis';
 import {
   CONFIRMED_FEELING_SOURCES,
@@ -79,35 +78,37 @@ export interface ProgressOut {
 @Injectable()
 export class ProgressService {
   constructor(
-    @Inject(DIARY_DB) private readonly db: DiaryDatabase,
+    @Inject(SCOPED_DB) private readonly db: ScopedDb,
     private readonly patterns: PatternsService,
     private readonly topics: TopicsService,
   ) {}
 
   /** The progress surface for one just-saved entry, or `null` if the entry does not exist. */
-  forEntry(entryId: string): ProgressOut | null {
-    const entry = this.db
-      .prepare('SELECT id, raw_text, feeling_source FROM diary_entries WHERE id = ?')
-      .get(entryId) as { id: string; raw_text: string; feeling_source: string } | undefined;
+  forEntry(userId: string, entryId: string): ProgressOut | null {
+    const handle = this.db.forUser(userId);
+    const entry = handle
+      .prepare('SELECT id, raw_text, feeling_source FROM diary_entries WHERE id = ? AND user_id = ?')
+      .get(entryId, userId) as { id: string; raw_text: string; feeling_source: string } | undefined;
     if (!entry) return null;
 
     const confirmedPlaceholders = CONFIRMED_FEELING_SOURCES.map(() => '?').join(', ');
     const confirmedEntries = (
-      this.db
+      handle
         .prepare(
-          `SELECT COUNT(*) AS n FROM diary_entries WHERE feeling_source IN (${confirmedPlaceholders})`,
+          `SELECT COUNT(*) AS n FROM diary_entries
+           WHERE user_id = ? AND feeling_source IN (${confirmedPlaceholders})`,
         )
-        .get(...CONFIRMED_FEELING_SOURCES) as { n: number }
+        .get(userId, ...CONFIRMED_FEELING_SOURCES) as { n: number }
     ).n;
-    const surfacedPatternCount = this.patterns.surfacedPatternCount();
+    const surfacedPatternCount = this.patterns.surfacedPatternCount(userId);
 
     // I4-01's same union: `topicsForEntry` for links a prior recompute already wrote, plus the
     // read-only `matchExistingTopics` fallback for an entry that has not been through one yet. No
     // write happens on either side of this union (`extractAndLinkTopics` is never called here).
     const topicNameById = new Map<string, string>();
     for (const topic of [
-      ...this.topics.topicsForEntry(entryId),
-      ...this.topics.matchExistingTopics(entry.raw_text),
+      ...this.topics.topicsForEntry(userId, entryId),
+      ...this.topics.matchExistingTopics(userId, entry.raw_text),
     ]) {
       topicNameById.set(topic.id, topic.name);
     }
@@ -119,13 +120,13 @@ export class ProgressService {
     const isConfirmedSource = CONFIRMED_FEELING_SOURCES.includes(entry.feeling_source);
     const trackedTopicIds = new Set(
       (
-        this.db
+        handle
           .prepare(
             `SELECT DISTINCT et.topic_id FROM entry_topics et
              JOIN diary_entries e ON e.id = et.entry_id
-             WHERE e.feeling_source IN (${confirmedPlaceholders})`,
+             WHERE et.user_id = ? AND e.feeling_source IN (${confirmedPlaceholders})`,
           )
-          .all(...CONFIRMED_FEELING_SOURCES) as Array<{ topic_id: string }>
+          .all(userId, ...CONFIRMED_FEELING_SOURCES) as Array<{ topic_id: string }>
       ).map((row) => row.topic_id),
     );
     if (isConfirmedSource) for (const topicId of entryTopicIds) trackedTopicIds.add(topicId);
@@ -149,15 +150,15 @@ export class ProgressService {
     if (entryTopicIds.length === 0 || !isConfirmedSource) return withoutPairs;
 
     const entryFeelingKeys = (
-      this.db
-        .prepare('SELECT feeling_key FROM entry_feelings WHERE entry_id = ?')
-        .all(entryId) as Array<{ feeling_key: string }>
+      handle
+        .prepare('SELECT feeling_key FROM entry_feelings WHERE user_id = ? AND entry_id = ?')
+        .all(userId, entryId) as Array<{ feeling_key: string }>
     ).map((row) => row.feeling_key);
     if (entryFeelingKeys.length === 0) return withoutPairs;
 
     const valenceOf = new Map(
       (
-        this.db.prepare('SELECT "key", valence FROM feelings').all() as Array<{
+        handle.prepare('SELECT "key", valence FROM feelings').all() as Array<{
           key: string;
           valence: string;
         }>
@@ -166,12 +167,12 @@ export class ProgressService {
     const entryIsMixed = isMixedValence(entryFeelingKeys, (key) => valenceOf.get(key));
     const entryConfirmedPairs = new Set(
       (
-        this.db
+        handle
           .prepare(
             `SELECT topic_id, feeling_key FROM entry_topic_feelings
-             WHERE entry_id = ? AND source IN (${confirmedPlaceholders})`,
+             WHERE user_id = ? AND entry_id = ? AND source IN (${confirmedPlaceholders})`,
           )
-          .all(entryId, ...CONFIRMED_FEELING_SOURCES) as Array<{
+          .all(userId, entryId, ...CONFIRMED_FEELING_SOURCES) as Array<{
           topic_id: string;
           feeling_key: string;
         }>
@@ -198,48 +199,54 @@ export class ProgressService {
 
     const topicPlaceholders = entryTopicIds.map(() => '?').join(', ');
     const otherEntryIds = (
-      this.db
+      handle
         .prepare(
           `SELECT DISTINCT et.entry_id AS id FROM entry_topics et
            JOIN diary_entries e ON e.id = et.entry_id
-           WHERE et.topic_id IN (${topicPlaceholders})
+           WHERE et.user_id = ? AND et.topic_id IN (${topicPlaceholders})
              AND e.feeling_source IN (${confirmedPlaceholders})
              AND et.entry_id != ?`,
         )
-        .all(...entryTopicIds, ...CONFIRMED_FEELING_SOURCES, entryId) as Array<{ id: string }>
+        .all(userId, ...entryTopicIds, ...CONFIRMED_FEELING_SOURCES, entryId) as Array<{
+        id: string;
+      }>
     ).map((row) => row.id);
 
     if (otherEntryIds.length > 0) {
       const idPlaceholders = otherEntryIds.map(() => '?').join(', ');
 
       const topicsByEntry = new Map<string, Set<string>>();
-      for (const row of this.db
+      for (const row of handle
         .prepare(
           `SELECT entry_id, topic_id FROM entry_topics
-           WHERE entry_id IN (${idPlaceholders}) AND topic_id IN (${topicPlaceholders})`,
+           WHERE user_id = ? AND entry_id IN (${idPlaceholders}) AND topic_id IN (${topicPlaceholders})`,
         )
-        .all(...otherEntryIds, ...entryTopicIds) as Array<{ entry_id: string; topic_id: string }>) {
+        .all(userId, ...otherEntryIds, ...entryTopicIds) as Array<{
+        entry_id: string;
+        topic_id: string;
+      }>) {
         if (!topicsByEntry.has(row.entry_id)) topicsByEntry.set(row.entry_id, new Set());
         topicsByEntry.get(row.entry_id)!.add(row.topic_id);
       }
 
       const feelingsByEntry = new Map<string, string[]>();
-      for (const row of this.db
+      for (const row of handle
         .prepare(
-          `SELECT entry_id, feeling_key FROM entry_feelings WHERE entry_id IN (${idPlaceholders})`,
+          `SELECT entry_id, feeling_key FROM entry_feelings
+           WHERE user_id = ? AND entry_id IN (${idPlaceholders})`,
         )
-        .all(...otherEntryIds) as Array<{ entry_id: string; feeling_key: string }>) {
+        .all(userId, ...otherEntryIds) as Array<{ entry_id: string; feeling_key: string }>) {
         if (!feelingsByEntry.has(row.entry_id)) feelingsByEntry.set(row.entry_id, []);
         feelingsByEntry.get(row.entry_id)!.push(row.feeling_key);
       }
 
       const confirmedPairsByEntry = new Map<string, Set<string>>();
-      for (const row of this.db
+      for (const row of handle
         .prepare(
           `SELECT entry_id, topic_id, feeling_key FROM entry_topic_feelings
-           WHERE entry_id IN (${idPlaceholders}) AND source IN (${confirmedPlaceholders})`,
+           WHERE user_id = ? AND entry_id IN (${idPlaceholders}) AND source IN (${confirmedPlaceholders})`,
         )
-        .all(...otherEntryIds, ...CONFIRMED_FEELING_SOURCES) as Array<{
+        .all(userId, ...otherEntryIds, ...CONFIRMED_FEELING_SOURCES) as Array<{
         entry_id: string;
         topic_id: string;
         feeling_key: string;

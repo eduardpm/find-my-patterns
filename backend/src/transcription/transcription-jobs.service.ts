@@ -95,6 +95,10 @@ export class TranscriptionJobsService {
   find(userId: string, id: string): TranscriptionJob | undefined {
     const job = this.jobs.get(id);
     if (!job || job.userId !== userId) return undefined;
-    return job;
+    // Strip the internal `userId` field rather than returning `job` as-is: `TranscriptionJob` is
+    // the documented wire shape, and a caller (or a test asserting `toEqual`) must never see the
+    // ownership marker leak into it.
+    const { userId: _owner, ...rest } = job;
+    return rest;
   }
 }
