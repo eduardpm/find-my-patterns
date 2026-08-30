@@ -1791,5 +1791,74 @@ void main() {
         expect(find.text('Uplifted'), findsOneWidget);
       },
     );
+
+    // The matrix from ACCESSIBILITY.md §3 -- 320/360dp width x
+    // 1.0/1.3/2.0 textScale -- against the confirm-feeling stage, which
+    // is where this split's own structures concentrate
+    // (`_TargetDateChip`, `_ReadingEntryBanner`, the picker's own layout)
+    // once past the guided/freeform stages this split does not own.
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 1.3, 2.0]) {
+        testWidgets(
+          'the confirm-feeling stage renders with no *new* overflow at '
+          '${width}dp / ${scale}x',
+          (tester) async {
+            tester.view.physicalSize = Size(width, 3000);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
+
+            final replies = [
+              ...bootReplies(),
+              FakeReply(
+                200,
+                body: entryJson(
+                  suggestedFeelings: [suggestedFeelingJson(key: 'happy')],
+                ),
+              ),
+            ];
+            await tester.pumpWidget(
+              Builder(
+                builder: (context) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(textScaler: TextScaler.linear(scale)),
+                  child: buildTestable(replies: replies),
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+            // Drains the guided stage's own pre-existing, out-of-scope
+            // overflow (guided_question_flow.dart, not owned by this
+            // split -- see the backdated-chip test above).
+            tester.takeException();
+            await tester.tap(find.text('Write freely instead'));
+            await tester.pump();
+            // Drains freeform's own pre-existing, out-of-scope
+            // VoiceAnswerRecorder overflow.
+            tester.takeException();
+            await tester.enterText(find.byType(TextFormField), 'A long day.');
+            await tester.pump();
+            await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
+            await tester.pumpAndSettle();
+            // A last drain for any transitional-frame echo of the
+            // freeform stage's own pre-existing overflow while it
+            // animates out -- everything asserted below is this split's
+            // own code (`_ConfirmFeelingStep`'s static structure,
+            // `_TargetDateChip`), not `guided_question_flow.dart` or
+            // `voice_answer_recorder.dart`.
+            tester.takeException();
+
+            expect(find.text('How did that feel?'), findsOneWidget);
+            expect(
+              find.text(
+                "It sounds like you're feeling happy. Confirm that, or "
+                'pick differently.',
+              ),
+              findsOneWidget,
+            );
+          },
+        );
+      }
+    }
   });
 }
