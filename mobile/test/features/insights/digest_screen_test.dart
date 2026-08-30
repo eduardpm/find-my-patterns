@@ -1,17 +1,19 @@
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/digest.dart';
 import 'package:find_my_patterns/core/diary/pattern.dart';
+import 'package:find_my_patterns/core/widgets/premium_lock.dart';
 import 'package:find_my_patterns/features/insights/digest_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
 void main() {
-  /// Wraps [digest] in a router with a real `/insights` destination, so a
-  /// "See in Insights" tap has somewhere real to land -- the same
-  /// lightweight-router pattern `day_entries_screen_test.dart` uses to prove
-  /// a `context.go` call, without pulling in the whole app shell.
-  Widget app(Digest digest) {
+  /// Wraps [digest] in a router with real `/insights` and `/upgrade`
+  /// destinations, so a "See in Insights" tap or the locked state's Upgrade
+  /// button both have somewhere real to land -- the same lightweight-router
+  /// pattern `day_entries_screen_test.dart` uses to prove a `context.go`
+  /// call, without pulling in the whole app shell.
+  Widget app(Digest? digest) {
     final router = GoRouter(
       initialLocation: '/',
       routes: [
@@ -23,6 +25,11 @@ void main() {
           path: '/insights',
           builder: (context, state) =>
               const Scaffold(body: Text('Insights destination')),
+        ),
+        GoRoute(
+          path: '/upgrade',
+          builder: (context, state) =>
+              const Scaffold(body: Text('Upgrade destination')),
         ),
       ],
     );
@@ -211,5 +218,35 @@ void main() {
     );
     // One link each for the highlight and the recommendation.
     expect(find.text('See in Insights'), findsNWidgets(2));
+  });
+
+  group('locked (M-3, #48)', () {
+    testWidgets('a null digest shows the lock, not a crash or a blank sheet', (
+      tester,
+    ) async {
+      await tester.pumpWidget(app(null));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PremiumLock), findsOneWidget);
+      expect(
+        find.text('Weekly digests are a Premium feature.'),
+        findsOneWidget,
+      );
+      // Never any of the ordinary content -- there is no digest to draw it
+      // from.
+      expect(find.text('See in Insights'), findsNothing);
+    });
+
+    testWidgets('the lock\'s Upgrade action opens the upgrade screen', (
+      tester,
+    ) async {
+      await tester.pumpWidget(app(null));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Upgrade'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Upgrade destination'), findsOneWidget);
+    });
   });
 }

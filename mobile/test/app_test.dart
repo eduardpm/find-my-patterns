@@ -256,6 +256,37 @@ void main() {
     );
 
     testWidgets(
+      'a premium_required response opens the digest sheet locked, not '
+      'Insights and not an error (M-3, #48, task 4)',
+      (tester) async {
+        final harness = Harness(
+          settings: configured,
+          adapter: FakeHttpAdapter.always(
+            FakeReply(402, body: {'error': 'premium_required'}),
+          ),
+        );
+        await tester.pumpWidget(harness.scope(const FindMyPatternsApp()));
+        await tester.pumpAndSettle();
+
+        harness.remindersPlugin.fireTap(
+          const NotificationResponse(
+            notificationResponseType:
+                NotificationResponseType.selectedNotification,
+            payload: 'weekly_digest',
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byType(DigestScreen), findsOneWidget);
+        expect(find.byType(InsightsScreen), findsNothing);
+        expect(
+          find.text('Weekly digests are a Premium feature.'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'a cold-start launch tap fetches the digest and opens the sheet for it',
       (tester) async {
         final harness = Harness(

@@ -1,6 +1,7 @@
 import 'package:find_my_patterns/core/diary/experiment.dart';
 import 'package:find_my_patterns/core/diary/pattern.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
+import 'package:find_my_patterns/core/widgets/premium_lock.dart';
 import 'package:find_my_patterns/features/experiments/experiment_setup_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -148,6 +149,29 @@ void main() {
     );
     expect(find.text('Start'), findsOneWidget);
   });
+
+  testWidgets(
+    'a 402 premium_required response shows the locked state, not the raw '
+    'error text (M-3, #48, task 4)',
+    (tester) async {
+      // `PatternCard` already keeps a free account from reaching this sheet
+      // at all -- this exercises the defensive second layer for a tier that
+      // lapsed between the sheet opening and the tap on Start, the same
+      // race the orchestrator's manual tier-flip demo covers server-side.
+      final adapter = FakeHttpAdapter([
+        FakeReply(402, body: {'error': 'premium_required'}),
+      ]);
+
+      await tester.pumpWidget(app(pattern: changePattern(), adapter: adapter));
+      await tester.tap(find.text('Start'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PremiumLock), findsOneWidget);
+      expect(find.text('Experiments are a Premium feature.'), findsOneWidget);
+      // Not the length picker's own "Start" -- the account cannot start one.
+      expect(find.text('Start'), findsNothing);
+    },
+  );
 
   group('single-active conflict', () {
     testWidgets(
