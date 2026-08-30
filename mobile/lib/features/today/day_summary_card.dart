@@ -25,6 +25,19 @@ import '../../core/widgets/journal.dart';
 /// tracking the day the backend's dial stops being 1-5.
 final int _barMaxIntensity = EngineConstants.placeholder.maxIntensity;
 
+/// [_IntensityBar]'s own fixed width (#115's proportional-gauge contract --
+/// see that class's doc comment). Named here too, rather than a second
+/// literal `60`, so the STRONGEST row's own overflow measurement (#141)
+/// cannot drift from the bar it is actually measuring around.
+const double _intensityBarWidth = 60;
+
+/// [FeelingDot]'s own default diameter (`journal.dart`) -- the value the
+/// STRONGEST row's [FeelingChip] draws its dot at, since no call site here
+/// overrides it. Named for the same reason as [_intensityBarWidth]: the
+/// row's own overflow measurement (#141) reads this number rather than
+/// reaching into [FeelingChip] to ask it.
+const double _feelingDotSize = 10;
+
 /// What the day amounted to, above the entries it is made of.
 ///
 /// The count and time span are counted from [entries] already on the page;
@@ -244,25 +257,133 @@ class DaySummaryCard extends StatelessWidget {
                 ),
               if (strongest != null) ...[
                 const SizedBox(height: JournalSpacing.x3),
-                Row(
-                  children: [
-                    const Eyebrow('Strongest'),
-                    const SizedBox(width: JournalSpacing.x3),
-                    _IntensityBar(
+                LayoutBuilder(
+                  // Keyed for the same reason `daySummaryCountSpanRow` is
+                  // (#131, #137, above): a test that only finds widgets by
+                  // type risks matching the wrong row once the card has
+                  // more than one.
+                  key: const ValueKey('daySummaryStrongestRow'),
+                  builder: (context, constraints) {
+                    final intensityLabel = strongest.tiedCount > 0
+                        ? '$intensity/5 +${strongest.tiedCount}'
+                        : '$intensity/5';
+                    final bar = _IntensityBar(
                       key: const ValueKey('daySummaryIntensityBar'),
                       intensity: intensity!,
-                    ),
-                    const SizedBox(width: JournalSpacing.x2),
-                    Flexible(
+                    );
+                    final chip = Flexible(
                       child: FeelingChip(
                         label: strongest.feeling.label,
                         color: strongest.feeling.accent(journal),
-                        intensityLabel: strongest.tiedCount > 0
-                            ? '$intensity/5 +${strongest.tiedCount}'
-                            : '$intensity/5',
+                        intensityLabel: intensityLabel,
                       ),
-                    ),
-                  ],
+                    );
+
+                    // #141: the third instance of #137's shape -- fixed,
+                    // non-flexible siblings are what overflow the row,
+                    // not the trailing `Flexible` chip itself. The
+                    // `Eyebrow` label and the intensity bar are both
+                    // deliberately rigid (the accessibility scale the
+                    // user chose, and #115's proportional-gauge contract,
+                    // respectively), so -- exactly like #137 -- the
+                    // question this measures is only "does everything
+                    // that *cannot* shrink actually fit *this* row, right
+                    // now", never a hardcoded width-or-scale threshold.
+                    //
+                    // The chip is not entirely exempt from that sum,
+                    // though: its own label wraps freely inside its
+                    // `Flexible` (#111), so it truly can go to zero
+                    // width, but its *intensity suffix* -- "4/5 +1" --
+                    // is a plain, un-`Flexible` `Text` next to it (never
+                    // shrinks, never wraps, by the same anti-truncation
+                    // rule that keeps every number on this card whole),
+                    // and the dot, its own gaps, padding and border
+                    // around all of it don't shrink either. Leaving the
+                    // chip's floor out of this sum was tried first and
+                    // measured wrong: a fixture with a two-name tie
+                    // ("Grateful", "4/5 +1") overflows by 54px at 320dp
+                    // at the *default* text scale alone, nowhere near
+                    // 2x, and by 19px even for the shortest single-name,
+                    // untied case -- both well inside the "ordinary"
+                    // bucket a threshold on the eyebrow and bar alone
+                    // would have called safe. The chip's own padding,
+                    // border and dot mirror `FeelingChip`'s build
+                    // (journal/feeling_chips.dart) rather than reading
+                    // them from it -- reading, not touching, its
+                    // contract (#111 still owns that).
+                    final eyebrowWidth = _measure(
+                      JournalType.eyebrowCase('Strongest'),
+                      JournalType.eyebrow,
+                      MediaQuery.textScalerOf(context),
+                    );
+                    final intensityWidth = _measure(
+                      intensityLabel,
+                      theme.textTheme.labelSmall,
+                      MediaQuery.textScalerOf(context),
+                    );
+                    final chipFloor =
+                        _feelingDotSize +
+                        JournalSpacing.x2 + // dot -> label gap
+                        JournalSpacing.x2 + // label -> suffix gap
+                        intensityWidth +
+                        JournalSpacing.x4 * 2 + // Container's own padding
+                        2; // the chip's 1px border, both sides
+                    final nonFlexibleWidth =
+                        eyebrowWidth +
+                        JournalSpacing.x3 +
+                        _intensityBarWidth +
+                        JournalSpacing.x2 +
+                        chipFloor;
+
+                    if (nonFlexibleWidth <= constraints.maxWidth) {
+                      // Ordinary case, unchanged from before this ticket:
+                      // eyebrow, bar and chip share one line, the chip's
+                      // own `Flexible` taking whatever is left.
+                      return Row(
+                        children: [
+                          const Eyebrow('Strongest'),
+                          const SizedBox(width: JournalSpacing.x3),
+                          bar,
+                          const SizedBox(width: JournalSpacing.x2),
+                          chip,
+                        ],
+                      );
+                    }
+
+                    // Compound case: the eyebrow, the bar and the chip's
+                    // own floor do not fit *together*, so no split of
+                    // leftover space could ever have saved this line --
+                    // the same reasoning #137 used once the fixed side
+                    // alone already lost. Shrinking the eyebrow's type
+                    // fights the accessibility scale the user just asked
+                    // for (the same rule that ruled out shrinking the
+                    // count/label pair in #137), and the bar's 60x4 is
+                    // #115's own proportional-gauge contract, not this
+                    // row's to change. That leaves the third option named
+                    // in the issue: the eyebrow moves to a line of its
+                    // own, and the bar keeps its place directly beside the
+                    // chip it is gauging -- rather than, say, isolating the
+                    // bar alone, which would strand it with nothing to
+                    // read against. The eyebrow alone is comfortably
+                    // narrower than every width this card is asked to
+                    // render at, so it never needs this same treatment
+                    // recursively; the bar and the chip's floor together
+                    // are smaller still.
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Eyebrow('Strongest'),
+                        const SizedBox(height: JournalSpacing.x2),
+                        Row(
+                          children: [
+                            bar,
+                            const SizedBox(width: JournalSpacing.x2),
+                            chip,
+                          ],
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ],
             ],
@@ -374,7 +495,7 @@ class _IntensityBar extends StatelessWidget {
     final journal = context.journalColors;
     final theme = Theme.of(context);
     return SizedBox(
-      width: 60,
+      width: _intensityBarWidth,
       height: 4,
       child: DecoratedBox(
         decoration: BoxDecoration(

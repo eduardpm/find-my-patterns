@@ -703,23 +703,187 @@ void main() {
         expect(find.text('STRONGEST'), findsOneWidget);
       },
     );
+  });
 
-    // NOT asserted safe, deliberately: at 320dp and 2x text scale, the
-    // STRONGEST row (`Eyebrow('Strongest')` + the fixed 60px intensity bar
-    // + their two `JournalSpacing` gaps, all non-flexible) measures
-    // ~304.6px by itself -- before the trailing `Flexible(FeelingChip(...))`
-    // gets any width at all -- against ~272px available, a 33px overflow
-    // confirmed by a throwaway diagnostic test against this exact fixture.
-    // That is the same architectural shape as this ticket's own defect
-    // (fixed, non-flexible siblings alone outgrowing the row) but on a
-    // *different* row, needing its own "which side yields" judgement the
-    // same way #137 needed one for the count/label pair -- Eyebrow text
-    // isn't a number so the anti-truncation rule doesn't bind it the same
-    // way, but shrinking or wrapping it is still a design call, not a
-    // mechanical fix. Widening it here would repeat #131's own mistake of
-    // folding a second design decision into a focused fix, and touching
-    // `_IntensityBar`'s fixed 60px (#115) or `FeelingChip`'s internals
-    // (#111) is out of scope by name. Left as a reported finding for its
-    // own ticket rather than fixed or silently asserted safe.
+  group('the STRONGEST row and its own overflow (#141)', () {
+    // #137's own audit measured the STRONGEST row unsafe at 320dp/2x and
+    // deliberately left it unasserted -- the `Eyebrow('Strongest')` + the
+    // fixed 60px intensity bar + their two `JournalSpacing` gaps, all
+    // non-flexible, measure ~304.6px by themselves against ~272px
+    // available, a 33px overflow that happens *before* the trailing
+    // `Flexible(FeelingChip(...))` gets any width at all.
+    //
+    // Measuring only the eyebrow and the bar (mirroring #137's own
+    // pairWidth check) turned out to be an incomplete fix, caught by
+    // running these tests against the unfixed row before writing the
+    // real one (see the PR description for the actual red output): a
+    // fixture with a two-name tie ("Grateful", intensity suffix
+    // "4/5 +1") overflows by 54px at 320dp at the *default* text scale
+    // alone, nowhere near 2x, and by 19px even for the shortest
+    // single-name, untied case -- both well inside the bucket an
+    // eyebrow-and-bar-only threshold would have called safe. The reason:
+    // the chip's own intensity suffix is a plain `Text` next to its
+    // `Flexible` label, not wrapped in one itself (never shrinks, never
+    // wraps, the same anti-truncation rule that keeps every number on
+    // this card whole), so it -- along with the dot, the chip's own
+    // internal gaps, padding and border -- belongs in the row's
+    // non-flexible sum exactly as much as the eyebrow and the bar do.
+    // Only the chip's *label* can genuinely go to zero width. The row now
+    // measures that full non-flexible sum, the same way #137 measured
+    // the count/label pair, and moves the eyebrow to its own line
+    // whenever that sum alone would not have fit.
+    const barKey = ValueKey('daySummaryIntensityBar');
+    const strongestRowKey = ValueKey('daySummaryStrongestRow');
+
+    // Two entries tied at the same rating, so the chip's own intensity
+    // suffix is the longer "4/5 +1" form rather than the shortest
+    // possible "4/5" -- the same fixture #137's audit used for this row,
+    // kept here so the matrix below and the structural assertions after
+    // it exercise the label the row is actually widest with.
+    final ratedEntries = [
+      entryAt(
+        'a',
+        DateTime.utc(2026, 8, 28, 9),
+        [grateful],
+        intensities: {'grateful': 4},
+      ),
+      entryAt(
+        'b',
+        DateTime.utc(2026, 8, 28, 21),
+        [anxious],
+        intensities: {'anxious': 4},
+      ),
+    ];
+    const ratedSummary = DaySummary(date, [grateful, anxious], intensity: 4);
+
+    final unratedEntries = [
+      entryAt('a', DateTime.utc(2026, 8, 28, 9), [grateful]),
+    ];
+    const unratedSummary = DaySummary(date, [grateful]);
+
+    // The full matrix the issue asks for: 320dp/360dp x 1x/2x text scale x
+    // with/without a rated intensity. A day with nothing rated never draws
+    // this row at all (see 'the strongest rating' group above), so its
+    // half of the matrix is "the row stays absent, nothing to overflow" --
+    // included anyway so the loop, not a human, is the thing that decided
+    // that cell is safe.
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 2.0]) {
+        for (final hasIntensity in [true, false]) {
+          testWidgets(
+            'no overflow at ${width.toInt()}dp / ${scale}x text scale, '
+            '${hasIntensity ? 'with' : 'without'} a rated intensity',
+            (tester) async {
+              tester.view.physicalSize = Size(width, 1400);
+              tester.view.devicePixelRatio = 1;
+              addTearDown(tester.view.reset);
+
+              await pumpCard(
+                tester,
+                entries: hasIntensity ? ratedEntries : unratedEntries,
+                summary: hasIntensity ? ratedSummary : unratedSummary,
+                textScale: scale,
+              );
+
+              expect(
+                tester.takeException(),
+                isNull,
+                reason:
+                    'at ${width}dp / ${scale}x, '
+                    '${hasIntensity ? 'with' : 'without'} a rating',
+              );
+              if (hasIntensity) {
+                expect(find.text('STRONGEST'), findsOneWidget);
+                // The full label and intensity suffix reach the screen,
+                // not clipped to an ellipsis or dropped -- the same
+                // "did the string actually paint" standard #137 checked
+                // the count/label pair with, applied to this row's own
+                // non-numeric pair.
+                final onScreen = renderedText(tester);
+                expect(onScreen, contains('Grateful'));
+                expect(onScreen, contains('4/5 +1'));
+              } else {
+                // An unrated day draws no STRONGEST row at all -- nothing
+                // here for this fix to have touched.
+                expect(find.text('STRONGEST'), findsNothing);
+              }
+            },
+          );
+        }
+      }
+    }
+
+    testWidgets(
+      'moves the eyebrow to its own line above the bar and chip at 320dp '
+      '/ 2x text scale -- the one cell where the eyebrow and bar do not '
+      'fit on one line by themselves',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 1400);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await pumpCard(
+          tester,
+          entries: ratedEntries,
+          summary: ratedSummary,
+          textScale: 2,
+        );
+
+        expect(tester.takeException(), isNull);
+        // The eyebrow's own line ends at or above where the bar's line
+        // begins -- they do not share a row the way the ordinary case
+        // does (checked below at 360dp).
+        expect(
+          tester.getBottomLeft(find.text('STRONGEST')).dy,
+          lessThanOrEqualTo(tester.getTopLeft(find.byKey(barKey)).dy),
+        );
+        // The bar still reads as a proportional gauge -- #115's own
+        // regression guard, unaffected by which line it now draws on.
+        final sizes = barSizes(tester);
+        expect(sizes.track, const Size(60, 4));
+        expect(
+          sizes.fill.width,
+          closeTo(60 * (4 / EngineConstants.placeholder.maxIntensity), 1e-6),
+        );
+        // And the chip's label is not truncated -- FeelingChip's own
+        // internal `Flexible` (#111) wraps whatever width it is offered
+        // rather than clipping it.
+        final onScreen = renderedText(tester);
+        expect(onScreen, contains('Grateful'));
+        expect(onScreen, contains('4/5 +1'));
+      },
+    );
+
+    testWidgets(
+      'keeps the eyebrow, bar and chip on one line at a width roomy '
+      'enough for all three -- the ordinary case #137 established still '
+      'exists, just not at any width in the issue\'s own matrix',
+      (tester) async {
+        // No `tester.view.physicalSize` override -- the default test
+        // surface is wide enough (~800dp) that even this row's widest
+        // fixture (a two-name tie, "4/5 +1") clears every non-flexible
+        // measurement below with room to spare. #131's own audit called
+        // the STRONGEST row "safe at 320dp" against a plain, untied
+        // rating; measuring this row's *actual* floor (see the matrix
+        // loop's own comment below) instead shows every cell in the
+        // issue's 320/360dp matrix is a compound case once the chip's
+        // own un-`Flexible` intensity suffix is counted honestly -- the
+        // ordinary case this ticket preserves lives at wider widths than
+        // either #131 or #137 had reason to check.
+        await pumpCard(tester, entries: ratedEntries, summary: ratedSummary);
+
+        expect(tester.takeException(), isNull);
+        // The eyebrow and the bar sit on the same line -- their vertical
+        // centres line up, unlike the 320dp/2x compound case above.
+        expect(
+          tester.getCenter(find.text('STRONGEST')).dy,
+          closeTo(tester.getCenter(find.byKey(barKey)).dy, 1),
+        );
+        // Still one `LayoutBuilder`-built row rather than a stacked
+        // column -- confirms the ordinary branch, not just "something
+        // that happens to align", is what rendered.
+        expect(find.byKey(strongestRowKey), findsOneWidget);
+      },
+    );
   });
 }
