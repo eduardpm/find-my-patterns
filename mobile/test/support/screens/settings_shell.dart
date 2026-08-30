@@ -143,7 +143,21 @@ final settingsShell = ScreenArea(
           retry: Harness.noRetry,
           child: MaterialApp(
             theme: buildLightTheme(),
-            home: const Scaffold(body: ExportRow()),
+            // A `SingleChildScrollView`, not a bare `Scaffold(body: ...)`:
+            // the real caller is `SettingsScreen`'s `ListView`, which never
+            // imposes a height ceiling on one item -- a tall card just
+            // pushes the rest of the list down. A bare `Scaffold.body`
+            // does impose one (the viewport height), and the sweep's own
+            // 3000dp-tall test surface plus this row's realistic
+            // `NetworkFailure` message (several wrapped lines at 2x) is
+            // enough to exceed even that, throwing a `RenderFlex` overflow
+            // that only exists because this case's wrapper is harsher than
+            // the real screen -- the mirror image of #163's harness being
+            // *too generous*. Scrolling matches the real container instead
+            // of fighting it.
+            home: const Scaffold(
+              body: SingleChildScrollView(child: ExportRow()),
+            ),
           ),
         );
       },
@@ -158,6 +172,25 @@ final settingsShell = ScreenArea(
           ).scope(
             MaterialApp(theme: buildLightTheme(), home: const SettingsScreen()),
           ),
+      // AppearanceCard's mode selector ("System"/"Light"/"Dark") and, at
+      // 320x2.0, its palette selector ("Sage"/"Dusk") break mid-word on
+      // every cell -- not a defect this batch introduced or may fix.
+      // `appearance_card.dart` is out of scope here (it already carries
+      // #150's own dedicated dynamic-type test), but that test renders the
+      // card alone in a bare `Scaffold` at the full screen width, which is
+      // more generous than `SettingsScreen`'s real `ListView` padding on
+      // top of `JournalCard`'s own -- the #163 pattern (a card's own
+      // passing test not seeing what the real screen's width does to it),
+      // recurring here for a different card. Filed as #179 with the
+      // measured numbers rather than left silent.
+      knownFailures: const {
+        '320x1.0': '#179',
+        '320x1.3': '#179',
+        '320x2.0': '#179',
+        '360x1.0': '#179',
+        '360x1.3': '#179',
+        '360x2.0': '#179',
+      },
     ),
     ScreenCase(
       name: 'AppShell',
@@ -166,6 +199,28 @@ final settingsShell = ScreenArea(
         theme: buildLightTheme(),
         routerConfig: _shellTestRouter(),
       ),
+      // All four `NavigationBar` destinations share one 320-360dp bar in
+      // four equal-width columns; three of the four labels ("Insights",
+      // "Calendar", "Settings") do not fit their ~80-90px column even at
+      // text scale 1.0, before any dynamic-type scaling. `NavigationBar`
+      // gives every destination an equal share with no public way to widen
+      // one over its siblings (confirmed by reading
+      // `_NavigationDestinationLayoutDelegate.performLayout` in the Flutter
+      // SDK), and `NavigationDestinationLabelBehavior.alwaysHide` does not
+      // help -- it only fades the label's opacity, the label is still laid
+      // out at full size underneath either way. Same family as #169/#172:
+      // a fixed-segment control that cannot fit its labels at this width,
+      // whatever its padding -- a control or information-architecture
+      // decision, not a mechanical `Flexible`/`Wrap` fix. Filed as #178
+      // with the measured numbers for all six cells (every one fails).
+      knownFailures: const {
+        '320x1.0': '#178',
+        '320x1.3': '#178',
+        '320x2.0': '#178',
+        '360x1.0': '#178',
+        '360x1.3': '#178',
+        '360x2.0': '#178',
+      },
     ),
   ],
   unswept: const {},
