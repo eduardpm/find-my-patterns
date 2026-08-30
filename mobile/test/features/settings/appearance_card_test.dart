@@ -1,4 +1,5 @@
 import 'package:find_my_patterns/core/settings/settings.dart';
+import 'package:find_my_patterns/core/theme/journal_metrics.dart';
 import 'package:find_my_patterns/core/theme/journal_palette.dart';
 import 'package:find_my_patterns/features/settings/appearance_card.dart';
 import 'package:flutter/material.dart';
@@ -124,17 +125,27 @@ void main() {
       // of three `Expanded` segments sharing a single 320dp-wide track
       // (`_ModeSelector`), so at 2x text scale each label has only a
       // third of the line -- "System" plus its icon overflowed its own
-      // segment by 62px. Wrapping the label in `Flexible` lets it drop to
-      // a second line instead.
-      // Tall, not just narrow: `app()` hosts this card directly in a
-      // non-scrolling `Scaffold` (unlike `SettingsScreen`'s own `ListView`
-      // around it), so this wraps it in a scroll view here too -- a fixed
-      // surface height would otherwise overflow vertically at 2x scale for
-      // a reason unrelated to the defect this test targets, the mode
-      // row's own width.
+      // segment by 62px. Wrapping the label in `Flexible` stopped that
+      // thrown overflow, but not the whole-app sweep's silent word-break
+      // invariant (`ACCESSIBILITY.md` §6): a bare `Scaffold` at the full
+      // 320dp gives this card more width than the real `SettingsScreen`
+      // does, so this test kept passing while "System" broke mid-word
+      // ("Syst"/"em") inside the actual screen (#179) -- the exact #163
+      // pattern.
+      //
+      // `Padding(horizontal: JournalSpacing.x4)` below reproduces
+      // `SettingsScreen`'s own `ListView` padding, the harness fix #179
+      // asked for, so this test's width now matches production rather than
+      // being more generous than it. Tall, not just narrow: `app()` hosts
+      // this card directly in a non-scrolling `Scaffold` (unlike
+      // `SettingsScreen`'s own `ListView`), so this wraps it in a scroll
+      // view here too -- a fixed surface height would otherwise overflow
+      // vertically at 2x scale for a reason unrelated to the defect this
+      // test targets, the mode row's own width.
       tester.view.physicalSize = const Size(320, 900);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
+      final handle = tester.ensureSemantics();
 
       await tester.pumpWidget(
         Builder(
@@ -145,7 +156,14 @@ void main() {
             child: Harness().scope(
               const MaterialApp(
                 home: Scaffold(
-                  body: SingleChildScrollView(child: AppearanceCard()),
+                  body: SingleChildScrollView(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: JournalSpacing.x4,
+                      ),
+                      child: AppearanceCard(),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -155,12 +173,18 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
-      // A positive assertion the mode options actually rendered, pairing
-      // the exception check above the way #150's own lesson (seven prior
-      // instances of a rendered-nothing false green) requires.
-      expect(find.text('System'), findsOneWidget);
-      expect(find.text('Light'), findsOneWidget);
-      expect(find.text('Dark'), findsOneWidget);
+      // Even at this width the three labels do not fit their column beside
+      // an icon (`_ModeSelector`'s own shared-fit decision, #179's fix), so
+      // no overflow is only half the proof: the positive assertion is that
+      // each option is still fully reachable by name, through the
+      // accessible name `_RadioOption` always gives it regardless of
+      // whether the visible label is drawn -- not `find.text`, which #150's
+      // own version of this test used and which the new, deliberately
+      // icon-only rendering at this width makes the wrong check.
+      expect(find.bySemanticsLabel('System'), findsOneWidget);
+      expect(find.bySemanticsLabel('Light'), findsOneWidget);
+      expect(find.bySemanticsLabel('Dark'), findsOneWidget);
+      handle.dispose();
     },
   );
 }

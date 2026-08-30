@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -126,6 +127,21 @@ class _RadioOption extends StatelessWidget {
 /// Three mutually exclusive options in one track: a phone for System, a sun
 /// for Light, a moon for Dark — the trio every user has already learned
 /// somewhere else.
+///
+/// **Measures the widest label once and lets that single decision drive all
+/// three columns identically** — the same shared-fit-decision shape
+/// `calendar_screen.dart`'s `_WeekdayHeaderRow` (#155) uses for its seven
+/// near-identical weekday columns. #150's own fix wrapped each label in its
+/// own `Flexible`, which stops the classic thrown overflow but not the sweep's
+/// silent word-break invariant: inside the real `SettingsScreen` (narrower
+/// than #150's own bare-`Scaffold` test harness — `ListView` padding on top
+/// of `JournalCard`'s own) "System" still needs 84.0px at the *default* text
+/// scale while its column has only 50.7px, and `Flexible` cannot split one
+/// word across two lines. Letting each column decide independently whether
+/// *it* personally fits would produce the inconsistency
+/// `_WeekdayHeaderRow`'s own doc comment warns about — one segment icon-only,
+/// its neighbours still labelled — so this measures once, for all three
+/// together, exactly as that row does.
 class _ModeSelector extends StatelessWidget {
   const _ModeSelector({required this.mode, required this.onChanged});
 
@@ -144,24 +160,46 @@ class _ModeSelector extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.all(JournalSpacing.x1),
-        child: Row(
-          children: [
-            for (final option in ThemeModeSetting.values) ...[
-              if (option != ThemeModeSetting.values.first)
-                const SizedBox(width: JournalSpacing.x1),
-              Expanded(
-                child: _RadioOption(
-                  selected: option == mode,
-                  label: option.label,
-                  onSelect: () => onChanged(option),
-                  child: _ModeOptionContent(
-                    option: option,
-                    selected: option == mode,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const columns = ThemeModeSetting.values;
+            final gaps = (columns.length - 1) * JournalSpacing.x1;
+            final columnWidth = (constraints.maxWidth - gaps) / columns.length;
+            // The icon (16) plus the gap beside it (`JournalSpacing.x2`)
+            // every column reserves before its own label ever starts.
+            const iconChrome = 16.0 + JournalSpacing.x2;
+            final scaler = MediaQuery.textScalerOf(context);
+            final widestLabelWidth = columns
+                .map(
+                  (option) => _measureWidth(
+                    option.label,
+                    theme.textTheme.labelLarge,
+                    scaler,
                   ),
-                ),
-              ),
-            ],
-          ],
+                )
+                .reduce(math.max);
+            final labelsFit = widestLabelWidth <= columnWidth - iconChrome;
+            return Row(
+              children: [
+                for (final option in columns) ...[
+                  if (option != columns.first)
+                    const SizedBox(width: JournalSpacing.x1),
+                  Expanded(
+                    child: _RadioOption(
+                      selected: option == mode,
+                      label: option.label,
+                      onSelect: () => onChanged(option),
+                      child: _ModeOptionContent(
+                        option: option,
+                        selected: option == mode,
+                        showLabel: labelsFit,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            );
+          },
         ),
       ),
     );
@@ -169,10 +207,22 @@ class _ModeSelector extends StatelessWidget {
 }
 
 class _ModeOptionContent extends StatelessWidget {
-  const _ModeOptionContent({required this.option, required this.selected});
+  const _ModeOptionContent({
+    required this.option,
+    required this.selected,
+    required this.showLabel,
+  });
 
   final ThemeModeSetting option;
   final bool selected;
+
+  /// Whether this column's own label text fits its share of the track,
+  /// decided once by `_ModeSelector` for every column together. `false`
+  /// drops the visible label and shows the icon alone -- still fully
+  /// accessible, since `_RadioOption`'s own `Semantics.label` (the option's
+  /// full name) is what a screen reader announces regardless of what this
+  /// widget paints.
+  final bool showLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -195,21 +245,22 @@ class _ModeOptionContent extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(_modeIcon(option), size: 16, color: color),
-          const SizedBox(width: JournalSpacing.x2),
-          // `Flexible`, not a bare `Text`: this row sits inside one of
-          // three `Expanded` segments sharing one line (`_ModeSelector`),
-          // so at 320dp/2x each label has only a third of the line to
-          // work with -- "System" plus its icon overflowed its own
-          // segment by 62px without this. Wrapping to a second line, the
-          // same fix every other label-beside-a-fixed-icon row in this
-          // app uses, keeps the word whole rather than truncating it.
-          Flexible(
-            child: Text(
-              option.label,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.labelLarge?.copyWith(color: color),
+          if (showLabel) ...[
+            const SizedBox(width: JournalSpacing.x2),
+            // `Flexible`, not a bare `Text`: keeps a label that *does* fit
+            // its column from throwing a classic `RenderFlex` overflow on a
+            // near-miss. It cannot, on its own, stop a single word from
+            // breaking mid-character when the column is narrower than the
+            // word itself -- that is what `_ModeSelector`'s own
+            // `labelsFit` decision is for.
+            Flexible(
+              child: Text(
+                option.label,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.labelLarge?.copyWith(color: color),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -227,6 +278,20 @@ IconData _modeIcon(ThemeModeSetting mode) => switch (mode) {
 /// A phone is narrow enough that three side-by-side previews would each be a
 /// thumbnail too small to judge a page tint by, and the description is what
 /// tells the three apart when they are all quiet greys at a glance.
+///
+/// **Measures the widest single-word palette name once and lets that one
+/// decision drive every row identically** — the same shape `_ModeSelector`
+/// above uses, applied here to a column of rows instead of a row of columns.
+/// Only single-word names are measured (`"Warm paper"` has a break point and
+/// wraps normally, so it is never at risk of the invariant this guards
+/// against, however wide it is unbroken) — mirroring exactly which labels
+/// `dynamic_type_matrix.dart`'s `brokenWords` check itself considers
+/// (`text.contains(RegExp(r'\s'))`). At 320dp/2x inside the real
+/// `SettingsScreen` "Sage"/"Dusk" need 136.0px but the preview-plus-label
+/// `Row` only left 124.0px — a name this short has no shorter form to fall
+/// back to the way `_ModeSelector`'s label can drop to icon-only, so every
+/// row instead stacks its preview above its text when the widest name would
+/// not fit beside it.
 class _PaletteSelector extends StatelessWidget {
   const _PaletteSelector({required this.palette, required this.onChanged});
 
@@ -234,19 +299,49 @@ class _PaletteSelector extends StatelessWidget {
   final ValueChanged<JournalPalette> onChanged;
 
   @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      for (final option in JournalPalette.values) ...[
-        if (option != JournalPalette.values.first)
-          const SizedBox(height: JournalSpacing.x3),
-        _PaletteRow(
-          option: option,
-          selected: option == palette,
-          onSelect: () => onChanged(option),
-        ),
-      ],
-    ],
-  );
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaler = MediaQuery.textScalerOf(context);
+        final singleWordNames = JournalPalette.values
+            .map((option) => option.label)
+            .where((label) => !label.contains(' '));
+        final widestNameWidth = singleWordNames
+            .map(
+              (label) =>
+                  _measureWidth(label, theme.textTheme.titleMedium, scaler),
+            )
+            .reduce(math.max);
+        // `_PaletteRow`'s own `Padding` (x3, every side) plus the preview
+        // (76 wide), the gap beside it (x4) and the checkmark a selected
+        // row reserves (x2 gap + 20 icon) -- reserved here whichever row is
+        // actually selected, so selecting a different palette can never by
+        // itself flip every row's layout.
+        const chrome =
+            JournalSpacing.x3 * 2 +
+            _PalettePreview.width +
+            JournalSpacing.x4 +
+            JournalSpacing.x2 +
+            20.0;
+        final stacked = widestNameWidth > constraints.maxWidth - chrome;
+        return Column(
+          children: [
+            for (final option in JournalPalette.values) ...[
+              if (option != JournalPalette.values.first)
+                const SizedBox(height: JournalSpacing.x3),
+              _PaletteRow(
+                option: option,
+                selected: option == palette,
+                onSelect: () => onChanged(option),
+                stacked: stacked,
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _PaletteRow extends StatelessWidget {
@@ -254,11 +349,17 @@ class _PaletteRow extends StatelessWidget {
     required this.option,
     required this.selected,
     required this.onSelect,
+    required this.stacked,
   });
 
   final JournalPalette option;
   final bool selected;
   final VoidCallback onSelect;
+
+  /// Whether the preview and the label/description block must stack
+  /// vertically instead of sharing one line -- decided once, for every row
+  /// together, by [_PaletteSelector]. See its own doc comment.
+  final bool stacked;
 
   @override
   Widget build(BuildContext context) {
@@ -272,6 +373,60 @@ class _PaletteRow extends StatelessWidget {
         ? theme.colorScheme.primary
         : theme.colorScheme.onSurface;
 
+    final preview = _PalettePreview(
+      colors: option.colors(dark: journal.isDark),
+    );
+    final check = selected
+        ? Icon(Icons.check, color: theme.colorScheme.primary, size: 20)
+        : null;
+    final textBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          option.label,
+          style: theme.textTheme.titleMedium?.copyWith(color: labelColor),
+        ),
+        const SizedBox(height: JournalSpacing.x1),
+        Text(
+          option.description,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+
+    final content = stacked
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  preview,
+                  if (check != null) ...[const Spacer(), check],
+                ],
+              ),
+              const SizedBox(height: JournalSpacing.x3),
+              textBlock,
+            ],
+          )
+        : Row(
+            children: [
+              // The preview is drawn from the option's own colours, not the
+              // current theme's, so what a person sees is the paper they are
+              // about to get. It shows the half — light or dark — that the
+              // app is currently on, since that is the half switching to it
+              // would produce.
+              preview,
+              const SizedBox(width: JournalSpacing.x4),
+              Expanded(child: textBlock),
+              if (check != null) ...[
+                const SizedBox(width: JournalSpacing.x2),
+                check,
+              ],
+            ],
+          );
+
     return _RadioOption(
       selected: selected,
       label: '${option.label}. ${option.description}',
@@ -284,41 +439,7 @@ class _PaletteRow extends StatelessWidget {
         ),
         child: Padding(
           padding: const EdgeInsets.all(JournalSpacing.x3),
-          child: Row(
-            children: [
-              // The preview is drawn from the option's own colours, not the
-              // current theme's, so what a person sees is the paper they are
-              // about to get. It shows the half — light or dark — that the
-              // app is currently on, since that is the half switching to it
-              // would produce.
-              _PalettePreview(colors: option.colors(dark: journal.isDark)),
-              const SizedBox(width: JournalSpacing.x4),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      option.label,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        color: labelColor,
-                      ),
-                    ),
-                    const SizedBox(height: JournalSpacing.x1),
-                    Text(
-                      option.description,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (selected) ...[
-                const SizedBox(width: JournalSpacing.x2),
-                Icon(Icons.check, color: theme.colorScheme.primary, size: 20),
-              ],
-            ],
-          ),
+          child: content,
         ),
       ),
     );
@@ -332,6 +453,10 @@ class _PalettePreview extends StatelessWidget {
 
   final JournalColors colors;
 
+  /// This preview's fixed width — named so [_PaletteSelector]'s own layout
+  /// decision can read it rather than repeat the number.
+  static const double width = 76;
+
   @override
   Widget build(BuildContext context) {
     final dots = [
@@ -341,7 +466,7 @@ class _PalettePreview extends StatelessWidget {
       colors.feelings.low,
     ];
     return Container(
-      width: 76,
+      width: width,
       height: 62,
       padding: const EdgeInsets.all(JournalSpacing.x2),
       decoration: BoxDecoration(
@@ -417,4 +542,17 @@ class _PreviewLine extends StatelessWidget {
       child: SizedBox(height: height),
     ),
   );
+}
+
+/// The natural, unwrapped width [text] would render at in [style] under
+/// [scaler] — the same question `calendar_screen.dart`'s own `_measureWidth`
+/// asks for `_WeekdayHeaderRow`, asked here for `_ModeSelector`'s and
+/// `_PaletteSelector`'s shared-fit decisions.
+double _measureWidth(String text, TextStyle? style, TextScaler scaler) {
+  final painter = TextPainter(
+    text: TextSpan(text: text, style: style),
+    textDirection: TextDirection.ltr,
+    textScaler: scaler,
+  )..layout();
+  return painter.width;
 }

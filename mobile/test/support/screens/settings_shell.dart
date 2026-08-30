@@ -172,25 +172,6 @@ final settingsShell = ScreenArea(
           ).scope(
             MaterialApp(theme: buildLightTheme(), home: const SettingsScreen()),
           ),
-      // AppearanceCard's mode selector ("System"/"Light"/"Dark") and, at
-      // 320x2.0, its palette selector ("Sage"/"Dusk") break mid-word on
-      // every cell -- not a defect this batch introduced or may fix.
-      // `appearance_card.dart` is out of scope here (it already carries
-      // #150's own dedicated dynamic-type test), but that test renders the
-      // card alone in a bare `Scaffold` at the full screen width, which is
-      // more generous than `SettingsScreen`'s real `ListView` padding on
-      // top of `JournalCard`'s own -- the #163 pattern (a card's own
-      // passing test not seeing what the real screen's width does to it),
-      // recurring here for a different card. Filed as #179 with the
-      // measured numbers rather than left silent.
-      knownFailures: const {
-        '320x1.0': '#179',
-        '320x1.3': '#179',
-        '320x2.0': '#179',
-        '360x1.0': '#179',
-        '360x1.3': '#179',
-        '360x2.0': '#179',
-      },
     ),
     ScreenCase(
       name: 'AppShell',
