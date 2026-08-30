@@ -990,7 +990,9 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
       `INSERT INTO topics (id, user_id, name, aliases, first_seen_at, last_seen_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
     );
-    const touchTopic = db.prepare('UPDATE topics SET last_seen_at = ? WHERE id = ? AND user_id = ?');
+    const touchTopic = db.prepare(
+      'UPDATE topics SET last_seen_at = ? WHERE id = ? AND user_id = ?',
+    );
     const linkTopic = db.prepare(
       `INSERT OR IGNORE INTO entry_topics (entry_id, topic_id, user_id, extracted_by)
        VALUES (?, ?, ?, 'llm')`,
@@ -1007,9 +1009,9 @@ function applyAnalysis(db: DiaryDatabase, job: Job, analysis: EntryAnalysis): vo
     // (and aliases) steer another user's canonicalization — the same class of leak this ticket
     // exists to close, just via a read instead of a write.
     const known = (
-      db.prepare('SELECT name, aliases FROM topics WHERE user_id = ? ORDER BY name').all(
-        job.userId,
-      ) as Array<{
+      db
+        .prepare('SELECT name, aliases FROM topics WHERE user_id = ? ORDER BY name')
+        .all(job.userId) as Array<{
         name: string;
         aliases: string;
       }>
