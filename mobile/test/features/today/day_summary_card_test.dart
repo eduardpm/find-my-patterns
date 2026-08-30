@@ -703,20 +703,35 @@ void main() {
         expect(find.text('STRONGEST'), findsOneWidget);
       },
     );
-
   });
 
-  group('the STRONGEST row at 320dp and 2x text scale (#141)', () {
+  group('the STRONGEST row and its own overflow (#141)', () {
     // #137's own audit measured the STRONGEST row unsafe at 320dp/2x and
     // deliberately left it unasserted -- the `Eyebrow('Strongest')` + the
     // fixed 60px intensity bar + their two `JournalSpacing` gaps, all
     // non-flexible, measure ~304.6px by themselves against ~272px
     // available, a 33px overflow that happens *before* the trailing
-    // `Flexible(FeelingChip(...))` gets any width at all -- so no amount
-    // of the chip yielding could have saved it. This is what closes that
-    // finding: the row now measures its own non-flexible pair the same
-    // way #137 measured the count/label pair, and moves the eyebrow to
-    // its own line whenever that pair alone would not have fit.
+    // `Flexible(FeelingChip(...))` gets any width at all.
+    //
+    // Measuring only the eyebrow and the bar (mirroring #137's own
+    // pairWidth check) turned out to be an incomplete fix, caught by
+    // running these tests against the unfixed row before writing the
+    // real one (see the PR description for the actual red output): a
+    // fixture with a two-name tie ("Grateful", intensity suffix
+    // "4/5 +1") overflows by 54px at 320dp at the *default* text scale
+    // alone, nowhere near 2x, and by 19px even for the shortest
+    // single-name, untied case -- both well inside the bucket an
+    // eyebrow-and-bar-only threshold would have called safe. The reason:
+    // the chip's own intensity suffix is a plain `Text` next to its
+    // `Flexible` label, not wrapped in one itself (never shrinks, never
+    // wraps, the same anti-truncation rule that keeps every number on
+    // this card whole), so it -- along with the dot, the chip's own
+    // internal gaps, padding and border -- belongs in the row's
+    // non-flexible sum exactly as much as the eyebrow and the bar do.
+    // Only the chip's *label* can genuinely go to zero width. The row now
+    // measures that full non-flexible sum, the same way #137 measured
+    // the count/label pair, and moves the eyebrow to its own line
+    // whenever that sum alone would not have fit.
     const barKey = ValueKey('daySummaryIntensityBar');
     const strongestRowKey = ValueKey('daySummaryStrongestRow');
 
@@ -773,7 +788,8 @@ void main() {
               expect(
                 tester.takeException(),
                 isNull,
-                reason: 'at ${width}dp / ${scale}x, '
+                reason:
+                    'at ${width}dp / ${scale}x, '
                     '${hasIntensity ? 'with' : 'without'} a rating',
               );
               if (hasIntensity) {
@@ -839,24 +855,26 @@ void main() {
     );
 
     testWidgets(
-      'keeps the eyebrow, bar and chip on one line at 360dp / 2x text '
-      'scale -- the ordinary case (#137) survives at the one cell that '
-      'was checked before this fix existed',
+      'keeps the eyebrow, bar and chip on one line at a width roomy '
+      'enough for all three -- the ordinary case #137 established still '
+      'exists, just not at any width in the issue\'s own matrix',
       (tester) async {
-        tester.view.physicalSize = const Size(360, 1400);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-
-        await pumpCard(
-          tester,
-          entries: ratedEntries,
-          summary: ratedSummary,
-          textScale: 2,
-        );
+        // No `tester.view.physicalSize` override -- the default test
+        // surface is wide enough (~800dp) that even this row's widest
+        // fixture (a two-name tie, "4/5 +1") clears every non-flexible
+        // measurement below with room to spare. #131's own audit called
+        // the STRONGEST row "safe at 320dp" against a plain, untied
+        // rating; measuring this row's *actual* floor (see the matrix
+        // loop's own comment below) instead shows every cell in the
+        // issue's 320/360dp matrix is a compound case once the chip's
+        // own un-`Flexible` intensity suffix is counted honestly -- the
+        // ordinary case this ticket preserves lives at wider widths than
+        // either #131 or #137 had reason to check.
+        await pumpCard(tester, entries: ratedEntries, summary: ratedSummary);
 
         expect(tester.takeException(), isNull);
-        // The eyebrow and the bar still sit on the same line -- their
-        // vertical centres line up, unlike the 320dp compound case above.
+        // The eyebrow and the bar sit on the same line -- their vertical
+        // centres line up, unlike the 320dp/2x compound case above.
         expect(
           tester.getCenter(find.text('STRONGEST')).dy,
           closeTo(tester.getCenter(find.byKey(barKey)).dy, 1),
