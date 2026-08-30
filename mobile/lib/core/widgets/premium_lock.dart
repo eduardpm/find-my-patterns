@@ -54,21 +54,43 @@ class PremiumLock extends StatelessWidget {
               color: journal.onSurfaceVariant,
             ),
             const SizedBox(width: JournalSpacing.x3),
+            // `message` and the `Upgrade` button share this `Expanded`
+            // through a `Wrap` rather than sitting as two more `Row`
+            // siblings (#173): the old `Row` counted the button at its full
+            // natural width before dividing what was left between the icon,
+            // the spacers and the message's own `Expanded`, so once the
+            // button's grown label plus the fixed icon and spacers already
+            // outgrew the row -- 8px over, at 320dp/2x, with `onUpgrade`
+            // set -- there was nothing left to give and the row overflowed
+            // outright. Squeezing the button into a share of the remaining
+            // space instead (`Flexible` sized by a flex ratio, the fix this
+            // shape usually takes) was rejected here: "Upgrade" is one word,
+            // and a flex split narrow enough to close an 8px gap would
+            // routinely be narrower than the word's own single-line width,
+            // breaking it mid-word instead. `Wrap` keeps the button (and
+            // the message) at their full natural size always, and drops the
+            // button to its own line only on the rare cell where the two
+            // cannot share one.
             Expanded(
-              child: Text(
-                message,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: journal.onSurfaceVariant,
-                ),
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: JournalSpacing.x3,
+                runSpacing: JournalSpacing.x2,
+                children: [
+                  Text(
+                    message,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: journal.onSurfaceVariant,
+                    ),
+                  ),
+                  if (onUpgrade != null)
+                    OutlinedButton(
+                      onPressed: onUpgrade,
+                      child: const Text('Upgrade'),
+                    ),
+                ],
               ),
             ),
-            if (onUpgrade != null) ...[
-              const SizedBox(width: JournalSpacing.x3),
-              OutlinedButton(
-                onPressed: onUpgrade,
-                child: const Text('Upgrade'),
-              ),
-            ],
           ],
         ),
       ),
