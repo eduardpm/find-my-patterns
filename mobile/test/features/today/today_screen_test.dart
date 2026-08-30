@@ -6,6 +6,7 @@ import 'package:find_my_patterns/core/settings/settings.dart';
 import 'package:find_my_patterns/core/settings/settings_controller.dart';
 import 'package:find_my_patterns/core/widgets/journal.dart';
 import 'package:find_my_patterns/core/widgets/journal_fab_clearance.dart';
+import 'package:find_my_patterns/features/today/day_summary_card.dart';
 import 'package:find_my_patterns/features/today/entry_card.dart';
 import 'package:find_my_patterns/features/today/today_controller.dart';
 import 'package:find_my_patterns/features/today/today_screen.dart';
@@ -867,5 +868,227 @@ void main() {
 
       expect(find.text('server exploded'), findsOneWidget);
     });
+  });
+
+  group('dynamic type (#155b)', () {
+    /// Pumps [TodayScreen] with the ambient [MediaQuery] carrying
+    /// [scale] as its [TextScaler], `.copyWith` over the real ambient data
+    /// rather than a bare `MediaQueryData(...)` -- see
+    /// `ACCESSIBILITY.md`'s pitfall on this exact point, and
+    /// `topics_screen_test.dart`'s long-topic-name test this pattern is
+    /// copied from.
+    Future<void> pumpAtScale(
+      WidgetTester tester, {
+      required double width,
+      required double height,
+      required double scale,
+      required List<FakeReply> replies,
+      FakeBackdateNudgeStore? nudgeStore,
+    }) async {
+      tester.view.physicalSize = Size(width, height);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: buildTestable(replies: replies, nudgeStore: nudgeStore),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    // The matrix from `ACCESSIBILITY.md` §3 -- 320/360dp width x
+    // 1.0/1.3/2.0 textScale -- against the loaded page in its two shapes
+    // (entries present, and the empty state), both with the backdate
+    // nudge card showing (#36) so its wrapping "Write about yesterday"
+    // button is exercised at every cell too. The physical height (3000)
+    // is deliberately tall here, same as `topics_screen_test.dart` and
+    // the rest of this suite -- it isolates "does anything overflow its
+    // own row/column" from "does the FAB's fixed screen position collide
+    // with scrolled content", which is measured separately below at a
+    // realistic finite height.
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 1.3, 2.0]) {
+        testWidgets(
+          'the loaded page with entries renders with no overflow at '
+          '${width}dp / ${scale}x',
+          (tester) async {
+            await pumpAtScale(
+              tester,
+              width: width,
+              height: 3000,
+              scale: scale,
+              replies: loadReplies(
+                entries: [entryJson(id: 'e1')],
+                streakDays: [today],
+              ),
+              nudgeStore: FakeBackdateNudgeStore(),
+            );
+
+            expect(tester.takeException(), isNull);
+            expect(find.text('Today'), findsOneWidget);
+            expect(find.text('How was yesterday?'), findsOneWidget);
+            expect(find.byType(DaySummaryCard), findsOneWidget);
+            expect(find.byType(EntryCard), findsOneWidget);
+            // The FAB must never render outside the screen it is drawn on
+            // -- see the regression group below for the defect this
+            // guards, caught the same way.
+            final fabRect = tester.getRect(find.byType(FloatingActionButton));
+            expect(fabRect.left, greaterThanOrEqualTo(0));
+            expect(fabRect.right, lessThanOrEqualTo(width));
+          },
+        );
+
+        testWidgets(
+          'the loaded page with no entries (empty state) renders with no '
+          'overflow at ${width}dp / ${scale}x',
+          (tester) async {
+            await pumpAtScale(
+              tester,
+              width: width,
+              height: 3000,
+              scale: scale,
+              replies: loadReplies(),
+              nudgeStore: FakeBackdateNudgeStore(),
+            );
+
+            expect(tester.takeException(), isNull);
+            expect(find.text('Today'), findsOneWidget);
+            expect(find.text('How was yesterday?'), findsOneWidget);
+            expect(find.text('Nothing yet today'), findsOneWidget);
+            final fabRect = tester.getRect(find.byType(FloatingActionButton));
+            expect(fabRect.left, greaterThanOrEqualTo(0));
+            expect(fabRect.right, lessThanOrEqualTo(width));
+          },
+        );
+      }
+    }
+
+    group('the extended FAB at 320dp/2x (#155)', () {
+      // #150 task 4 already fixed this button's OWN touch target; this
+      // group is about the *other* control sharing the screen with it --
+      // the FAB itself.
+      testWidgets(
+        'never renders past either screen edge once its label would not '
+        'fit -- "Write an entry" alone measures well past the 320dp '
+        'screen at 2x, so the collapse must kick in before layout, not '
+        'after an overflow',
+        (tester) async {
+          await pumpAtScale(
+            tester,
+            width: 320,
+            height: 900,
+            scale: 2,
+            replies: loadReplies(),
+            nudgeStore: FakeBackdateNudgeStore(),
+          );
+
+          expect(tester.takeException(), isNull);
+          final fabFinder = find.byType(FloatingActionButton);
+          expect(fabFinder, findsOneWidget);
+          final fabRect = tester.getRect(fabFinder);
+          expect(
+            fabRect.left,
+            greaterThanOrEqualTo(0),
+            reason: 'the FAB must not render past the left screen edge',
+          );
+          expect(
+            fabRect.right,
+            lessThanOrEqualTo(320),
+            reason: 'the FAB must not render past the right screen edge',
+          );
+          // Collapsed to icon-only, per the existing scroll-collapse
+          // pattern this reuses -- the label text leaves the tree
+          // entirely (it is no longer even off-screen, just absent) and
+          // the icon carries the accessible name instead (§2 of
+          // ACCESSIBILITY.md).
+          expect(find.text('Write an entry'), findsNothing);
+          expect(find.bySemanticsLabel('Write an entry'), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'stays expanded, with its full label visible, once the label '
+        'actually fits (320dp / 1.0x, well under the threshold above)',
+        (tester) async {
+          await pumpAtScale(
+            tester,
+            width: 320,
+            height: 900,
+            scale: 1,
+            replies: loadReplies(),
+            nudgeStore: FakeBackdateNudgeStore(),
+          );
+
+          expect(tester.takeException(), isNull);
+          // Two "Write an entry"s are on screen at once here -- the FAB's
+          // own label, and the empty state's own action button (`loadReplies()`
+          // defaults to no entries) -- so this matches the FAB specifically
+          // rather than the text in isolation.
+          expect(
+            find.widgetWithText(FloatingActionButton, 'Write an entry'),
+            findsOneWidget,
+          );
+          final fabRect = tester.getRect(find.byType(FloatingActionButton));
+          expect(fabRect.left, greaterThanOrEqualTo(0));
+          expect(fabRect.right, lessThanOrEqualTo(320));
+        },
+      );
+    });
+
+    testWidgets(
+      'the "Nothing yet today" empty state stays legible once the page '
+      'is scrolled as far as it goes, at 320dp/2x',
+      (tester) async {
+        // A realistic status-bar inset, `.copyWith`-preserved rather than
+        // replaced (ACCESSIBILITY.md's pitfall) -- this is what the
+        // orchestrator's device screenshot showed the empty state's
+        // dashed top border crossing at the far end of the scroll.
+        tester.view.physicalSize = const Size(320, 900);
+        tester.view.devicePixelRatio = 1;
+        tester.view.padding = const FakeViewPadding(top: 44);
+        addTearDown(tester.view.reset);
+
+        await tester.pumpWidget(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: buildTestable(
+                replies: loadReplies(),
+                nudgeStore: FakeBackdateNudgeStore(),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final scrollable = tester.state<ScrollableState>(
+          find.byType(Scrollable),
+        );
+        scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Nothing yet today'), findsOneWidget);
+        final emptyStateTop = tester.getTopLeft(find.byType(EmptyState)).dy;
+        // The card's dashed top border does end up above the 44px status
+        // bar inset once scrolled all the way down -- the same "content
+        // can scroll under a translucent status bar" behaviour #10
+        // already accepted for the page wash (the comment on this
+        // screen's `ListView.padding` says so explicitly: the top inset
+        // is handed to padding rather than a `SafeArea` precisely so
+        // content *can* scroll up under the status bar rather than
+        // stopping short of it). Recorded as a measurement, not a
+        // regression to prevent -- see the PR body for the number.
+        expect(emptyStateTop, lessThan(44));
+      },
+    );
   });
 }
