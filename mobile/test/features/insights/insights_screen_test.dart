@@ -9,6 +9,7 @@ import 'package:find_my_patterns/core/diary/insights_api.dart';
 import 'package:find_my_patterns/core/diary/mood_series.dart';
 import 'package:find_my_patterns/core/diary/pattern.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
+import 'package:find_my_patterns/core/theme/journal_metrics.dart';
 import 'package:find_my_patterns/features/insights/insights_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -798,8 +799,7 @@ void main() {
                 topic: 'exercise',
                 direction: 'keep',
                 recommendation: recommendationJson(
-                  headline:
-                      'More long exercise days to build a lasting habit',
+                  headline: 'More long exercise days to build a lasting habit',
                   sentence:
                       'On days without a long structured exercise session, '
                       'anxious is 2.7× more likely (4 of 6 without vs 1 of '
@@ -868,6 +868,24 @@ void main() {
       }
     }
 
+    testWidgets(
+      'the "Worth trying" recommendation tile stays at least 48dp tall '
+      '(the touch-target floor)',
+      (tester) async {
+        // 1.0x is the worst case for height here, not the best: a larger
+        // text scale only grows the tile's two lines of text, never
+        // shrinks them, so this is the smallest the tappable `InkWell`
+        // ever gets.
+        await pump(tester, width: 320, textScale: 1);
+
+        final tile = find.ancestor(
+          of: find.text('More long exercise days to build a lasting habit'),
+          matching: find.byType(InkWell),
+        );
+        final size = tester.getSize(tile);
+        expect(size.height, greaterThanOrEqualTo(JournalSpacing.x7));
+      },
+    );
   });
 }
 
