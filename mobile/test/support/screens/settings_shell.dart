@@ -37,20 +37,32 @@ AppSettings _stressedSettings() => const AppSettings(
   ),
 );
 
-/// The longest failure message this row realistically shows — the
-/// server-envelope shape `ApiClient._errorMessage` reads out of
-/// `{"error": {"message": ...}}`, not the short HTTP-status fallback — so
-/// the row's `Expanded(Text(...))` next to its "Dismiss" button is stressed
-/// with more than one short word.
+/// A realistic `NetworkFailure` message, not an invented one: `ApiClient.
+/// _networkMessage` builds exactly `'Could not reach the server (${e.message
+/// ?? e.type.name})'`, and `e.message` for a DNS failure is `dart:io`'s own
+/// `SocketException.toString()` — this is that real format, for the same
+/// host `_stressedSettings` configures, the everyday way a self-hosted
+/// backend (Article 8) goes briefly unreachable. Chosen over a shorter,
+/// fabricated server-envelope message: every real message this backend's
+/// `ErrorEnvelopeFilter` emits (`backend/src/common/http-exception.filter.
+/// ts`) is short and technical ("Entry not found", "Field required: date"),
+/// so a long one has to come from a genuine failure shape instead, not
+/// invented prose.
 const String _longExportError =
-    'The export service is temporarily unavailable while the backend '
-    'finishes a maintenance window. Please try again in a few minutes.';
+    'Could not reach the server (SocketException: Failed host lookup: '
+    "'diary.example.com' (OS Error: No address associated with hostname, "
+    'errno = 7))';
 
 /// Fixes [ExportRow] into its error state without driving a real download —
 /// [ExportController.export] does genuine `dart:io` work a widget test's
 /// pump loop cannot settle (see `export_row_test.dart`'s file doc comment),
 /// and the sweep only needs the state, not the transition into it.
-class _StressedExportController extends Notifier<ExportState> {
+///
+/// Extends [ExportController] itself, not `Notifier<ExportState>` — Riverpod
+/// types `NotifierProvider.overrideWith` to the provider's own notifier
+/// class exactly, so a sibling implementation of the same base is not
+/// assignable to it.
+class _StressedExportController extends ExportController {
   @override
   ExportState build() => const ExportError(_longExportError);
 }
