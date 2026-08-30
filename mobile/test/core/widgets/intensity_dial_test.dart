@@ -221,5 +221,70 @@ void main() {
         findsOneWidget,
       );
     });
+
+    // #150: the 5-stop row (`_IntensityRow`'s stops, a bare `Row` before
+    // this fix) is fixed-pixel content -- five 48dp touch targets plus
+    // four 8dp gaps, none of it scaling with text size -- so it already
+    // overflowed a 320dp screen by 32px at the *default* text scale, once
+    // the entry editor's own padding and this card's padding are
+    // subtracted from the available width. Nowhere near 2x was needed to
+    // reproduce it, but both are checked here since #150 asks for 1.3 and
+    // 2.0 on every screen this card appears on.
+    for (final scale in [1.0, 1.3, 2.0]) {
+      testWidgets(
+        'the 5-stop row wraps rather than overflowing a 320dp-wide entry '
+        'editor at ${scale}x text scale',
+        (tester) async {
+          final handle = tester.ensureSemantics();
+          tester.view.physicalSize = const Size(320, 900);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+
+          await tester.pumpWidget(
+            Builder(
+              // `.copyWith` on the *ambient* data, not a fresh
+              // `MediaQueryData(textScaler: ...)` -- the latter replaces
+              // every other field, including `size`, with its own
+              // defaults.
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(scale)),
+                child: MaterialApp(
+                  home: Scaffold(
+                    // Mirrors `_EntryEditor`'s own `Padding(all: 24)`
+                    // around `IntensityDials`, the layout this defect was
+                    // actually found in -- `IntensityDials` adds its own
+                    // card padding on top of this. A scroll view, not a
+                    // bare body, since this defect is about the row's
+                    // own width, not the card's total height at 2x scale.
+                    body: SingleChildScrollView(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: IntensityDials(
+                          feelings: const [grateful],
+                          intensities: const {},
+                          onChange: (_, _) {},
+                          min: 1,
+                          max: 5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+
+          expect(tester.takeException(), isNull);
+          // A positive assertion the row actually rendered its five
+          // stops, pairing the exception check above the way #150's own
+          // lesson (seven prior instances of a rendered-nothing false
+          // green) requires.
+          expect(find.bySemanticsLabel('Grateful, 5 of 5'), findsOneWidget);
+          handle.dispose();
+        },
+      );
+    }
   });
 }

@@ -433,6 +433,17 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text(nudgeTitle), findsOneWidget);
 
+        // #150 task 1: the accessible name comes from the semantics
+        // tree's `label`, not `IconButton`'s own `tooltip` field -- see
+        // `pattern_echo_panel.dart`'s dismiss button for the same
+        // distinction. #150 task 4: this "×" used to set `constraints:
+        // const BoxConstraints()` with no minimum at all, shrinking well
+        // under the platform's 44dp floor.
+        expect(find.bySemanticsLabel('Dismiss'), findsOneWidget);
+        final dismissSize = tester.getSize(find.byTooltip('Dismiss'));
+        expect(dismissSize.width, greaterThanOrEqualTo(44));
+        expect(dismissSize.height, greaterThanOrEqualTo(44));
+
         await tester.tap(find.byTooltip('Dismiss'));
         await tester.pumpAndSettle();
 

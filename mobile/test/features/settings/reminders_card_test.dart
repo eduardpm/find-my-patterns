@@ -263,6 +263,12 @@ void main() {
     await tester.pumpWidget(harness.scope(app()));
     await tester.pumpAndSettle();
 
+    // #150 task 1: an icon-only control's accessible name comes from the
+    // semantics tree's `label`, not `IconButton`'s own `tooltip` (which
+    // only reaches the tree's separate `tooltip` field) -- see
+    // `pattern_echo_panel.dart`'s dismiss button for the same distinction.
+    expect(find.bySemanticsLabel('Remove 09:00 reminder'), findsOneWidget);
+
     await tester.tap(find.byTooltip('Remove 09:00 reminder'));
     await tester.pumpAndSettle();
 

@@ -148,10 +148,23 @@ class _ReminderRow extends StatelessWidget {
             label: '$label reminder',
             child: Switch(value: reminder.enabled, onChanged: onToggle),
           ),
-          IconButton(
-            onPressed: onRemove,
-            icon: const Icon(Icons.close),
-            tooltip: 'Remove $label reminder',
+          // `tooltip` alone would only reach the semantics tree's
+          // `tooltip` field, not its `label` -- the accessible name a
+          // screen reader announces -- so this replaces `IconButton`'s
+          // own semantics with an explicit one (the same pattern
+          // `pattern_echo_panel.dart`'s dismiss button uses).
+          Semantics(
+            container: true,
+            button: true,
+            label: 'Remove $label reminder',
+            onTap: onRemove,
+            child: ExcludeSemantics(
+              child: IconButton(
+                onPressed: onRemove,
+                icon: const Icon(Icons.close),
+                tooltip: 'Remove $label reminder',
+              ),
+            ),
           ),
         ],
       ),

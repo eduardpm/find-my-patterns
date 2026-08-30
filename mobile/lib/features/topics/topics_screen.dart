@@ -68,10 +68,24 @@ class TopicsScreen extends ConsumerWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    IconButton(
-                      onPressed: onClose,
-                      icon: const Icon(Icons.arrow_back),
-                      tooltip: 'Back',
+                    // `tooltip` alone would only reach the semantics
+                    // tree's `tooltip` field, not its `label` -- the
+                    // accessible name a screen reader announces -- so
+                    // this replaces `IconButton`'s own semantics with an
+                    // explicit one (the same pattern
+                    // `pattern_echo_panel.dart`'s dismiss button uses).
+                    Semantics(
+                      container: true,
+                      button: true,
+                      label: 'Back',
+                      onTap: onClose,
+                      child: ExcludeSemantics(
+                        child: IconButton(
+                          onPressed: onClose,
+                          icon: const Icon(Icons.arrow_back),
+                          tooltip: 'Back',
+                        ),
+                      ),
                     ),
                     const SizedBox(width: JournalSpacing.x2),
                     Expanded(
@@ -233,7 +247,14 @@ class _TopicRowState extends ConsumerState<_TopicRow> {
                       ),
                     ),
                     const SizedBox(width: JournalSpacing.x2),
-                    Eyebrow(entryCountLabel),
+                    // `Flexible`, not a bare `Eyebrow`: a topic with a
+                    // large entry count ("128 entries") beside the
+                    // chevron icon overflowed this row's right edge by
+                    // 75px at 320dp/2x once the topic name (`Expanded`)
+                    // had already claimed the row's own flexible share --
+                    // the same fixed-sibling-too-wide shape every other
+                    // fix in this ticket addresses.
+                    Flexible(child: Eyebrow(entryCountLabel)),
                     const SizedBox(width: JournalSpacing.x2),
                     AnimatedRotation(
                       turns: _expanded ? 0.5 : 0,
@@ -329,11 +350,31 @@ class _AliasChip extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      StatusBadge(alias),
-      IconButton(
-        onPressed: onRemove,
-        icon: const Icon(Icons.close, size: 14),
-        tooltip: 'Remove the alias $alias from $topicName',
+      // `Flexible`, not a bare `StatusBadge`: this chip sits inside a
+      // `Wrap`, which bounds each item to its own line's remaining width
+      // (240px at 320dp minus this card's own padding) -- a long alias
+      // ("workout") at 2x text scale, plus the remove button beside it,
+      // overflowed that bound by 6.7px without this. `StatusBadge`'s own
+      // `Text` wraps once it is handed a bounded width, the same way
+      // every other un-`Flexible` label in this ticket did once wrapped.
+      Flexible(child: StatusBadge(alias)),
+      // `tooltip` alone would only reach the semantics tree's `tooltip`
+      // field, not its `label` -- the accessible name a screen reader
+      // announces -- so this replaces `IconButton`'s own semantics with
+      // an explicit one (the same pattern `pattern_echo_panel.dart`'s
+      // dismiss button uses).
+      Semantics(
+        container: true,
+        button: true,
+        label: 'Remove the alias $alias from $topicName',
+        onTap: onRemove,
+        child: ExcludeSemantics(
+          child: IconButton(
+            onPressed: onRemove,
+            icon: const Icon(Icons.close, size: 14),
+            tooltip: 'Remove the alias $alias from $topicName',
+          ),
+        ),
       ),
     ],
   );

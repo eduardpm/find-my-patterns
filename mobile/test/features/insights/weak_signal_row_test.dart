@@ -171,7 +171,8 @@ void main() {
 
     await tester.tap(find.text('work → stressed · not enough contrast yet'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('1 entries'));
+    // "1 entry" (singular, #150) not "1 entries".
+    await tester.tap(find.text('1 entry'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Open'));
 

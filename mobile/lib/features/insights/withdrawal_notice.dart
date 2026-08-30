@@ -121,5 +121,5 @@ String _reasonLabel(WithdrawalReason reason) => switch (reason) {
 /// stating the single count rather than a delta that reads as none.
 String _countLine(Withdrawal withdrawal) =>
     withdrawal.previousCount == withdrawal.newCount
-    ? '${withdrawal.newCount} occurrences'
+    ? '${withdrawal.newCount} ${withdrawal.newCount == 1 ? 'occurrence' : 'occurrences'}'
     : '${withdrawal.previousCount} → ${withdrawal.newCount}';

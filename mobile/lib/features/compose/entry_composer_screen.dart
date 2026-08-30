@@ -153,10 +153,23 @@ class EntryComposerScreen extends ConsumerWidget {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('New entry'),
-          leading: IconButton(
-            icon: const Icon(Icons.close),
-            tooltip: 'Cancel',
-            onPressed: () => unawaited(requestCancel()),
+          // `tooltip` alone would only reach the semantics tree's
+          // `tooltip` field, not its `label` -- the accessible name a
+          // screen reader announces -- so this replaces `IconButton`'s
+          // own semantics with an explicit one (the same pattern
+          // `pattern_echo_panel.dart`'s dismiss button uses).
+          leading: Semantics(
+            container: true,
+            button: true,
+            label: 'Cancel',
+            onTap: () => unawaited(requestCancel()),
+            child: ExcludeSemantics(
+              child: IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: 'Cancel',
+                onPressed: () => unawaited(requestCancel()),
+              ),
+            ),
           ),
         ),
         body: Stack(
@@ -439,10 +452,23 @@ class _RestoredDraftNotice extends StatelessWidget {
                 ],
               ),
             ),
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              tooltip: 'Dismiss',
-              onPressed: onDismiss,
+            // `tooltip` alone would only reach the semantics tree's
+            // `tooltip` field, not its `label` -- the accessible name a
+            // screen reader announces -- so this replaces `IconButton`'s
+            // own semantics with an explicit one (the same pattern
+            // `pattern_echo_panel.dart`'s dismiss button uses).
+            Semantics(
+              container: true,
+              button: true,
+              label: 'Dismiss',
+              onTap: onDismiss,
+              child: ExcludeSemantics(
+                child: IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  tooltip: 'Dismiss',
+                  onPressed: onDismiss,
+                ),
+              ),
             ),
           ],
         ),

@@ -2,11 +2,17 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
+// `intl` exports its own `TextDirection` (LTR/RTL/UNKNOWN, unrelated to
+// Flutter's), which otherwise shadows `dart:ui`'s -- the one `TextPainter`
+// below actually needs -- since both come in unprefixed. Nothing in this
+// file formats bidi text, so hiding it is free. Same reasoning as
+// `today/day_summary_card.dart`'s identical import.
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../core/diary/calendar_date.dart';
 import '../../core/diary/feeling.dart';
@@ -243,9 +249,18 @@ class _MonthSwitcher extends StatelessWidget {
             ),
           ),
         ),
-        Text(
-          _monthLabelFormat.format(month.firstDay.toDateTime()),
-          style: theme.textTheme.titleLarge,
+        // `Flexible`, not a bare `Text`: at 320dp/2x a long month name
+        // ("September 2026") plus the two 48dp chevrons either side no
+        // longer fit one line (292px of overflow) -- wrapping to a second
+        // line keeps every character of the month on screen, the same
+        // anti-truncation rule the rest of this app's numbers follow,
+        // rather than an ellipsis quietly hiding which month this is.
+        Flexible(
+          child: Text(
+            _monthLabelFormat.format(month.firstDay.toDateTime()),
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleLarge,
+          ),
         ),
         Semantics(
           container: true,
@@ -287,6 +302,8 @@ class _CalendarGrid extends StatelessWidget {
     final daysInMonth = month.lengthInDays;
     // Monday-first grid: how many blank cells lead up to day 1.
     final leadingBlanks = (month.firstDay.weekday - DateTime.monday + 7) % 7;
+    final theme = Theme.of(context);
+    final scaler = MediaQuery.textScalerOf(context);
 
     return Column(
       children: [
@@ -299,20 +316,81 @@ class _CalendarGrid extends StatelessWidget {
           ],
         ),
         const SizedBox(height: JournalSpacing.x2),
-        GridView.count(
-          crossAxisCount: 7,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          children: [
-            for (var i = 0; i < leadingBlanks; i++) const SizedBox.shrink(),
-            for (var i = 0; i < daysInMonth; i++)
-              _DayCell(
-                date: month.firstDay.addDays(i),
-                day: byDate[month.firstDay.addDays(i)],
-                isToday: month.firstDay.addDays(i) == today,
-                onTap: onOpenDay,
+        // `GridView.count`'s implicit `childAspectRatio: 1` forced every
+        // cell to stay exactly as tall as it is wide -- fine at the
+        // default text scale, but the day number is the one piece of text
+        // this grid draws, and at 320dp/2x it alone no longer fits a
+        // seventh of that width (a bare, unlogged day overflowed its cell
+        // by 7px; a logged day, whose cell also carries a dot row and two
+        // bars underneath the number, overflowed by up to 64px -- every
+        // one of the month's cells, all at once). Same measurement
+        // principle as `day_summary_card.dart`'s rows: read the real
+        // rendered height of the real text at the real `TextScaler`
+        // instead of trusting a hardcoded square. `SliverGridDelegateWith
+        // FixedCrossAxisCount`'s own `mainAxisExtent` (not
+        // `GridView.count`'s single fixed `childAspectRatio`) is what lets
+        // the row grow taller without also growing wider -- this whole
+        // grid already sits inside `CalendarScreen`'s own `ListView`, so a
+        // taller row only pushes the page's own scroll extent, never
+        // overflows it.
+        LayoutBuilder(
+          builder: (context, constraints) {
+            const columns = 7;
+            final cellWidth = constraints.maxWidth / columns;
+            // `_DayCell`'s own `Padding(2)` around its content, every side.
+            const chrome = 2 * 2;
+            final numberStyle = JournalType.tabularFigures(
+              theme.textTheme.bodyMedium!,
+            );
+            // Measured against the number's *actual* available width
+            // (`cellWidth - chrome`), not an unbounded line: a `Text`
+            // narrower than its box measures one line however it is
+            // measured, but "28" at 320dp/2x is wider than a seventh of
+            // the screen, so the real widget wraps to two lines -- an
+            // unbounded-width measurement would have reported the
+            // one-line height and undershot by exactly that second line
+            // (the gap this fix closed on its own first pass: 22 of the
+            // month's cells still overflowed by 23px, every one of them a
+            // double-digit day).
+            final numberHeight = _measureHeight(
+              '28',
+              numberStyle,
+              scaler,
+              maxWidth: cellWidth - chrome,
+            );
+            // The stack a logged day adds below the number -- gap, the dot
+            // row (`FeelingDot`'s own 6dp size), gap, the volume bar (2dp),
+            // gap, the intensity bar (2dp). None of these five scale with
+            // text size (`_VolumeBar`/`_IntensityBar` are fixed-pixel
+            // gauges, the same contract `_IntensityBar`'s own doc comment
+            // in `today/day_summary_card.dart` names for #108), so this is
+            // a constant addition regardless of which day is being sized.
+            // Always included, even for a month with nothing logged yet,
+            // so every cell in the grid shares one row height and a newly
+            // logged day never has to relayout the whole month around it.
+            const loggedStackHeight = 3 + 6 + 2 + 2 + 2 + 2;
+            final contentHeight = numberHeight + loggedStackHeight + chrome;
+            final cellHeight = math.max(cellWidth, contentHeight);
+
+            return GridView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisExtent: cellHeight,
               ),
-          ],
+              children: [
+                for (var i = 0; i < leadingBlanks; i++) const SizedBox.shrink(),
+                for (var i = 0; i < daysInMonth; i++)
+                  _DayCell(
+                    date: month.firstDay.addDays(i),
+                    day: byDate[month.firstDay.addDays(i)],
+                    isToday: month.firstDay.addDays(i) == today,
+                    onTap: onOpenDay,
+                  ),
+              ],
+            );
+          },
         ),
       ],
     );
@@ -464,6 +542,32 @@ class _DayCell extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The height [text] would render at in [style] under [scaler], wrapped at
+/// [maxWidth] the same way the real widget being sized is -- an unbounded
+/// single-line measurement undercounts whenever the real text is narrower
+/// than the box (single-digit days, at any scale) but *wraps* once it
+/// isn't ("28" at 320dp/2x, wider than a seventh of the screen): the real
+/// `RenderParagraph` gains a second line the unbounded painter never
+/// would have. What a `TextPainter` computes is the same measurement
+/// Flutter's own text layout uses to paint it, so this asks
+/// `_CalendarGrid`'s own build-time question directly ("how tall does a day
+/// cell need to be, right now") instead of a hardcoded square. Same
+/// approach as `today/day_summary_card.dart`'s `_measure`, which asks the
+/// equivalent question about width.
+double _measureHeight(
+  String text,
+  TextStyle? style,
+  TextScaler scaler, {
+  required double maxWidth,
+}) {
+  final painter = TextPainter(
+    text: TextSpan(text: text, style: style),
+    textDirection: TextDirection.ltr,
+    textScaler: scaler,
+  )..layout(maxWidth: maxWidth);
+  return painter.height;
 }
 
 /// `"<day>, today, <N> entries, <feelings>, intensity N"`, or `"<day>, no entries"`.
@@ -651,10 +755,18 @@ class _TotalsPanel extends StatelessWidget {
                     .copyWith(color: theme.colorScheme.primary),
               ),
               const SizedBox(width: JournalSpacing.x2),
-              Text(
-                'entries a day',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              // `Flexible`, not a bare `Text`: the figure stays fixed
+              // (`displaySmall`, doubled at 2x scale, is already this
+              // row's widest element), so the label is what has to give --
+              // 351px of overflow at 320dp/2x without it, the same shape
+              // of fix `today/day_summary_card.dart`'s count/label pair
+              // uses for the identical reason.
+              Flexible(
+                child: Text(
+                  'entries a day',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],

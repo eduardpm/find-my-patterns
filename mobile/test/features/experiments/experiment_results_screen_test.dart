@@ -333,4 +333,25 @@ void main() {
     // The verdict from the fixture's default results now renders.
     expect(find.text('VERDICT'), findsOneWidget);
   });
+
+  testWidgets(
+    'the back button (an icon-only control, #150 task 1) announces "Back" '
+    'to a screen reader and closes the screen when tapped',
+    (tester) async {
+      var closed = false;
+      final adapter = FakeHttpAdapter([
+        FakeReply(200, body: experimentResultsJson()),
+      ]);
+
+      await tester.pumpWidget(
+        app(adapter: adapter, onClose: () => closed = true),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.bySemanticsLabel('Back'), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel('Back'));
+      expect(closed, isTrue);
+    },
+  );
 }

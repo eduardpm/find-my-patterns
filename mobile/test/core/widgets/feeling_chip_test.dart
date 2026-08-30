@@ -464,6 +464,54 @@ void main() {
     );
 
     testWidgets(
+      'a removable chip (the "×" glyph -- #150 task 4) keeps a 48dp '
+      'minimum tap target on a short label',
+      (tester) async {
+        _pump360Wide(tester);
+        await tester.pumpWidget(
+          _host(
+            FeelingChip(
+              label: 'Sad',
+              color: const Color(0xFFB3441A),
+              variant: FeelingChipVariant.selectable,
+              selected: true,
+              removable: true,
+              onTap: () {},
+            ),
+            dark: false,
+          ),
+        );
+
+        // The "×" itself is a plain `Text`, not its own button -- the whole
+        // pill is the actual tap target (the `InkWell` wraps the same
+        // `Container` this measures), so this is the geometry that
+        // matters, not the glyph's own tiny glyph box.
+        final pillSize = tester.getSize(_pillFinder());
+        expect(pillSize.height, greaterThanOrEqualTo(JournalSpacing.x7));
+        expect(pillSize.width, greaterThanOrEqualTo(JournalSpacing.x7));
+
+        // And the whole pill, not just the label, is wired to the same tap
+        // handler: tapping anywhere the "×" is drawn still fires [onTap].
+        var removed = false;
+        await tester.pumpWidget(
+          _host(
+            FeelingChip(
+              label: 'Sad',
+              color: const Color(0xFFB3441A),
+              variant: FeelingChipVariant.selectable,
+              selected: true,
+              removable: true,
+              onTap: () => removed = true,
+            ),
+            dark: false,
+          ),
+        );
+        await tester.tap(find.text('×'));
+        expect(removed, isTrue);
+      },
+    );
+
+    testWidgets(
       'two selectable chips share a row inside a 360dp-wide Wrap',
       (tester) async {
         _pump360Wide(tester);

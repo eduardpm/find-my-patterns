@@ -211,6 +211,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // #150 task 1: the accessible name comes from the semantics tree's
+      // `label`, not `IconButton`'s own `tooltip` field.
+      expect(find.bySemanticsLabel('Cancel'), findsOneWidget);
+
       await tester.tap(find.byIcon(Icons.close));
       expect(cancelled, isTrue);
     });
@@ -1311,6 +1315,10 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
+
+        // #150 task 1: the accessible name comes from the semantics tree's
+        // `label`, not `IconButton`'s own `tooltip` field.
+        expect(find.bySemanticsLabel('Dismiss'), findsOneWidget);
 
         await tester.tap(find.byTooltip('Dismiss'));
         await tester.pumpAndSettle();

@@ -115,4 +115,52 @@ void main() {
 
     expect(harness.store.savedPalettes.single, JournalPalette.sage);
   });
+
+  testWidgets(
+    'the System/Light/Dark mode selector renders with no overflow at '
+    '320dp/2x (#150)',
+    (tester) async {
+      // #150: `_ModeOptionContent`'s icon-plus-label `Row` sits inside one
+      // of three `Expanded` segments sharing a single 320dp-wide track
+      // (`_ModeSelector`), so at 2x text scale each label has only a
+      // third of the line -- "System" plus its icon overflowed its own
+      // segment by 62px. Wrapping the label in `Flexible` lets it drop to
+      // a second line instead.
+      // Tall, not just narrow: `app()` hosts this card directly in a
+      // non-scrolling `Scaffold` (unlike `SettingsScreen`'s own `ListView`
+      // around it), so this wraps it in a scroll view here too -- a fixed
+      // surface height would otherwise overflow vertically at 2x scale for
+      // a reason unrelated to the defect this test targets, the mode
+      // row's own width.
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: Harness().scope(
+              const MaterialApp(
+                home: Scaffold(
+                  body: SingleChildScrollView(child: AppearanceCard()),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      // A positive assertion the mode options actually rendered, pairing
+      // the exception check above the way #150's own lesson (seven prior
+      // instances of a rendered-nothing false green) requires.
+      expect(find.text('System'), findsOneWidget);
+      expect(find.text('Light'), findsOneWidget);
+      expect(find.text('Dark'), findsOneWidget);
+    },
+  );
 }

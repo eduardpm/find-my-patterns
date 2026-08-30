@@ -567,9 +567,11 @@ void main() {
     );
 
     expect(find.text('A supporting entry.'), findsNothing);
-    expect(find.text('1 entries'), findsOneWidget);
+    // Singular, not "1 entries" -- the defect found on the live diary.
+    expect(find.text('1 entry'), findsOneWidget);
+    expect(find.text('1 entries'), findsNothing);
 
-    await tester.tap(find.text('1 entries'));
+    await tester.tap(find.text('1 entry'));
     await tester.pumpAndSettle();
 
     expect(find.text('A supporting entry.'), findsOneWidget);
@@ -622,7 +624,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('1 entries'));
+    await tester.tap(find.text('1 entry'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Open'));
 

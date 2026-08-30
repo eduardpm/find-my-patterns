@@ -501,13 +501,39 @@ class _BackdateNudgeCard extends StatelessWidget {
                   style: theme.textTheme.titleMedium,
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.close, size: 18),
-                tooltip: 'Dismiss',
-                onPressed: onDismiss,
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
+              // `tooltip` alone would only reach the semantics tree's
+              // `tooltip` field, not its `label` -- the accessible name a
+              // screen reader announces -- so this replaces `IconButton`'s
+              // own semantics with an explicit one (the same pattern
+              // `pattern_echo_panel.dart`'s dismiss button uses).
+              //
+              // The touch target is fixed at the 48dp floor
+              // (JournalSpacing.x7) via `constraints`' minWidth/minHeight,
+              // with `visualDensity: compact` dropped -- it was previously
+              // paired with a bare `BoxConstraints()` that set no minimum
+              // at all, so this "×" shrank to whatever compact density
+              // plus zero padding left around an 18dp icon, well under
+              // the platform's own minimum (#150 task 4). Keeping
+              // `compact` here would still have undercut the floor: it
+              // subtracts a fixed 8dp from both axes of *any* constraints
+              // handed to it, `minWidth`/`minHeight` included.
+              Semantics(
+                container: true,
+                button: true,
+                label: 'Dismiss',
+                onTap: onDismiss,
+                child: ExcludeSemantics(
+                  child: IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    tooltip: 'Dismiss',
+                    onPressed: onDismiss,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: JournalSpacing.x7,
+                      minHeight: JournalSpacing.x7,
+                    ),
+                  ),
+                ),
               ),
             ],
           ),

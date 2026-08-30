@@ -263,4 +263,105 @@ void main() {
     expect(adapter.requests.last.uri.queryParameters['month'], '2026-09');
     handle.dispose();
   });
+
+  group('dynamic type at 320dp/2x (#150)', () {
+    // #150: `GridView.count`'s implicit `childAspectRatio: 1` forced every
+    // month-grid cell to stay exactly as tall as it is wide, so at
+    // 320dp/2x the day number alone -- before even the dot row and bars a
+    // logged day adds underneath it -- no longer fit the cell it was
+    // squeezed into. Every cell in the month overflowed at once: 22 to 30
+    // cells depending on the fixture, from 7px (an empty day) up to 64px
+    // (a logged one). `_CalendarGrid` now measures the day number's own
+    // rendered height at the real `TextScaler` (mirroring
+    // `today/day_summary_card.dart`'s width measurement) and grows the
+    // grid's row height to fit, rather than trusting a hardcoded square.
+    testWidgets(
+      'a full month with a heavily logged day renders with no overflow',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 2000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        final harness = configuredHarness(
+          FakeHttpAdapter([
+            FakeReply(200, body: feelingsCatalogJson()),
+            FakeReply(
+              200,
+              body: monthlySummaryJson(
+                month: '2026-08',
+                days: [
+                  daySummaryJson(
+                    date: '2026-08-15',
+                    feelings: const ['happy', 'excited', 'grateful'],
+                    intensity: 5,
+                    entryCount: 12,
+                  ),
+                ],
+                totalsByFeeling: const {'happy': 5},
+                averageEntriesPerDay: 1.5,
+              ),
+            ),
+          ]),
+        );
+        await tester.pumpWidget(
+          // `.copyWith` on the *ambient* data (the real one the test's own
+          // root `View` derives from `tester.view`), not a fresh
+          // `MediaQueryData(textScaler: ...)` -- the latter replaces every
+          // other field, including `size`, with its own defaults.
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: app(harness),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        // A positive assertion the grid actually rendered its content,
+        // pairing the exception check above the way #150's own lesson
+        // (seven prior instances of a rendered-nothing false green)
+        // requires.
+        expect(find.text('15'), findsOneWidget);
+        expect(find.text('1'), findsOneWidget);
+        expect(find.text('31'), findsOneWidget);
+      },
+    );
+
+    testWidgets('the month switcher wraps a long month name onto a second '
+        'line rather than overflowing', (tester) async {
+      tester.view.physicalSize = const Size(320, 2000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final harness = configuredHarness(
+        FakeHttpAdapter([
+          FakeReply(200, body: feelingsCatalogJson()),
+          // `fixedNow` opens the screen on August; navigating forward is
+          // what actually reaches September.
+          FakeReply(200, body: monthlySummaryJson(month: '2026-08')),
+          FakeReply(200, body: monthlySummaryJson(month: '2026-09')),
+        ]),
+      );
+      await tester.pumpWidget(
+        Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: app(harness),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.bySemanticsLabel('Next month'));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('September 2026'), findsOneWidget);
+    });
+  });
 }

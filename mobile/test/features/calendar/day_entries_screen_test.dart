@@ -385,6 +385,10 @@ void main() {
     await tester.pumpWidget(app(harness, onClose: () => closed = true));
     await tester.pumpAndSettle();
 
+    // #150 task 1: the accessible name comes from the semantics tree's
+    // `label`, not `IconButton`'s own `tooltip` field.
+    expect(find.bySemanticsLabel('Back to the calendar'), findsOneWidget);
+
     await tester.tap(find.byTooltip('Back to the calendar'));
 
     expect(closed, isTrue);

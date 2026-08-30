@@ -406,6 +406,20 @@ class _FeelingChipsState extends State<FeelingChips> {
         // four groups, or a large accessibility text size, must still fit
         // without truncating the sheet's own content.
         isScrollControlled: true,
+        // `showModalBottomSheet`'s own default (`useSafeArea: false`) does
+        // not merely skip adding a safe area -- it actively strips the top
+        // `MediaQuery` padding via `MediaQuery.removePadding(removeTop:
+        // true)` before `_FeelingSheet` ever builds, on the assumption that
+        // a bottom sheet never reaches the top of the screen (see that
+        // parameter's own doc comment). This sheet is `isScrollControlled`
+        // and uncapped, so at a tall vocabulary or a large text scale it
+        // does reach the top -- and `_FeelingSheet`'s own `SafeArea` was a
+        // provable no-op against padding that had already been zeroed out
+        // upstream (see #150's PR for the widget test this proves red
+        // against). `useSafeArea: true` keeps the top inset in the
+        // `MediaQuery` `_FeelingSheet` reads instead of removing it, so its
+        // own `SafeArea` has real padding to apply.
+        useSafeArea: true,
         builder: (sheetContext) => _FeelingSheet(
           groups: widget.groups,
           initialGroup: initialGroup,
@@ -741,11 +755,25 @@ class _FeelingSheet extends StatelessWidget {
                 const SizedBox(height: JournalSpacing.x4),
                 Row(
                   key: sectionKeys[group.key],
-                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     FeelingDot(color: group.accent(journal)),
                     const SizedBox(width: JournalSpacing.x2),
-                    Text(group.label, style: theme.textTheme.titleMedium),
+                    // `Flexible`, not a bare `Text`: a group heading is a
+                    // short single word today, but at 2x text scale plus a
+                    // narrow 320dp sheet plus the top status-bar inset this
+                    // fix restores (see the `useSafeArea` change on
+                    // `_openFeelingSheet`, above), even "Uplifted" alone can
+                    // outgrow the row by a few pixels once the dot and gap
+                    // are accounted for. Wrapping to a second line matches
+                    // every other row on this card that is not allowed to
+                    // clip a label (#111's own chips, right above).
+                    Flexible(
+                      child: Text(
+                        group.label,
+                        style: theme.textTheme.titleMedium,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: JournalSpacing.x3),

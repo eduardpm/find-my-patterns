@@ -155,10 +155,23 @@ class _DayEntriesScreenState extends ConsumerState<DayEntriesScreen> {
       appBar: AppBar(
         title: const Text('Entries'),
         backgroundColor: Colors.transparent,
-        leading: IconButton(
-          onPressed: _close,
-          icon: const Icon(Icons.arrow_back),
-          tooltip: 'Back to the calendar',
+        // `tooltip` alone would only reach the semantics tree's `tooltip`
+        // field, not its `label` -- the accessible name a screen reader
+        // announces -- so this replaces `IconButton`'s own semantics with
+        // an explicit one (the same pattern `pattern_echo_panel.dart`'s
+        // dismiss button uses).
+        leading: Semantics(
+          container: true,
+          button: true,
+          label: 'Back to the calendar',
+          onTap: _close,
+          child: ExcludeSemantics(
+            child: IconButton(
+              onPressed: _close,
+              icon: const Icon(Icons.arrow_back),
+              tooltip: 'Back to the calendar',
+            ),
+          ),
         ),
       ),
       body: Stack(
