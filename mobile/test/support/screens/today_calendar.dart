@@ -2,9 +2,14 @@ import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/entry.dart';
 import 'package:find_my_patterns/core/diary/feeling.dart';
 import 'package:find_my_patterns/core/theme/app_theme.dart';
+import 'package:find_my_patterns/features/calendar/year_grid.dart';
 import 'package:find_my_patterns/features/today/entry_card.dart';
+import 'package:find_my_patterns/features/today/writing_streak_line.dart';
 import 'package:flutter/material.dart';
 
+import '../../features/calendar/json_fixtures.dart';
+import '../fake_http.dart';
+import '../harness.dart';
 import '../screen_registry.dart';
 
 const _feelings = [
@@ -29,6 +34,24 @@ Entry _entry() => entryFromJson({
   'analysis_pending': false,
 }, const FeelingCatalog(_feelings));
 
+/// Points across most months of the year, mixing positive and negative
+/// scores and a couple of unconfirmed (`score: null`) days — a real diary's
+/// year is not evenly one sentiment, and an empty year would never exercise
+/// the painter's four cell states at all.
+List<Map<String, Object?>> _yearGridPointsJson() => [
+  for (var month = 1; month <= 12; month++)
+    for (final day in [3, 17])
+      seriesPointJson(
+        date: CalendarDate(2026, month, day).toString(),
+        score: switch (month % 3) {
+          0 => null,
+          1 => 1,
+          _ => -1,
+        },
+        entryCount: month == 12 ? 12 : 2,
+      ),
+];
+
 /// `lib/features/today/` and `lib/features/calendar/`.
 final todayCalendar = ScreenArea(
   name: 'today and calendar',
@@ -43,11 +66,35 @@ final todayCalendar = ScreenArea(
         ),
       ),
     ),
+    ScreenCase(
+      name: 'YearGrid',
+      source: 'features/calendar/year_grid.dart',
+      build: () =>
+          Harness(
+            adapter: FakeHttpAdapter([
+              FakeReply(200, body: seriesJson(points: _yearGridPointsJson())),
+            ]),
+          ).scope(
+            MaterialApp(
+              theme: buildLightTheme(),
+              home: Scaffold(body: SingleChildScrollView(child: YearGrid())),
+            ),
+          ),
+    ),
+    ScreenCase(
+      name: 'WritingStreakLine',
+      source: 'features/today/writing_streak_line.dart',
+      // 365 rather than the two-digit "12" this was first caught failing
+      // on: a three-digit streak is a longer string and a real value a
+      // long-running diary reaches, and it turns out no worse than "12" —
+      // both pass once the label wraps instead of overflowing.
+      build: () => MaterialApp(
+        theme: buildLightTheme(),
+        home: const Scaffold(
+          body: WritingStreakLine(streakDays: 365),
+        ),
+      ),
+    ),
   ],
-  unswept: const {
-    'features/calendar/year_grid.dart',
-    // Confirmed defective by the sweep before it was registered: "12 days
-    // writing" renders 66px past a 320dp screen at 2x, 26px past at 360dp.
-    'features/today/writing_streak_line.dart',
-  },
+  unswept: const {},
 );

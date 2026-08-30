@@ -38,15 +38,28 @@ class WritingStreakLine extends StatelessWidget {
     return Semantics(
       label: 'Writing streak: $streakDays days',
       child: ExcludeSemantics(
+        // The label is one string, not a fixed icon next to a load-bearing
+        // number/identifier, so the fix here is letting *that* string wrap
+        // within its own row rather than reaching for a `Flexible` sibling
+        // (ACCESSIBILITY.md §3): a bare `Text` next to a non-flex `Icon`
+        // inside a `Row(mainAxisSize: MainAxisSize.min)` lays out at its
+        // full intrinsic width regardless of how little room the row
+        // actually has, which is exactly how the sweep caught "12 days
+        // writing" painting 66px past a 320dp/2x screen (26px at 360dp)
+        // without ever throwing until this `Flexible` was added. Wrapping
+        // the number in full, never shrinking or truncating it.
         child: Row(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(Icons.edit_note, size: 16, color: journal.onSurfaceVariant),
             const SizedBox(width: JournalSpacing.x1),
-            Text(
-              '$streakDays days writing',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: journal.onSurfaceVariant,
+            Flexible(
+              child: Text(
+                '$streakDays days writing',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: journal.onSurfaceVariant,
+                ),
               ),
             ),
           ],
