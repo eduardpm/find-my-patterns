@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_USER_ID } from '../../src/auth/default-user';
 import { MIN_OCCURRENCE_THRESHOLD, RECENCY_WINDOW_DAYS } from '../../src/insights/constants';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
+import { localDateString } from '../helpers/dates';
 
 let h: Harness;
 const server = () => h.app.getHttpServer();
@@ -50,13 +51,16 @@ async function write(text: string, feelings: string[], daysAgo = 0): Promise<Wri
   return confirmed;
 }
 
-const dateDaysAgo = (daysAgo: number): string =>
-  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+// #129: `entry_date` is filed under `todayLocal()` (`db/codecs.ts`), so both this and `backdate`
+// below compute the target date through local-calendar arithmetic (`localDateString`) rather than
+// a UTC-instant subtraction, which silently disagrees with `todayLocal()` between local midnight
+// and UTC midnight.
+const dateDaysAgo = (daysAgo: number): string => localDateString(-daysAgo);
 
 /** The API files every entry under today by design; asking what "recent" means requires going round it. */
 function backdate(entryId: string, daysAgo: number): void {
   const db = new Database(h.dbPath);
-  const when = new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+  const when = localDateString(-daysAgo);
   db.prepare('UPDATE diary_entries SET entry_date = ? WHERE id = ?').run(when, entryId);
   db.close();
 }

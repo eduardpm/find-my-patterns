@@ -21,6 +21,7 @@ import Database from 'better-sqlite3';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
+import { localDateString } from '../helpers/dates';
 
 let h: Harness;
 const server = () => h.app.getHttpServer();
@@ -55,9 +56,14 @@ async function createGuidedEntry(
   return created;
 }
 
+// #129: `entry_date` is filed under `todayLocal()` (`db/codecs.ts`), and the range bounds this
+// return value feeds (`from`/`to` on `GET /insights/question-yield`) are compared directly against
+// stored `entry_date` text (`QuestionYieldService.compute`'s `whereClause`), so both have to come
+// from local-calendar arithmetic (`localDateString`) rather than a UTC-instant subtraction, which
+// silently disagrees with `todayLocal()` between local midnight and UTC midnight.
 function backdate(dbPath: string, entryId: string, daysAgo: number): string {
   const db = new Database(dbPath);
-  const when = new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+  const when = localDateString(-daysAgo);
   db.prepare('UPDATE diary_entries SET entry_date = ? WHERE id = ?').run(when, entryId);
   db.close();
   return when;
@@ -160,7 +166,7 @@ describe('GET /insights/question-yield', () => {
     await request(server()).get('/insights').expect(200);
 
     // A window that brackets only entry A's date.
-    const from = new Date(Date.now() - 11 * 86_400_000).toISOString().slice(0, 10);
+    const from = localDateString(-11);
     const to = dateA;
     const onlyA = (
       await request(server()).get('/insights/question-yield').query({ from, to }).expect(200)
@@ -169,7 +175,7 @@ describe('GET /insights/question-yield', () => {
     expect(onlyA.overall).toEqual({ guided_entries: 1, guided_entries_yielding: 1, rate: 1 });
 
     // A window that excludes entry A and keeps entry B.
-    const recentFrom = new Date(Date.now() - 1 * 86_400_000).toISOString().slice(0, 10);
+    const recentFrom = localDateString(-1);
     const onlyB = (
       await request(server())
         .get('/insights/question-yield')
