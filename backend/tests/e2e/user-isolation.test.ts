@@ -24,6 +24,7 @@
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
+import { localDateString } from '../helpers/dates';
 import { enumerateRoutes, registeredControllers, routeMatches } from '../helpers/route-inventory';
 
 let h: Harness;
@@ -241,7 +242,7 @@ describe('entries — POST, GET (list/one/echo), PATCH, PUT topic-feelings, DELE
   it('GET /entries?date= for a shared date never mixes the two accounts’ entries', async () => {
     // Both accounts wrote their three entries "today" (no `entry_date` override), so the same
     // date query must return exactly three rows per account, every one of them the caller’s own.
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateString(0);
     const listA = (await userA.client.get(`/entries?date=${today}`).expect(200)).body as {
       entries: Array<{ id: string; raw_text: string }>;
     };
@@ -332,7 +333,7 @@ describe('GET /insights, /insights/when, /insights/series, /insights/digest, /in
   });
 
   it('GET /insights/series only ever sums the caller’s own confirmed feelings', async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateString(0);
     const seriesA = (
       await userA.client.get(`/insights/series?from=${today}&to=${today}`).expect(200)
     ).body as { points: Array<{ confirmed_feeling_count: number }> };
@@ -477,7 +478,13 @@ describe('experiments — POST, GET active, GET results, POST abandon', () => {
 
 describe('GET /monthly-summary', () => {
   it('counts only the caller’s own entries for the month', async () => {
-    const month = new Date().toISOString().slice(0, 7);
+    // `/monthly-summary` filters `entry_date`, the same locally-clocked column the two sites
+    // above key off — see `localDateString`'s doc comment (tests/helpers/dates.ts) and
+    // `MonthlySummaryService.get`'s "same clock `entry_date` is assigned from" comment
+    // (src/monthly-summary/monthly-summary.service.ts). A UTC year-month can name the wrong
+    // month across the same local/UTC divergence window, whenever it also straddles a month
+    // boundary, so this uses the local month for the same reason #148 fixed the two `today` sites.
+    const month = localDateString(0).slice(0, 7);
     const summaryA = (await userA.client.get(`/monthly-summary?month=${month}`).expect(200))
       .body as {
       days: Array<{ entry_count: number }>;

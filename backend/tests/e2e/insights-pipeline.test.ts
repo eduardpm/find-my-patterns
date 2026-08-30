@@ -22,6 +22,7 @@ import {
 } from '../../src/insights/patterns.service';
 import { RECENCY_WINDOW_DAYS } from '../../src/insights/constants';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
+import { localDateString } from '../helpers/dates';
 
 let h: Harness;
 const server = () => h.app.getHttpServer();
@@ -307,7 +308,7 @@ describe('from written entries to insights', () => {
 
     const listed = (
       await request(server())
-        .get('/entries?date=' + (await todayIso()))
+        .get('/entries?date=' + localDateString(0))
         .expect(200)
     ).body as { entries: Array<{ id: string; version: number }> };
     const victim = listed.entries[0];
@@ -332,10 +333,3 @@ describe('from written entries to insights', () => {
     expect((await insights()).insufficient_data).toBe(true);
   });
 });
-
-/** The server's local calendar date, which is the day `entry_date` is filed under. */
-async function todayIso(): Promise<string> {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
-}
