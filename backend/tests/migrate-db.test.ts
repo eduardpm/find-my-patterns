@@ -719,3 +719,87 @@ describe('migrateDiary — M-1b: user_id columns, backfill and indexes (#134)', 
     db.close();
   });
 });
+
+describe('migrateDiary — M-1b step 2: topics.name uniqueness rebuild (#46)', () => {
+  /**
+   * `pre-grouped-vocabulary.db` predates `user_id` entirely, so this fixture exercises the rebuild
+   * from the oldest possible starting point: no `user_id` column on `topics` yet, then #134's
+   * `ADD COLUMN`, then this ticket's constraint rebuild, all inside the same `migrateDiary` call —
+   * exactly the sequence a real, years-old diary goes through in one `npm run migrate-db`.
+   */
+  it('preserves every topic row and id while changing the constraint to per-user', () => {
+    const before = read<{ id: string; name: string; aliases: string }>(
+      'SELECT id, name, aliases FROM topics ORDER BY id',
+    );
+    expect(before.length).toBeGreaterThan(0);
+
+    migrateDiary(target);
+
+    const after = read<{ id: string; user_id: string; name: string; aliases: string }>(
+      'SELECT id, user_id, name, aliases FROM topics ORDER BY id',
+    );
+    expect(after.map(({ id, name, aliases }) => ({ id, name, aliases }))).toEqual(before);
+    for (const row of after) expect(row.user_id).toBe(DEFAULT_USER_ID);
+
+    // The constraint itself changed, not just the data — `sqlite_master` is the only place that
+    // fact is recorded.
+    const db = new Database(target, { readonly: true });
+    const schemaSql = (
+      db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'topics'`)
+        .get() as {
+        sql: string;
+      }
+    ).sql;
+    db.close();
+    expect(schemaSql).toMatch(/UNIQUE\s*\(\s*user_id\s*,\s*name\s*\)/i);
+
+    expect(() => {
+      const opened = openDiary(target);
+      assertCompatible(opened);
+      opened.close();
+    }).not.toThrow();
+  });
+
+  it('is idempotent — a second run neither duplicates nor drops a topic', () => {
+    migrateDiary(target);
+    const once = read<Record<string, unknown>>('SELECT * FROM topics ORDER BY id');
+
+    migrateDiary(target);
+    expect(read<Record<string, unknown>>('SELECT * FROM topics ORDER BY id')).toEqual(once);
+  });
+
+  it('lets two different users each hold a topic of the same name, once one exists', () => {
+    migrateDiary(target);
+    const db = new Database(target);
+    const secondUserId = '00000000-0000-0000-0000-000000000002';
+    db.prepare(`INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)`).run(
+      secondUserId,
+      'second@example.invalid',
+      'disabled:no-password-set',
+      '2026-01-01 00:00:00.000000',
+    );
+    const now = '2026-01-01 00:00:00.000000';
+    // `sleep` is a topic this fixture's default-user data already holds (verified directly against
+    // `pre-grouped-vocabulary.db`) — a real collision under the old bare `UNIQUE (name)`, not a
+    // name chosen to avoid the very thing this test means to prove.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO topics (id, user_id, name, aliases, first_seen_at, last_seen_at)
+           VALUES (?, ?, 'sleep', '[]', ?, ?)`,
+        )
+        .run('topic-second-user-sleep', secondUserId, now, now),
+    ).not.toThrow();
+    // The same (user_id, name) pair twice is still a collision.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO topics (id, user_id, name, aliases, first_seen_at, last_seen_at)
+           VALUES (?, ?, 'sleep', '[]', ?, ?)`,
+        )
+        .run('topic-second-user-sleep-again', secondUserId, now, now),
+    ).toThrow();
+    db.close();
+  });
+});

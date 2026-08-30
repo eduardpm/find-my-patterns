@@ -61,15 +61,18 @@ function joinPaths(prefix: string, subPath: string): string {
  * decorator metadata — the exact classes `AppModule.forRoot()` registers, so this inventory is
  * never out of sync with what the running app actually serves.
  */
-export function enumerateRoutes(controllers: Array<new (...args: never[]) => unknown>): RouteDescriptor[] {
+export function enumerateRoutes(
+  controllers: Array<new (...args: never[]) => unknown>,
+): RouteDescriptor[] {
   const scanner = new MetadataScanner();
   const routes: RouteDescriptor[] = [];
 
   for (const controller of controllers) {
     const controllerPathMeta: string | string[] =
       Reflect.getMetadata(PATH_METADATA, controller) ?? '/';
-    const prefixes = (Array.isArray(controllerPathMeta) ? controllerPathMeta : [controllerPathMeta])
-      .map(addLeadingSlash);
+    const prefixes = (
+      Array.isArray(controllerPathMeta) ? controllerPathMeta : [controllerPathMeta]
+    ).map(addLeadingSlash);
 
     const prototype = (controller as { prototype: object }).prototype;
     for (const handlerName of scanner.getAllMethodNames(prototype)) {
@@ -109,7 +112,9 @@ export function enumerateRoutes(controllers: Array<new (...args: never[]) => unk
 export function routeMatches(route: RouteDescriptor, requestPath: string): boolean {
   const pattern = route.path
     .split('/')
-    .map((segment) => (segment.startsWith(':') ? '[^/]+' : segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    .map((segment) =>
+      segment.startsWith(':') ? '[^/]+' : segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    )
     .join('/');
   return new RegExp(`^${pattern}$`).test(requestPath);
 }

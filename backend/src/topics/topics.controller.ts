@@ -41,11 +41,7 @@ export class TopicsController {
 
   @Post(':topicId/aliases')
   @HttpCode(HttpStatus.OK)
-  add(
-    @Param('topicId') topicId: string,
-    @Body() body: unknown,
-    @Req() req: Request,
-  ): TopicDetail {
+  add(@Param('topicId') topicId: string, @Body() body: unknown, @Req() req: Request): TopicDetail {
     const input = parseOrThrow(topicAliasSchema, body ?? {});
     try {
       return this.topics.addAlias(req.userId as string, topicId, input.alias);

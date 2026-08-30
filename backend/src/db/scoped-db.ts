@@ -71,9 +71,7 @@ export const USER_DATA_TABLES = [
   'diary_meta',
 ] as const;
 
-const TABLE_PATTERNS = USER_DATA_TABLES.map(
-  (table) => new RegExp(`\\b${table}\\b`, 'i'),
-);
+const TABLE_PATTERNS = USER_DATA_TABLES.map((table) => new RegExp(`\\b${table}\\b`, 'i'));
 
 const USER_ID_PATTERN = /user_id/i;
 

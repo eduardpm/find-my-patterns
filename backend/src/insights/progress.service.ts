@@ -87,7 +87,9 @@ export class ProgressService {
   forEntry(userId: string, entryId: string): ProgressOut | null {
     const handle = this.db.forUser(userId);
     const entry = handle
-      .prepare('SELECT id, raw_text, feeling_source FROM diary_entries WHERE id = ? AND user_id = ?')
+      .prepare(
+        'SELECT id, raw_text, feeling_source FROM diary_entries WHERE id = ? AND user_id = ?',
+      )
       .get(entryId, userId) as { id: string; raw_text: string; feeling_source: string } | undefined;
     if (!entry) return null;
 

@@ -343,7 +343,13 @@ export class DaylioImportService {
              report_json)
              VALUES (?, ?, 'daylio', ?, ?, ?)`,
           )
-          .run(report.contentHash, userId, encodeDateTime(nowUtc()), ids.length, encodeJson(report));
+          .run(
+            report.contentHash,
+            userId,
+            encodeDateTime(nowUtc()),
+            ids.length,
+            encodeJson(report),
+          );
 
         return ids;
       });
@@ -352,7 +358,10 @@ export class DaylioImportService {
       // bare, global primary key, so a different account committing this exact file first collides
       // here rather than being caught by the (correctly per-user-scoped) `alreadyImported` check
       // above.
-      if (error instanceof Error && /UNIQUE constraint failed: csv_imports\.content_hash/.test(error.message)) {
+      if (
+        error instanceof Error &&
+        /UNIQUE constraint failed: csv_imports\.content_hash/.test(error.message)
+      ) {
         throw new DaylioContentHashCollisionError(
           'This exact file was already imported by a different account. Per-account import ' +
             'history for identical files is a known limitation, tracked separately.',

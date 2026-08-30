@@ -73,9 +73,9 @@ export class EchoService {
 
     const patternTopics = new Map(
       (
-        handle.prepare('SELECT p.id, p.topic_id FROM patterns p WHERE p.user_id = ?').all(
-          userId,
-        ) as Array<{
+        handle
+          .prepare('SELECT p.id, p.topic_id FROM patterns p WHERE p.user_id = ?')
+          .all(userId) as Array<{
           id: string;
           topic_id: string;
         }>

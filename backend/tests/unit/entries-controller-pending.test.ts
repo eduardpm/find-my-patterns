@@ -106,10 +106,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubTopicsService() as never,
     );
 
-    const body = controller.create(
-      { mode: 'freeform', raw_text: entry.rawText },
-      fakeRequest(),
-    );
+    const body = controller.create({ mode: 'freeform', raw_text: entry.rawText }, fakeRequest());
 
     expect(body.analysis_pending).toBe(true);
     expect(body.suggested_feeling).toBeNull();
@@ -132,10 +129,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubTopicsService() as never,
     );
 
-    const body = controller.create(
-      { mode: 'freeform', raw_text: entry.rawText },
-      fakeRequest(),
-    );
+    const body = controller.create({ mode: 'freeform', raw_text: entry.rawText }, fakeRequest());
 
     expect(body.analysis_pending).toBe(false);
     expect(body.suggested_feeling).toEqual(suggestion);
@@ -157,10 +151,7 @@ describe('POST /entries -- analysis_pending honesty', () => {
       stubTopicsService() as never,
     );
 
-    const body = controller.create(
-      { mode: 'freeform', raw_text: entry.rawText },
-      fakeRequest(),
-    );
+    const body = controller.create({ mode: 'freeform', raw_text: entry.rawText }, fakeRequest());
 
     expect(body.analysis_pending).toBe(false);
     expect(body.suggested_feeling).toEqual(suggestion);

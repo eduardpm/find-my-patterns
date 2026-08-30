@@ -12,7 +12,9 @@ describe('asynchronous transcription jobs', () => {
     } as unknown as TranscriptionService;
     const entries = { saveGuidedDraftAnswer: vi.fn() } as unknown as EntriesService;
     const formatting = {
-      formatTranscript: vi.fn(async (_userId: string, _entryId: string, transcript: string) => transcript),
+      formatTranscript: vi.fn(
+        async (_userId: string, _entryId: string, transcript: string) => transcript,
+      ),
     } as TranscriptFormatting;
     const jobs = new TranscriptionJobsService(transcription, entries, formatting);
 
@@ -25,7 +27,10 @@ describe('asynchronous transcription jobs', () => {
 
     finish('Kept transcript');
     await vi.waitFor(() =>
-      expect(jobs.find('user-1', id)).toEqual({ status: 'completed', transcript: 'Kept transcript' }),
+      expect(jobs.find('user-1', id)).toEqual({
+        status: 'completed',
+        transcript: 'Kept transcript',
+      }),
     );
     expect(entries.saveGuidedDraftAnswer).toHaveBeenCalledWith(
       'user-1',

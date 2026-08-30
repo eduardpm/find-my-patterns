@@ -169,7 +169,9 @@ export class EntriesRepository {
   findGuidedAnswers(userId: string, entryId: string): GuidedAnswer[] {
     const rows = this.db
       .forUser(userId)
-      .prepare('SELECT * FROM guiding_question_answers WHERE user_id = ? AND entry_id = ? ORDER BY order_index')
+      .prepare(
+        'SELECT * FROM guiding_question_answers WHERE user_id = ? AND entry_id = ? ORDER BY order_index',
+      )
       .all(userId, entryId) as Array<{
       id: string;
       entry_id: string;

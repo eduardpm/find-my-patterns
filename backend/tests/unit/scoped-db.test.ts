@@ -40,9 +40,9 @@ describe('ScopedDb (M-1b, #46)', () => {
   it('refuses an INSERT whose column list forgot user_id — the exact footgun #134 documented: a forgotten column silently defaults to DEFAULT_USER_ID', () => {
     const scoped = createScopedDb(fakeRaw());
     const handle = scoped.forUser('user-a');
-    expect(() =>
-      handle.prepare('INSERT INTO topics (id, name, aliases) VALUES (?, ?, ?)'),
-    ).toThrow(UnscopedQueryError);
+    expect(() => handle.prepare('INSERT INTO topics (id, name, aliases) VALUES (?, ?, ?)')).toThrow(
+      UnscopedQueryError,
+    );
   });
 
   it('lets an INSERT that includes user_id in its column list through', () => {
@@ -56,7 +56,9 @@ describe('ScopedDb (M-1b, #46)', () => {
   it('never touches shared reference vocabulary — feelings/feeling_groups/guiding_questions carry no user_id column at all', () => {
     const scoped = createScopedDb(fakeRaw());
     const handle = scoped.forUser('user-a');
-    expect(() => handle.prepare('SELECT "key", label FROM feelings ORDER BY sort_order')).not.toThrow();
+    expect(() =>
+      handle.prepare('SELECT "key", label FROM feelings ORDER BY sort_order'),
+    ).not.toThrow();
     expect(() => handle.prepare('SELECT "key" FROM guiding_questions')).not.toThrow();
   });
 

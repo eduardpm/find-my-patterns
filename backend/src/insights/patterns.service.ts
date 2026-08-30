@@ -1351,15 +1351,7 @@ export class PatternsService {
              confounders, narration_attempts, narration_next_attempt_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(
-            patternId,
-            userId,
-            candidate.topicId,
-            candidate.feelingKey,
-            now,
-            now,
-            ...values,
-          );
+          .run(patternId, userId, candidate.topicId, candidate.feelingKey, now, now, ...values);
       } else {
         patternId = previous.id;
         handle
@@ -1375,7 +1367,9 @@ export class PatternsService {
           .run(...values, ...(changed ? [now] : []), patternId, userId);
       }
 
-      handle.prepare('DELETE FROM pattern_entries WHERE user_id = ? AND pattern_id = ?').run(userId, patternId);
+      handle
+        .prepare('DELETE FROM pattern_entries WHERE user_id = ? AND pattern_id = ?')
+        .run(userId, patternId);
       const insertLink = handle.prepare(
         'INSERT INTO pattern_entries (pattern_id, entry_id, user_id) VALUES (?, ?, ?)',
       );
@@ -1405,7 +1399,9 @@ export class PatternsService {
         excludedFromThreshold,
         windowCounts,
       );
-      handle.prepare('DELETE FROM pattern_entries WHERE user_id = ? AND pattern_id = ?').run(userId, pattern.id);
+      handle
+        .prepare('DELETE FROM pattern_entries WHERE user_id = ? AND pattern_id = ?')
+        .run(userId, pattern.id);
       handle.prepare('DELETE FROM patterns WHERE id = ? AND user_id = ?').run(pattern.id, userId);
     }
 

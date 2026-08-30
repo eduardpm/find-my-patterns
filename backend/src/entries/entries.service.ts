@@ -292,7 +292,9 @@ export class EntriesService {
     // primary key that a repeated word would collide with.
     const ordered = [...new Set(keys)];
     const handle = this.db.forUser(userId);
-    handle.prepare('DELETE FROM entry_feelings WHERE user_id = ? AND entry_id = ?').run(userId, entryId);
+    handle
+      .prepare('DELETE FROM entry_feelings WHERE user_id = ? AND entry_id = ?')
+      .run(userId, entryId);
     const insert = handle.prepare(
       `INSERT INTO entry_feelings (entry_id, user_id, feeling_key, position, intensity)
        VALUES (?, ?, ?, ?, ?)`,
@@ -417,8 +419,12 @@ export class EntriesService {
       handle
         .prepare('DELETE FROM guiding_question_answers WHERE user_id = ? AND entry_id = ?')
         .run(userId, entryId);
-      handle.prepare('DELETE FROM entry_feelings WHERE user_id = ? AND entry_id = ?').run(userId, entryId);
-      handle.prepare('DELETE FROM inference_jobs WHERE user_id = ? AND entry_id = ?').run(userId, entryId);
+      handle
+        .prepare('DELETE FROM entry_feelings WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM inference_jobs WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
       handle.prepare('DELETE FROM diary_entries WHERE id = ? AND user_id = ?').run(entryId, userId);
     });
   }
@@ -606,7 +612,15 @@ export class EntriesService {
            feeling_intensity = ?, updated_at = ?, version = version + 1
            WHERE id = ? AND user_id = ?`,
         )
-        .run(rawText, feelingKey, feelingSource, intensity, encodeDateTime(nowUtc()), entryId, userId);
+        .run(
+          rawText,
+          feelingKey,
+          feelingSource,
+          intensity,
+          encodeDateTime(nowUtc()),
+          entryId,
+          userId,
+        );
 
       // Rewritten even when the feelings themselves did not change, because an intensity-only
       // edit — the user rating a second feeling on an entry they already wrote — changes nothing
@@ -618,7 +632,9 @@ export class EntriesService {
       // entry no longer contains. So the links are dropped and the entry goes back through the
       // pipeline. A feeling-only edit changes nothing the analyser reads, so it is left alone.
       if (textChanged && rawText.trim()) {
-        handle.prepare('DELETE FROM entry_topics WHERE user_id = ? AND entry_id = ?').run(userId, entryId);
+        handle
+          .prepare('DELETE FROM entry_topics WHERE user_id = ? AND entry_id = ?')
+          .run(userId, entryId);
         // A pairing is a claim about *this wording* of the entry — once the topics it named are
         // gone, a stored pairing (suggested or confirmed alike) no longer describes anything real,
         // the same reasoning that drops `entry_topics` here.
@@ -654,13 +670,21 @@ export class EntriesService {
       handle
         .prepare('DELETE FROM guiding_question_answers WHERE user_id = ? AND entry_id = ?')
         .run(userId, entryId);
-      handle.prepare('DELETE FROM entry_feelings WHERE user_id = ? AND entry_id = ?').run(userId, entryId);
-      handle.prepare('DELETE FROM entry_topics WHERE user_id = ? AND entry_id = ?').run(userId, entryId);
+      handle
+        .prepare('DELETE FROM entry_feelings WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM entry_topics WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
       handle
         .prepare('DELETE FROM entry_topic_feelings WHERE user_id = ? AND entry_id = ?')
         .run(userId, entryId);
-      handle.prepare('DELETE FROM pattern_entries WHERE user_id = ? AND entry_id = ?').run(userId, entryId);
-      handle.prepare('DELETE FROM inference_jobs WHERE user_id = ? AND entry_id = ?').run(userId, entryId);
+      handle
+        .prepare('DELETE FROM pattern_entries WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
+      handle
+        .prepare('DELETE FROM inference_jobs WHERE user_id = ? AND entry_id = ?')
+        .run(userId, entryId);
       handle.prepare('DELETE FROM diary_entries WHERE id = ? AND user_id = ?').run(entryId, userId);
       // Scoped to this user's own topics only — a topic another user still references (through
       // their own `entry_topics`/`patterns` rows) must never be considered for cleanup here; this

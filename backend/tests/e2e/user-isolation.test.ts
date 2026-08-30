@@ -63,12 +63,10 @@ interface UserCtx {
 }
 
 async function registerUser(email: string): Promise<UserCtx> {
-  const reg = (
-    await agent().post('/auth/register').send({ email, password: PASSWORD }).expect(201)
-  ).body as { id: string; email: string };
-  const login = (
-    await agent().post('/auth/token').send({ email, password: PASSWORD }).expect(200)
-  ).body as { token: string };
+  const reg = (await agent().post('/auth/register').send({ email, password: PASSWORD }).expect(201))
+    .body as { id: string; email: string };
+  const login = (await agent().post('/auth/token').send({ email, password: PASSWORD }).expect(200))
+    .body as { token: string };
   return { id: reg.id, email: reg.email, token: login.token, client: agent(login.token) };
 }
 
@@ -282,12 +280,18 @@ describe('entries — POST, GET (list/one/echo), PATCH, PUT topic-feelings, DELE
   });
 
   it('DELETE on the other account’s entry is a 404 and leaves the row intact', async () => {
-    await userB.client.delete(`/entries/${entriesA[0].id}?version=${entriesA[0].version}`).expect(404);
+    await userB.client
+      .delete(`/entries/${entriesA[0].id}?version=${entriesA[0].version}`)
+      .expect(404);
     await userA.client.get(`/entries/${entriesA[0].id}`).expect(200);
   });
 
   it('an account can freely create and delete its own scratch entry', async () => {
-    const scratch = await writeConfirmedEntry(userB.client, 'A quiet entry about nothing much.', 'neutral');
+    const scratch = await writeConfirmedEntry(
+      userB.client,
+      'A quiet entry about nothing much.',
+      'neutral',
+    );
     await userB.client.delete(`/entries/${scratch.id}?version=${scratch.version}`).expect(204);
     await userB.client.get(`/entries/${scratch.id}`).expect(404);
   });
@@ -298,8 +302,12 @@ describe('GET /insights, /insights/when, /insights/series, /insights/digest, /in
     insightsA = (await userA.client.get('/insights').expect(200)).body as InsightsOut;
     insightsB = (await userB.client.get('/insights').expect(200)).body as InsightsOut;
 
-    const coffeeA = insightsA.patterns.find((p) => p.topic === 'coffee' && p.feeling === 'exhausted');
-    const coffeeB = insightsB.patterns.find((p) => p.topic === 'coffee' && p.feeling === 'exhausted');
+    const coffeeA = insightsA.patterns.find(
+      (p) => p.topic === 'coffee' && p.feeling === 'exhausted',
+    );
+    const coffeeB = insightsB.patterns.find(
+      (p) => p.topic === 'coffee' && p.feeling === 'exhausted',
+    );
     expect(coffeeA).toBeDefined();
     expect(coffeeB).toBeDefined();
     // The number that would be wrong first if scoping leaked: 6, not 3, on either side.
@@ -381,7 +389,10 @@ describe('topics — GET, POST alias, DELETE alias', () => {
 
   it('an account can alias, then remove the alias, on its own topic', async () => {
     const added = (
-      await userA.client.post(`/topics/${coffeeTopicIdA}/aliases`).send({ alias: 'joe' }).expect(200)
+      await userA.client
+        .post(`/topics/${coffeeTopicIdA}/aliases`)
+        .send({ alias: 'joe' })
+        .expect(200)
     ).body as { aliases: string[] };
     expect(added.aliases).toContain('joe');
     await userA.client.delete(`/topics/${coffeeTopicIdA}/aliases/joe`).expect(200);
@@ -467,7 +478,8 @@ describe('experiments — POST, GET active, GET results, POST abandon', () => {
 describe('GET /monthly-summary', () => {
   it('counts only the caller’s own entries for the month', async () => {
     const month = new Date().toISOString().slice(0, 7);
-    const summaryA = (await userA.client.get(`/monthly-summary?month=${month}`).expect(200)).body as {
+    const summaryA = (await userA.client.get(`/monthly-summary?month=${month}`).expect(200))
+      .body as {
       days: Array<{ entry_count: number }>;
     };
     const total = summaryA.days.reduce((sum, d) => sum + d.entry_count, 0);
@@ -541,12 +553,16 @@ describe('guided entry drafts — full lifecycle, per account', () => {
       .draft_key as string;
 
     await userB.client
-      .post(`/guided-entry-drafts/${draftToDeleteA}/questions/${guidingQuestionKey}/transcriptions?order=0`)
+      .post(
+        `/guided-entry-drafts/${draftToDeleteA}/questions/${guidingQuestionKey}/transcriptions?order=0`,
+      )
       .set('Content-Type', 'audio/webm')
       .send(Buffer.from('not real audio'))
       .expect(404);
     await userA.client
-      .post(`/guided-entry-drafts/${draftToDeleteA}/questions/${guidingQuestionKey}/transcriptions?order=0`)
+      .post(
+        `/guided-entry-drafts/${draftToDeleteA}/questions/${guidingQuestionKey}/transcriptions?order=0`,
+      )
       .set('Content-Type', 'audio/webm')
       .send(Buffer.from('not real audio'))
       .expect(202);
@@ -661,11 +677,17 @@ describe('route-inventory guard (task 4)', () => {
   it('every controller route Nest declares was exercised by this suite at least once', () => {
     const routes = enumerateRoutes(registeredControllers());
     const uncovered = routes.filter(
-      (route) => ![...covered].some((request) => routeMatches(route, request.split(' ')[1]) && request.startsWith(route.method)),
+      (route) =>
+        ![...covered].some(
+          (request) =>
+            routeMatches(route, request.split(' ')[1]) && request.startsWith(route.method),
+        ),
     );
 
     if (uncovered.length > 0) {
-      const list = uncovered.map((r) => `${r.method} ${r.path} (${r.controllerName}#${r.handlerName})`);
+      const list = uncovered.map(
+        (r) => `${r.method} ${r.path} (${r.controllerName}#${r.handlerName})`,
+      );
       throw new Error(
         `${uncovered.length} route(s) exist with no isolation coverage in this suite:\n` +
           list.join('\n') +
