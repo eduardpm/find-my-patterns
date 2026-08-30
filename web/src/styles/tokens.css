@@ -166,7 +166,7 @@
    */
   --feeling-group-uplifted: #2a7430;
   --feeling-group-steady: #5f5f5f;
-  --feeling-group-tense: #b3441a;
+  --feeling-group-tense: #af4319;
   --feeling-group-low: #3f4ba8;
 
   /* Warm-tinted rather than neutral black, so shadows sit on paper instead of over it. */
@@ -249,7 +249,7 @@
   --color-success: #1b5e20;
   --color-success-container: #e5efe7;
 
-  --feeling-group-uplifted: #2f7355;
+  --feeling-group-uplifted: #2e7154;
   --feeling-group-steady: #5c6172;
   --feeling-group-tense: #a94523;
   --feeling-group-low: #3f4ba8;
