@@ -438,8 +438,15 @@ class _ChartCanvasState extends State<_ChartCanvas> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                width: JournalSpacing.x5,
+              // `JournalSpacing.x5` used to be a fixed width here, sized for
+              // "+1"/"-1" at the default text scale only -- at 1.3x/2x it no
+              // longer fit either tick, and each broke mid-word ("+1" as
+              // "+"/"1") since a bare `Text` cannot wrap between two
+              // characters that are not a word boundary. `IntrinsicWidth`
+              // sizes the column to whatever its three short, fixed ticks
+              // actually need at the real scale, and the sibling `Expanded`
+              // canvas simply gets whatever is left.
+              IntrinsicWidth(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.end,
