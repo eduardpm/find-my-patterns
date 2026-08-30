@@ -494,11 +494,21 @@ class _WithdrawalsSection extends StatelessWidget {
                   style: theme.textTheme.titleLarge,
                 ),
               ),
+              // Wrapped in `Flexible` rather than left as a bare `Text` --
+              // at a large text scale "N since you last looked" no longer
+              // fits beside the title on one line (measured 348px of
+              // overflow at 320dp/2x, #155a). The title stays the
+              // load-bearing content and keeps its own `Expanded`; this
+              // secondary status line wraps onto a second line within its
+              // own share of the row instead of overflowing past it.
               if (newCount > 0)
-                Text(
-                  '$newCount since you last looked',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: theme.colorScheme.primary,
+                Flexible(
+                  child: Text(
+                    '$newCount since you last looked',
+                    textAlign: TextAlign.end,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: theme.colorScheme.primary,
+                    ),
                   ),
                 ),
             ],
@@ -561,7 +571,17 @@ class _WorthTryingSection extends StatelessWidget {
             children: [
               Icon(Icons.auto_awesome, size: 18, color: journal.accent),
               const SizedBox(width: JournalSpacing.x2),
-              Text('Worth trying', style: theme.textTheme.titleLarge),
+              // `Flexible`, not a bare `Text` -- `titleLarge`'s serif at
+              // 320dp inside this card's own padding already overflows by
+              // 34px at 1.0x text scale (measured, #155a), before any
+              // dynamic-type scaling is applied at all. The icon keeps its
+              // fixed size; the label wraps within whatever width is left.
+              Flexible(
+                child: Text(
+                  'Worth trying',
+                  style: theme.textTheme.titleLarge,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: JournalSpacing.x3),
