@@ -9,6 +9,7 @@ import 'package:find_my_patterns/core/diary/insights_api.dart';
 import 'package:find_my_patterns/core/diary/mood_series.dart';
 import 'package:find_my_patterns/core/diary/pattern.dart';
 import 'package:find_my_patterns/core/settings/settings.dart';
+import 'package:find_my_patterns/core/theme/journal_metrics.dart';
 import 'package:find_my_patterns/features/insights/insights_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -761,6 +762,131 @@ void main() {
       expect(adapter.requests, hasLength(8));
     },
   );
+
+  group('dynamic type (#155a)', () {
+    // 320/360dp x 1.0/1.3/2.0 -- the matrix `mobile/ACCESSIBILITY.md` §3
+    // asks every screen to clear, 1.0 included: #150 found a real overflow
+    // that reproduced identically at 1.0x, so a scale-only sweep would have
+    // missed it.
+    //
+    // The fixture forces `insufficientData: true` so the confirmed/weak
+    // pattern feed (`PatternCard`/`WeakSignalRow`) never renders -- both are
+    // owned by other tickets, already covered by their own tests, and out
+    // of this split's scope to touch. This matrix exercises only what
+    // `insights_screen.dart` itself owns: the page header, the withdrawals
+    // section, and "Worth trying". A pattern with a `recommendation` still
+    // renders its "Worth trying" tile regardless of `insufficientData`
+    // (`_Content.recommended` is computed before that gate), which is what
+    // lets this fixture reach `_WorthTryingSection`/`_RecommendationTile`
+    // without ever building a `PatternCard`.
+    Future<void> pump(
+      WidgetTester tester, {
+      required double width,
+      required double textScale,
+    }) async {
+      tester.view.physicalSize = Size(width, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final adapter = FakeHttpAdapter([
+        FakeReply(200, body: feelingsCatalogJson()),
+        FakeReply(
+          200,
+          body: insightsResultJson(
+            patterns: [
+              patternJson(
+                id: 'p-exercise',
+                topic: 'exercise',
+                direction: 'keep',
+                recommendation: recommendationJson(
+                  headline: 'More long exercise days to build a lasting habit',
+                  sentence:
+                      'On days without a long structured exercise session, '
+                      'anxious is 2.7× more likely (4 of 6 without vs 1 of '
+                      "4 with). More exercise days may help — here's the "
+                      'evidence.',
+                  patternRef: 'p-exercise',
+                ),
+              ),
+            ],
+            withdrawals: [withdrawalJson(topic: 'a long topic name')],
+            // Two digits, so the counter text is not trivially short --
+            // #155a's own probe measured 348px of overflow at 320dp/2x
+            // with this same double-digit count before the fix below.
+            newWithdrawalCount: 12,
+            insufficientData: true,
+          ),
+        ),
+        FakeReply(200, body: whenInsightsJson()),
+        noActiveExperimentReply(),
+        FakeReply(200, body: seriesJson()),
+      ]);
+
+      await tester.pumpWidget(
+        Builder(
+          builder: (context) => MediaQuery(
+            // `.copyWith` on the ambient data, never a bare `MediaQueryData`
+            // -- the latter would discard `size`/`padding` outright
+            // (ACCESSIBILITY.md §3's pitfall).
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: configuredHarness(adapter).wrap(const InsightsScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 1.3, 2.0]) {
+        testWidgets(
+          '${width.toInt()}dp / ${scale}x text scale: header, withdrawals '
+          'and "Worth trying" render with no overflow',
+          (tester) async {
+            await pump(tester, width: width, textScale: scale);
+
+            expect(tester.takeException(), isNull);
+            // Positive assertions the content actually rendered, paired
+            // with the exception check above -- `takeException` alone
+            // passes on a tree that painted nothing at all
+            // (ACCESSIBILITY.md §3).
+            expect(find.text('Insights'), findsOneWidget);
+            expect(find.text('Recently withdrawn'), findsOneWidget);
+            expect(
+              find.text('12 since you last looked'),
+              findsOneWidget,
+            );
+            expect(find.text('Worth trying'), findsOneWidget);
+            expect(
+              find.text('More long exercise days to build a lasting habit'),
+              findsOneWidget,
+            );
+            expect(find.text('Not enough data yet'), findsOneWidget);
+          },
+        );
+      }
+    }
+
+    testWidgets(
+      'the "Worth trying" recommendation tile stays at least 48dp tall '
+      '(the touch-target floor)',
+      (tester) async {
+        // 1.0x is the worst case for height here, not the best: a larger
+        // text scale only grows the tile's two lines of text, never
+        // shrinks them, so this is the smallest the tappable `InkWell`
+        // ever gets.
+        await pump(tester, width: 320, textScale: 1);
+
+        final tile = find.ancestor(
+          of: find.text('More long exercise days to build a lasting habit'),
+          matching: find.byType(InkWell),
+        );
+        final size = tester.getSize(tile);
+        expect(size.height, greaterThanOrEqualTo(JournalSpacing.x7));
+      },
+    );
+  });
 }
 
 /// Domain-object versions of the JSON fixtures, for the [_ControllableInsightsApi]

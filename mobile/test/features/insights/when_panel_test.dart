@@ -380,62 +380,107 @@ void main() {
     });
   });
 
-  group('at 320dp width and 2x text scale', () {
-    Widget narrow(Widget child) => MediaQuery(
-      data: const MediaQueryData(
-        size: Size(320, 900),
-        textScaler: TextScaler.linear(2),
+  group('dynamic type (#155a)', () {
+    // 320/360dp x 1.0/1.3/2.0 -- the matrix `mobile/ACCESSIBILITY.md` §3
+    // asks every screen to clear, 1.0 included: #150 found a real overflow
+    // that reproduced identically at 1.0x, so a scale-only sweep would have
+    // missed it. `.copyWith` on the ambient `MediaQuery`, never a bare
+    // `MediaQueryData`, per the same doc's pitfall -- the latter would
+    // discard every other ambient field outright.
+    Widget narrow(
+      Widget child, {
+      required double width,
+      required double textScale,
+    }) => Builder(
+      builder: (context) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          size: Size(width, 1400),
+          textScaler: TextScaler.linear(textScale),
+        ),
+        child: app(child),
       ),
-      child: app(child),
     );
 
-    testWidgets('renders every row with no overflow', (tester) async {
-      await tester.pumpWidget(
-        narrow(
-          WhenPanel(
-            insights: buildWhenInsights(
-              weekdays: [
-                buildBucket(key: 'wednesday', label: 'Wednesday'),
-                buildBucket(
-                  key: 'thursday',
-                  label: 'Thursday',
-                  sufficient: false,
-                  averageValence: null,
-                  entryCount: 1,
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 1.3, 2.0]) {
+        testWidgets(
+          '${width.toInt()}dp / ${scale}x text scale: every row family, '
+          'the heat strip and both badges render with no overflow',
+          (tester) async {
+            await tester.pumpWidget(
+              narrow(
+                WhenPanel(
+                  insights: buildWhenInsights(
+                    weekdays: [
+                      // "Wednesday" -- the longest full weekday name this
+                      // panel ever renders, in the label column #155a's
+                      // split brief flagged as fixed-width (104dp,
+                      // `_labelColumnWidth`).
+                      buildBucket(key: 'wednesday', label: 'Wednesday'),
+                      buildBucket(
+                        key: 'thursday',
+                        label: 'Thursday',
+                        sufficient: false,
+                        averageValence: null,
+                        entryCount: 1,
+                      ),
+                    ],
+                    timesOfDay: [
+                      buildBucket(key: 'afternoon', label: 'Afternoon'),
+                    ],
+                    bestWeekday: 'wednesday',
+                    worstTimeOfDay: 'afternoon',
+                    // Exercises the heat strip's own row (`:569`/`:678`)
+                    // and its `DecoratedBox`/dashed cells (`:629`) at the
+                    // same time as the row families above.
+                    hourly: buildHourlyBuckets(),
+                  ),
                 ),
-              ],
-              timesOfDay: [
-                buildBucket(key: 'afternoon', label: 'Afternoon'),
-              ],
-              bestWeekday: 'wednesday',
-              worstTimeOfDay: 'afternoon',
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
+                width: width,
+                textScale: scale,
+              ),
+            );
+            await tester.pumpAndSettle();
 
-      expect(tester.takeException(), isNull);
-      expect(find.text('By day of the week'), findsOneWidget);
-      expect(find.text('By time of day'), findsOneWidget);
-      expect(find.text('BEST'), findsOneWidget);
-      expect(find.text('HARDEST'), findsOneWidget);
-      expect(
-        find.text('○ fewer than 3 entries — not enough to show'),
-        findsOneWidget,
-      );
-    });
+            expect(tester.takeException(), isNull);
+            // Positive assertions the content actually rendered, paired
+            // with the exception check above (ACCESSIBILITY.md §3):
+            // `takeException` alone passes on a tree that painted nothing.
+            expect(find.text('By day of the week'), findsOneWidget);
+            expect(find.text('By time of day'), findsOneWidget);
+            expect(find.text('Wednesday'), findsOneWidget);
+            expect(find.text('BEST'), findsOneWidget);
+            expect(find.text('HARDEST'), findsOneWidget);
+            expect(
+              find.text('○ fewer than 3 entries — not enough to show'),
+              findsOneWidget,
+            );
+            expect(find.text('By hour'), findsOneWidget);
+          },
+        );
 
-    testWidgets('renders the empty window state with no overflow', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        narrow(WhenPanel(insights: buildWhenInsights(totalEntries: 0))),
-      );
-      await tester.pumpAndSettle();
+        testWidgets(
+          '${width.toInt()}dp / ${scale}x text scale: the empty-window '
+          'state renders with no overflow',
+          (tester) async {
+            await tester.pumpWidget(
+              narrow(
+                WhenPanel(insights: buildWhenInsights(totalEntries: 0)),
+                width: width,
+                textScale: scale,
+              ),
+            );
+            await tester.pumpAndSettle();
 
-      expect(tester.takeException(), isNull);
-    });
+            expect(tester.takeException(), isNull);
+            expect(
+              find.textContaining('this fills in as you write'),
+              findsOneWidget,
+            );
+          },
+        );
+      }
+    }
   });
 
   group('heat strip (CH-5)', () {

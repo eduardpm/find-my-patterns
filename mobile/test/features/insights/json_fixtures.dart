@@ -46,6 +46,7 @@ Map<String, Object?> patternJson({
   bool isStrong = false,
   String? historicalNote,
   List<Map<String, Object?>> evidence = const [],
+  Map<String, Object?>? recommendation,
 }) => {
   'id': id,
   'kind': kind,
@@ -70,6 +71,23 @@ Map<String, Object?> patternJson({
   'confounders': <Object?>[],
   'evidence': evidence,
   'last_updated_at': '2026-08-20T10:00:00Z',
+  'recommendation': recommendation,
+};
+
+/// One `recommendation` object on a pattern (R-1).
+Map<String, Object?> recommendationJson({
+  String actionTopic = 'exercise',
+  String headline = 'More exercise days',
+  String sentence =
+      'On days without exercise, anxious is 2.7× more likely '
+      '(4 of 6 without vs 1 of 4 with). More exercise days may help — '
+      "here's the evidence.",
+  String patternRef = 'pattern-1',
+}) => {
+  'action_topic': actionTopic,
+  'headline': headline,
+  'sentence': sentence,
+  'pattern_ref': patternRef,
 };
 
 /// One withdrawal in `GET /insights`'s `withdrawals` array.
