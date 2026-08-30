@@ -83,10 +83,14 @@ final todayCalendar = ScreenArea(
     ScreenCase(
       name: 'WritingStreakLine',
       source: 'features/today/writing_streak_line.dart',
+      // 365 rather than the two-digit "12" this was first caught failing
+      // on: a three-digit streak is a longer string and a real value a
+      // long-running diary reaches, and it turns out no worse than "12" —
+      // both pass once the label wraps instead of overflowing.
       build: () => MaterialApp(
         theme: buildLightTheme(),
         home: const Scaffold(
-          body: WritingStreakLine(streakDays: 12),
+          body: WritingStreakLine(streakDays: 365),
         ),
       ),
     ),

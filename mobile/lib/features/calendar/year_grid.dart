@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -35,6 +37,31 @@ const List<String> _monthNames = [
 ];
 
 String _monthAbbreviation(int month) => _monthNames[month - 1].substring(0, 3);
+
+/// The single-letter fallback for [_monthAbbreviation] — "J" for January,
+/// and for five other months besides, since a year has no shortage of
+/// repeated initials. Used only once none of the twelve three-letter
+/// abbreviations fits its own column at the real width and scale (see
+/// [YearGrid]'s header, and `calendar_screen.dart`'s identically-shaped
+/// `_WeekdayHeaderRow`, which the same defect family and the same fix
+/// shape already shipped for): every column drops to this together, never
+/// only the columns whose glyphs happen to be widest.
+String _monthInitial(int month) => _monthNames[month - 1].substring(0, 1);
+
+/// The natural, unwrapped width [text] would render at in [style] under
+/// [scaler] — the same `TextPainter`-at-the-real-scaler technique
+/// `calendar_screen.dart`'s own `_measureWidth` uses for its weekday
+/// header, asking "how wide does this want to be" before deciding whether
+/// a column can hold it, rather than guessing from a hardcoded character
+/// count.
+double _measureWidth(String text, TextStyle? style, TextScaler scaler) {
+  final painter = TextPainter(
+    text: TextSpan(text: text, style: style),
+    textDirection: TextDirection.ltr,
+    textScaler: scaler,
+  )..layout();
+  return painter.width;
+}
 
 /// One cell in the year grid: a real calendar date, and the series point
 /// for it if the diary wrote anything that day (`null` when it did not).
@@ -322,6 +349,34 @@ class _YearGridState extends ConsumerState<YearGrid> {
                 void handleLongPressEnd(LongPressEndDetails details) =>
                     setState(() => _longPressedCell = null);
 
+                // Three-letter month abbreviations ("Jan", "Sep", ...) when
+                // every column's own share of the header row can hold the
+                // widest of them, falling back to single letters for every
+                // column at once once it can't -- the sweep measured this
+                // row overflowing at *every* matrix cell it checked,
+                // including 1.0x, because twelve equal columns across a
+                // 320-360dp screen never had room for a three-letter label
+                // in the first place, dynamic type or not. Same "measure
+                // the widest label once, one shared yes/no decision for
+                // every column" shape as `calendar_screen.dart`'s
+                // `_WeekdayHeaderRow` (#155), which shipped the identical
+                // fix for the identical row-of-near-identical-siblings
+                // problem.
+                final monthHeaderStyle = theme.textTheme.labelSmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+                final scaler = MediaQuery.textScalerOf(context);
+                final columnWidth = geometry.size.width / 12;
+                final widestMonthLabelWidth = [
+                  for (var month = 1; month <= 12; month++)
+                    _measureWidth(
+                      _monthAbbreviation(month),
+                      monthHeaderStyle,
+                      scaler,
+                    ),
+                ].reduce(math.max);
+                final fitsFullAbbreviation =
+                    widestMonthLabelWidth <= columnWidth;
+
                 return Semantics(
                   container: true,
                   label: yearGridSummary(state.year, state.points),
@@ -339,13 +394,10 @@ class _YearGridState extends ConsumerState<YearGrid> {
                                     Expanded(
                                       child: Center(
                                         child: Text(
-                                          _monthAbbreviation(month),
-                                          style: theme.textTheme.labelSmall
-                                              ?.copyWith(
-                                                color: theme
-                                                    .colorScheme
-                                                    .onSurfaceVariant,
-                                              ),
+                                          fitsFullAbbreviation
+                                              ? _monthAbbreviation(month)
+                                              : _monthInitial(month),
+                                          style: monthHeaderStyle,
                                         ),
                                       ),
                                     ),
