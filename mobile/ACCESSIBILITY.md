@@ -96,6 +96,23 @@ Test this with `find.bySemanticsLabel('X')`, not `find.byTooltip('X')`.
 `byTooltip` only proves the tooltip string is right; it does not prove a
 screen reader can find the button by name.
 
+**A bare `Semantics(label: ...)` sibling can silently merge into its
+neighbours' node.** Several small `Semantics`-labelled widgets sitting
+side by side inside one `ListView` item (or any other single semantics
+node an ancestor already scopes) do not automatically get their own
+node each — without `container: true`, Flutter merges every descendant
+label upward into one aggregate string ("Monday\nTuesday\n...\nSunday"
+instead of seven separate "Monday", "Tuesday", ... nodes), and
+`find.bySemanticsLabel('Monday')` then finds nothing even though the
+word is right there in the tree. `_MonthSwitcher`'s two chevrons already
+needed `container: true` for the same reason (`calendar_screen.dart`);
+`_WeekdayHeaderRow`'s per-column `Semantics` (#155) is the same fix for
+plain labelled text, not just icon buttons. Debug this with
+`debugDumpSemanticsTree()` rather than guessing from the widget tree —
+the merge is invisible in `flutter analyze`, in `find.byType`, and in a
+`Semantics.label` read off the widget itself; it only shows up once the
+tree is actually built and the accessibility layer has merged it.
+
 ## 3. Dynamic type: measure, don't guess
 
 Every screen is checked at **320dp width, textScale 1.3 and 2.0** — the
@@ -178,6 +195,24 @@ paired with a positive content check, plus targeted `tester.getSize`/
 `getTopLeft`, already covers everything this ticket's own fixes needed;
 inventing a shared wrapper for that now would be speculative rather than
 demand-driven.
+
+**A row of near-identical siblings needs one shared fit decision, not
+seven independent ones.** `calendar_screen.dart`'s weekday header (#155)
+renders seven short labels of otherwise-equal width ("Mo", "Tu", "We",
+...) across seven equal columns, and at 320dp/2x only "MO" — "M" being
+the widest capital in the set — no longer fit its column and wrapped
+onto a second line while its six siblings stayed on one: a ragged,
+two-line-tall header, not an overflow (nothing threw). Letting each
+column decide independently whether *it* fits (the naive per-column
+`FittedBox`/wrap) fixes the overflow but produces a *different*
+inconsistency — the one column that had to shrink now looks visually
+smaller, or is the only one on two lines, than its neighbours. The fix
+measures the *widest* label once against the real per-column width and
+lets that single yes/no decision drive every column identically, so all
+seven either keep their normal form or all seven drop to a shorter one
+together. Any row of siblings that are supposed to look uniform (a
+header, a legend, a row of short badges) should make this decision once
+and apply it everywhere, not per-item.
 
 ## 4. Touch targets: ≥44×44, verified by measurement
 

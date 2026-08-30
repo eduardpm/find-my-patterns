@@ -363,5 +363,98 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('September 2026'), findsOneWidget);
     });
+
+    testWidgets(
+      'the weekday header drops to single letters uniformly rather than '
+      'letting only "MO" wrap onto two lines (#155)',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 2000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final handle = tester.ensureSemantics();
+
+        final harness = configuredHarness(
+          FakeHttpAdapter([
+            FakeReply(200, body: feelingsCatalogJson()),
+            FakeReply(200, body: monthlySummaryJson(month: '2026-08')),
+          ]),
+        );
+        await tester.pumpWidget(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: app(harness),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+
+        // At 320dp/2x, "MO" no longer fits its 1/7 share of the row, so
+        // every column drops to a single letter together -- never just the
+        // one column whose glyphs happen to be widest.
+        expect(find.text('MO'), findsNothing);
+        expect(find.text('M'), findsOneWidget);
+        expect(find.text('W'), findsOneWidget);
+        expect(find.text('F'), findsOneWidget);
+        // Every weekday header cell renders at the same height as its
+        // siblings -- #155's own defect was "MO" alone wrapping onto a
+        // second line while its six neighbours stayed on one.
+        final mHeight = tester.getSize(find.text('M')).height;
+        final wHeight = tester.getSize(find.text('W')).height;
+        final fHeight = tester.getSize(find.text('F')).height;
+        expect(wHeight, mHeight);
+        expect(fHeight, mHeight);
+
+        // The visible label shrank to a single letter, but the accessible
+        // name stays the full weekday -- #150's semantics work must not
+        // regress because of a layout fix.
+        expect(find.bySemanticsLabel('Monday'), findsOneWidget);
+        expect(find.bySemanticsLabel('Tuesday'), findsOneWidget);
+        expect(find.bySemanticsLabel('Wednesday'), findsOneWidget);
+        expect(find.bySemanticsLabel('Thursday'), findsOneWidget);
+        expect(find.bySemanticsLabel('Friday'), findsOneWidget);
+        expect(find.bySemanticsLabel('Saturday'), findsOneWidget);
+        expect(find.bySemanticsLabel('Sunday'), findsOneWidget);
+        handle.dispose();
+      },
+    );
+
+    testWidgets(
+      'the weekday header keeps two-letter labels at 1.0x, where they fit, '
+      'and still announces full weekday names (#155 follow-up)',
+      (tester) async {
+        useTallScreen(tester);
+        final handle = tester.ensureSemantics();
+
+        final harness = configuredHarness(
+          FakeHttpAdapter([
+            FakeReply(200, body: feelingsCatalogJson()),
+            FakeReply(200, body: monthlySummaryJson(month: '2026-08')),
+          ]),
+        );
+        await tester.pumpWidget(app(harness));
+        await tester.pumpAndSettle();
+
+        expect(find.text('MO'), findsOneWidget);
+        expect(find.text('SU'), findsOneWidget);
+        // At the default scale, `Eyebrow`'s own bare `Semantics(label:
+        // ...)` -- no `container: true` -- sits inside `ListView`'s
+        // per-item semantics scoping and all seven columns merge into one
+        // node reading "Mo\nTu\n...\nSu" (confirmed on-device on `main`
+        // before this fix). The two-letter branch must carry the same
+        // unconditional `Semantics(container: true, label:
+        // _weekdayFullNames[i])` wrap as the single-letter branch, so the
+        // announced name is "Monday".."Sunday" here too, not merged and
+        // not the two-letter abbreviation -- the accessible name must not
+        // depend on which text scale happens to be active.
+        expect(find.bySemanticsLabel('Monday'), findsOneWidget);
+        expect(find.bySemanticsLabel('Sunday'), findsOneWidget);
+        handle.dispose();
+      },
+    );
   });
 }

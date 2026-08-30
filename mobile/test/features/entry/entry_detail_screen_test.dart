@@ -826,4 +826,194 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  group('dynamic type at the required matrix (#155)', () {
+    // The header row (date/time + mode `StatusBadge`), the feelings and
+    // topics `Wrap`s, and `_SupportingPatternRow` are the structures the
+    // orchestrator flagged as worth probing (`entry_detail_screen.dart`
+    // :385, :594, :615). Every cell below is measured, not assumed --
+    // including the ones that render clean, so the zeroes are recorded as
+    // evidence the sweep actually happened.
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 1.3, 2.0]) {
+        testWidgets(
+          'the read view renders with no overflow at '
+          '${width.toInt()}dp / ${scale}x',
+          (tester) async {
+            final harness = configuredHarness(
+              FakeHttpAdapter(
+                bootReplies(
+                  entry: FakeReply(
+                    200,
+                    body: entryJson(
+                      feelingKeys: const ['happy', 'sad', 'anxious'],
+                      feelingIntensities: const {
+                        'happy': 4,
+                        'sad': 2,
+                        'anxious': 3,
+                      },
+                      topics: const [
+                        {'id': 'topic-1', 'name': 'walking'},
+                        {'id': 'topic-2', 'name': 'accountability check-ins'},
+                      ],
+                    ),
+                  ),
+                  supportingPatterns: FakeReply(
+                    200,
+                    body: {
+                      'echoes': <Object?>[echoJson(topic: 'coffee')],
+                    },
+                  ),
+                ),
+              ),
+            );
+            tester.view.physicalSize = Size(width, 3000);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
+            await tester.pumpWidget(
+              Builder(
+                builder: (context) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(textScaler: TextScaler.linear(scale)),
+                  child: app(harness),
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+
+            expect(tester.takeException(), isNull);
+            // Positive assertions the content in every probed structure
+            // actually rendered, not just that nothing threw.
+            expect(find.text('Happy'), findsOneWidget);
+            expect(find.text('4 of 5'), findsOneWidget);
+            expect(find.text('walking'), findsOneWidget);
+            expect(find.text('accountability check-ins'), findsOneWidget);
+            expect(find.text('Coffee'), findsOneWidget);
+            expect(
+              find.text('Coffee shows up with feeling anxious often.'),
+              findsOneWidget,
+            );
+          },
+        );
+      }
+    }
+
+    testWidgets(
+      'the back, edit and delete buttons stay at least 48dp at 320dp/2x',
+      (tester) async {
+        final harness = configuredHarness(FakeHttpAdapter(bootReplies()));
+        tester.view.physicalSize = const Size(320, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: app(harness),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        for (final tooltip in ['Back', 'Edit entry', 'Delete entry']) {
+          final size = tester.getSize(find.byTooltip(tooltip));
+          expect(
+            size.width,
+            greaterThanOrEqualTo(48),
+            reason: '$tooltip width',
+          );
+          expect(
+            size.height,
+            greaterThanOrEqualTo(48),
+            reason: '$tooltip height',
+          );
+        }
+      },
+    );
+
+    testWidgets(
+      'the editor renders with no overflow at 320dp/2x, and its buttons '
+      'still meet the 48dp floor',
+      (tester) async {
+        final harness = configuredHarness(FakeHttpAdapter(bootReplies()));
+        tester.view.physicalSize = const Size(320, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: app(harness),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Edit entry'));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Save changes'), findsOneWidget);
+        expect(find.text('Cancel'), findsOneWidget);
+        final saveSize = tester.getSize(find.text('Save changes'));
+        expect(saveSize.width, greaterThan(0));
+        final saveButtonSize = tester.getSize(
+          find.ancestor(
+            of: find.text('Save changes'),
+            matching: find.byType(ElevatedButton),
+          ),
+        );
+        expect(saveButtonSize.height, greaterThanOrEqualTo(48));
+      },
+    );
+
+    testWidgets(
+      'the conflict panel renders with no overflow at 320dp/2x',
+      (tester) async {
+        final adapter = FakeHttpAdapter([
+          ...bootReplies(),
+          FakeReply(
+            409,
+            body: {
+              'error': {'code': 'stale_entry', 'message': 'stale'},
+              'current': entryJson(
+                rawText: "Someone else's edit.",
+                version: 9,
+              ),
+            },
+          ),
+        ]);
+        final harness = configuredHarness(adapter);
+        tester.view.physicalSize = const Size(320, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: app(harness),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Delete entry'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Delete'));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('This entry changed elsewhere'), findsOneWidget);
+        expect(find.text('Keep mine (overwrite)'), findsOneWidget);
+        expect(find.text('Keep editing mine'), findsOneWidget);
+        expect(find.text('Discard mine and use theirs'), findsOneWidget);
+      },
+    );
+  });
 }

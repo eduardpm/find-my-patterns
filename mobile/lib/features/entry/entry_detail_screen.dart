@@ -257,6 +257,16 @@ class _EntryDetailScreenState extends ConsumerState<EntryDetailScreen> {
                   onPressed: entry == null ? null : notifier.startEditing,
                   icon: const Icon(Icons.edit),
                   tooltip: 'Edit entry',
+                  // An `AppBar` action `IconButton` measures 40x40 here by
+                  // default (#155), under the 48dp floor
+                  // `ACCESSIBILITY.md` §4 sets for this app -- unlike the
+                  // `leading` slot, which the app bar itself reserves a
+                  // fixed 56dp square for. Same explicit-floor fix as
+                  // `today_screen.dart`'s dismiss button.
+                  constraints: const BoxConstraints(
+                    minWidth: JournalSpacing.x7,
+                    minHeight: JournalSpacing.x7,
+                  ),
                 ),
               ),
             ),
@@ -273,6 +283,12 @@ class _EntryDetailScreenState extends ConsumerState<EntryDetailScreen> {
                     : () => unawaited(_confirmDelete()),
                 icon: const Icon(Icons.delete),
                 tooltip: 'Delete entry',
+                // Same 40x40-by-default AppBar action floor fix as "Edit
+                // entry" above.
+                constraints: const BoxConstraints(
+                  minWidth: JournalSpacing.x7,
+                  minHeight: JournalSpacing.x7,
+                ),
               ),
             ),
           ),
