@@ -69,16 +69,17 @@ final todayCalendar = ScreenArea(
     ScreenCase(
       name: 'YearGrid',
       source: 'features/calendar/year_grid.dart',
-      build: () => Harness(
-        adapter: FakeHttpAdapter([
-          FakeReply(200, body: seriesJson(points: _yearGridPointsJson())),
-        ]),
-      ).scope(
-        MaterialApp(
-          theme: buildLightTheme(),
-          home: Scaffold(body: SingleChildScrollView(child: YearGrid())),
-        ),
-      ),
+      build: () =>
+          Harness(
+            adapter: FakeHttpAdapter([
+              FakeReply(200, body: seriesJson(points: _yearGridPointsJson())),
+            ]),
+          ).scope(
+            MaterialApp(
+              theme: buildLightTheme(),
+              home: Scaffold(body: SingleChildScrollView(child: YearGrid())),
+            ),
+          ),
     ),
     ScreenCase(
       name: 'WritingStreakLine',

@@ -362,8 +362,9 @@ class _YearGridState extends ConsumerState<YearGrid> {
                 // `_WeekdayHeaderRow` (#155), which shipped the identical
                 // fix for the identical row-of-near-identical-siblings
                 // problem.
-                final monthHeaderStyle = theme.textTheme.labelSmall
-                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+                final monthHeaderStyle = theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                );
                 final scaler = MediaQuery.textScalerOf(context);
                 final columnWidth = geometry.size.width / 12;
                 final widestMonthLabelWidth = [
