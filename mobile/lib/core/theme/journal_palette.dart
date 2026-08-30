@@ -25,9 +25,19 @@ import 'package:flutter/material.dart';
  * target against both a near-white and a near-black surface.
  *
  * Contrast was inherited from the web tokens, where every pair was checked
- * against its intended surface: body and label text clears 4.5:1, outlines
- * clear 3:1, and the feeling hues clear 4.5:1 because they tint text as well
- * as dots.
+ * against its intended surface, but never independently measured in this
+ * client. `test/core/theme/contrast_test.dart` now computes real WCAG
+ * ratios for every pair below, including the feeling hues composited into
+ * a selected chip's `withValues(alpha: 0.12)` fill (see `FeelingChip`),
+ * not just the raw tokens: body and label text clears 4.5:1, outlines clear
+ * 3:1, and the feeling hues clear 4.5:1 wherever they tint text, whether
+ * that text sits directly on a surface or inside that tinted chip fill.
+ * Measuring surfaced two pairs that the "inherited" claim missed —
+ * `_paperLight.feelings.tense` and `_duskLight.feelings.uplifted` sat a
+ * hair under 4.5:1 once composited into their own 12%-alpha chip fill on
+ * `surface` — and both were nudged darker (same hue and saturation, lower
+ * lightness) by less than one part in a hundred until the test passes with
+ * a small margin. Every other pair the inherited claim made already held.
  */
 
 /// The accent per feeling *group*, for calendar dots, the rail down an entry
@@ -282,7 +292,7 @@ const _paperLight = JournalColors(
   feelings: FeelingColors(
     uplifted: Color(0xFF2A7430),
     steady: Color(0xFF5F5F5F),
-    tense: Color(0xFFB3441A),
+    tense: Color(0xFFAF4319),
     low: Color(0xFF3F4BA8),
   ),
   isDark: false,
@@ -388,7 +398,7 @@ const _duskLight = JournalColors(
   success: Color(0xFF1B5E20),
   successContainer: Color(0xFFE5EFE7),
   feelings: FeelingColors(
-    uplifted: Color(0xFF2F7355),
+    uplifted: Color(0xFF2E7154),
     steady: Color(0xFF5C6172),
     tense: Color(0xFFA94523),
     low: Color(0xFF3F4BA8),
