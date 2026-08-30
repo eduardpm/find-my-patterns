@@ -37,6 +37,17 @@ import 'support/screens/today_calendar.dart';
 /// The union of the areas' `unswept` sets is the visible backlog. Shrinking it
 /// is the work; it must never grow.
 ///
+/// **A known weakness, stated rather than hidden.** The guard accepts a file's
+/// own `TextScaler` test as coverage, which is how the seventeen per-screen
+/// tests that predate this sweep are accounted for. That allowance is weaker
+/// evidence than being registered here, and #163 is the proof: `pattern_card`'s
+/// own dynamic-type test passes while the card overflows inside the real
+/// `InsightsScreen`, because its harness gives the card more width than the
+/// screen's padding leaves it. A dedicated test proves what its author thought
+/// to build; a `ScreenCase` proves the surface as the app assembles it. Those
+/// seventeen files should eventually be registered here too — until they are,
+/// read "accounted for" as "someone has looked", not "measured".
+///
 /// **Adding surfaces:** edit the one file under `support/screens/` that owns
 /// the area, never this file. That is what lets several batches of this work
 /// run at once without colliding.

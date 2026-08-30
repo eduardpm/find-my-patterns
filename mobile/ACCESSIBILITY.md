@@ -298,3 +298,17 @@ the visible backlog: shrinking it is the work, and it must never grow.
 A cell that fails for a defect you are not fixing goes in `knownFailures` with
 its issue number, which shows up in the test name — a known defect stays
 visible rather than disappearing the way an unwritten test does.
+
+### A known weakness of the guard
+
+The guard accepts a file's own `TextScaler` test as coverage, which is how the
+seventeen per-screen tests that predate the sweep are accounted for. **That is
+weaker evidence than being registered in the sweep**, and #163 is the proof:
+`pattern_card.dart`'s own dynamic-type test passes while the card overflows
+inside the real `InsightsScreen`, because its harness gives the card more width
+than the screen's padding leaves it.
+
+A dedicated test proves what its author thought to build. A `ScreenCase` proves
+the surface as the app actually assembles it. Those seventeen files should
+eventually be registered too — until they are, read "accounted for" as "someone
+has looked", not "measured".
