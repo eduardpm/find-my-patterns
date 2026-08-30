@@ -37,6 +37,15 @@ abstract final class AppConfig {
   /// session this client drives, so the app never shows a login screen.
   static const bool requireAuth = false;
 
+  /// The signed-in account's identity and tier (M-3, #48): `GET` only.
+  ///
+  /// Answered even with no bearer token when the backend runs in its
+  /// shipped single-user configuration -- see
+  /// `backend/src/auth/identity.controller.ts`'s `SINGLE_USER_MODE` doc
+  /// comment -- which is what makes this readable from [requireAuth]'s
+  /// default `false` at all.
+  static const String authMePath = '/auth/me';
+
   /// The diary-entry collection: `POST` to create, `GET` to list a day.
   static const String entriesPath = '/entries';
 

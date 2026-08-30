@@ -1,4 +1,6 @@
 import 'package:dio/dio.dart';
+import 'package:find_my_patterns/core/auth/tier.dart';
+import 'package:find_my_patterns/core/auth/tier_controller.dart';
 import 'package:find_my_patterns/core/config/config_providers.dart';
 import 'package:find_my_patterns/core/network/api_client.dart';
 import 'package:find_my_patterns/core/network/network_providers.dart';
@@ -17,6 +19,7 @@ import 'fake_composer_draft_store.dart';
 import 'fake_first_pattern_store.dart';
 import 'fake_http.dart';
 import 'fake_settings_store.dart';
+import 'fake_tier.dart';
 
 /// The pieces a widget test needs to drive the app entirely offline.
 class Harness {
@@ -33,6 +36,7 @@ class Harness {
     this.requireAuth = false,
     ComposerDraft? initialDraft,
     bool firstPatternNotified = true,
+    this.tier = Tier.premium,
   }) : store = FakeSettingsStore(settings),
        draftStore = FakeComposerDraftStore(initialDraft),
        remindersPlugin = FakeNotificationsPlugin(),
@@ -75,6 +79,17 @@ class Harness {
   /// Whether the app under test is gated behind sign-in.
   final bool requireAuth;
 
+  /// The tier every screen under test renders for (M-3, #48).
+  ///
+  /// Defaults to [Tier.premium] -- not [Tier.free] -- so every test written
+  /// before tiering existed keeps exercising the full feature set it always
+  /// has, without this harness change forcing each one to name a tier it
+  /// never cared about. A test specifically about the free/locked path
+  /// passes `tier: Tier.free` (or overrides `tierProvider` with a
+  /// [FixedTierController] directly, for a case this harness does not
+  /// cover) to opt into it deliberately.
+  final Tier tier;
+
   /// The client wired to [adapter].
   late final ApiClient client;
 
@@ -115,6 +130,7 @@ class Harness {
         deviceTimeZone: FakeDeviceTimeZone(),
       ),
     ),
+    tierProvider.overrideWith(() => FixedTierController(tier)),
   ];
 
   /// The retry policy every test uses: none.

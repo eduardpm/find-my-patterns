@@ -31,6 +31,8 @@ class PatternCard extends StatefulWidget {
     required this.onOpenEntry,
     this.activeExperiment,
     this.onTestPattern,
+    this.isPremium = true,
+    this.onUpgrade,
   });
 
   /// The pattern to show.
@@ -62,6 +64,20 @@ class PatternCard extends StatefulWidget {
   /// eligibility is `POST /experiments`'s call, never re-derived on this
   /// card.
   final void Function(Pattern pattern)? onTestPattern;
+
+  /// Whether experiments are unlocked for the signed-in account (M-3, #48).
+  /// Only meaningful alongside [onTestPattern] -- a card that never offers
+  /// the action at all (the weak tier, via `WeakSignalRow`) has nothing to
+  /// gate. Defaults to `true`: a caller that omits this -- every test
+  /// written before tiering existed, and any future one that genuinely
+  /// does not care -- keeps seeing the action it always has, rather than a
+  /// lock this card was never told to check for.
+  final bool isPremium;
+
+  /// Opens the placeholder upgrade screen (M-3, #48), in place of
+  /// [onTestPattern] while [isPremium] is `false`. `null` is only ever
+  /// reached together with `isPremium: true`, where it is never read.
+  final VoidCallback? onUpgrade;
 
   @override
   State<PatternCard> createState() => PatternCardState();
@@ -264,7 +280,7 @@ class PatternCardState extends State<PatternCard> {
           if (_showEvidence)
             _EvidenceTrail(
               pattern: pattern,
-              recencyWindowDays: widget.constants.recencyWindowDays,
+              windowPhrase: widget.constants.windowPhrase,
               onOpen: widget.onOpenEntry,
             ),
           // R-3b: "Test this pattern", or "Experiment running" when this
@@ -280,7 +296,9 @@ class PatternCardState extends State<PatternCard> {
                     feeling: pattern.feeling?.key,
                   ) ??
                   false,
+              isPremium: widget.isPremium,
               onTap: () => onTestPattern(pattern),
+              onUpgrade: widget.onUpgrade,
             ),
           ],
         ],
@@ -293,10 +311,20 @@ class PatternCardState extends State<PatternCard> {
 /// "Experiment running" badge in its place once this card's pattern is the
 /// one being tested.
 class _ExperimentAction extends StatelessWidget {
-  const _ExperimentAction({required this.isRunning, required this.onTap});
+  const _ExperimentAction({
+    required this.isRunning,
+    required this.isPremium,
+    required this.onTap,
+    required this.onUpgrade,
+  });
 
   final bool isRunning;
+
+  /// M-3, #48: whether "Test this pattern" is reachable at all for this
+  /// account.
+  final bool isPremium;
   final VoidCallback onTap;
+  final VoidCallback? onUpgrade;
 
   @override
   Widget build(BuildContext context) {
@@ -307,6 +335,22 @@ class _ExperimentAction extends StatelessWidget {
           'Experiment running',
           contentColor: Theme.of(context).colorScheme.primary,
           leading: const Icon(Icons.science_outlined, size: 14),
+        ),
+      );
+    }
+    if (!isPremium) {
+      // States the fact and offers the one action left to take -- never
+      // the sheet, which would only end in a `POST /experiments` 402 the
+      // account was never going to clear. See `PremiumLock`'s own doc
+      // comment for why this reaches for a plain lock-and-label rather
+      // than the full widget: a single line inside an already-bounded
+      // card, not a callout that needs its own surface.
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: onUpgrade,
+          icon: const Icon(Icons.lock_outline, size: 18),
+          label: const Text('Experiments — Premium'),
         ),
       );
     }
@@ -323,9 +367,15 @@ class _ExperimentAction extends StatelessWidget {
 
 String _footerText(Pattern pattern, EngineConstants constants) {
   final times = pattern.occurrenceCount == 1 ? 'time' : 'times';
-  final buffer = StringBuffer(
-    '${pattern.occurrenceCount} $times in ${constants.recencyWindowDays} days',
-  );
+  // Not `constants.windowPhrase`: this line's own established wording is
+  // "in 30 days", not "in the last 30 days" -- `_EvidenceTrail` and
+  // `_InsufficientDataState` use the latter, an inconsistency that
+  // predates M-3 and is not this ticket's to unify. Only the window's
+  // premium `null` case is new here.
+  final window = constants.recencyWindowDays == null
+      ? 'your full history'
+      : '${constants.recencyWindowDays} days';
+  final buffer = StringBuffer('${pattern.occurrenceCount} $times in $window');
   if (pattern.lifetimeCount != pattern.occurrenceCount) {
     buffer.write(' · ${pattern.lifetimeCount} in total');
   }
@@ -930,12 +980,15 @@ final DateFormat _evidenceDateFormat = DateFormat('d MMM');
 class _EvidenceTrail extends StatelessWidget {
   const _EvidenceTrail({
     required this.pattern,
-    required this.recencyWindowDays,
+    required this.windowPhrase,
     required this.onOpen,
   });
 
   final Pattern pattern;
-  final int recencyWindowDays;
+
+  /// [EngineConstants.windowPhrase] -- "the last 30 days" or, once a
+  /// premium account has no window applied, "your full history".
+  final String windowPhrase;
   final void Function(String entryId, CalendarDate entryDate) onOpen;
 
   @override
@@ -945,8 +998,7 @@ class _EvidenceTrail extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: JournalSpacing.x3),
         child: Text(
-          'Nothing in the last $recencyWindowDays days. This pattern is '
-          'built on older entries.',
+          'Nothing in $windowPhrase. This pattern is built on older entries.',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),

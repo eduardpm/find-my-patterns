@@ -28,6 +28,8 @@ void main() {
     void Function(String, CalendarDate)? onOpen,
     Experiment? activeExperiment,
     void Function(Pattern)? onTestPattern,
+    bool isPremium = true,
+    VoidCallback? onUpgrade,
   }) => MaterialApp(
     theme: buildLightTheme(),
     home: Scaffold(
@@ -38,6 +40,8 @@ void main() {
           onOpenEntry: onOpen ?? (_, _) {},
           activeExperiment: activeExperiment,
           onTestPattern: onTestPattern,
+          isPremium: isPremium,
+          onUpgrade: onUpgrade,
         ),
       ),
     ),
@@ -693,6 +697,85 @@ void main() {
         expect(find.text('EXPERIMENT RUNNING'), findsNothing);
       },
     );
+
+    group('free tier (M-3, #48)', () {
+      testWidgets(
+        'offers "Test this pattern" for a premium account, as before',
+        (tester) async {
+          await tester.pumpWidget(
+            app(buildPattern(), onTestPattern: (_) {}, isPremium: true),
+          );
+
+          expect(find.text('Test this pattern'), findsOneWidget);
+          expect(find.text('Experiments — Premium'), findsNothing);
+        },
+      );
+
+      testWidgets(
+        'a free account sees an Upgrade prompt instead, and it never opens '
+        'the setup sheet',
+        (tester) async {
+          Pattern? tappedForTest;
+          var upgradeTapped = false;
+          await tester.pumpWidget(
+            app(
+              buildPattern(),
+              onTestPattern: (p) => tappedForTest = p,
+              isPremium: false,
+              onUpgrade: () => upgradeTapped = true,
+            ),
+          );
+
+          expect(find.text('Test this pattern'), findsNothing);
+          expect(find.byIcon(Icons.lock_outline), findsOneWidget);
+          expect(find.text('Experiments — Premium'), findsOneWidget);
+          // Rendered geometry, not just presence: the lock icon draws at
+          // its given 18x18 size, and the row shrink-wraps to its label
+          // rather than stretching across the card -- the same
+          // `Align`-not-`Container(alignment:)` shape #111/#117 exist to
+          // guard against elsewhere in this file's own strength-bar tests.
+          expect(
+            tester.getSize(find.byIcon(Icons.lock_outline)),
+            const Size(18, 18),
+          );
+          final cardWidth = tester.getSize(find.byType(PatternCard)).width;
+          final lockWidth = tester
+              .getSize(find.widgetWithText(TextButton, 'Experiments — Premium'))
+              .width;
+          expect(lockWidth, lessThan(cardWidth));
+
+          await tester.tap(find.text('Experiments — Premium'));
+
+          expect(upgradeTapped, isTrue);
+          expect(tappedForTest, isNull);
+        },
+      );
+
+      testWidgets(
+        'a running experiment still takes priority over the free-tier lock',
+        (tester) async {
+          final pattern = buildPattern(topic: 'coffee');
+          await tester.pumpWidget(
+            app(
+              pattern,
+              onTestPattern: (_) {},
+              isPremium: false,
+              activeExperiment: buildExperiment(
+                patternTopic: 'coffee',
+                patternFeeling: pattern.feeling!.key,
+              ),
+            ),
+          );
+
+          // A free account cannot have started this experiment in the
+          // first place, but if the state ever disagreed, "it is already
+          // running" is still the more useful fact to show than a lock on
+          // an action that is not being offered anyway.
+          expect(find.text('EXPERIMENT RUNNING'), findsOneWidget);
+          expect(find.text('Experiments — Premium'), findsNothing);
+        },
+      );
+    });
   });
 
   // P0-2: `patternBadgeFor` is the single function that decides which badge

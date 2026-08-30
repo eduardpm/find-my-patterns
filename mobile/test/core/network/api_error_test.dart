@@ -49,4 +49,42 @@ void main() {
   test('failures are exceptions', () {
     expect(const BackendNotConfigured(), isA<Exception>());
   });
+
+  group('isPremiumRequired (M-3, #48)', () {
+    test('a 402 with the backend\'s literal premium_required body is true', () {
+      expect(
+        isPremiumRequired(
+          const HttpFailure('nope', 402, {'error': 'premium_required'}),
+        ),
+        isTrue,
+      );
+    });
+
+    test('a 402 with any other body is false', () {
+      expect(
+        isPremiumRequired(const HttpFailure('nope', 402, {'error': 'other'})),
+        isFalse,
+      );
+      expect(isPremiumRequired(const HttpFailure('nope', 402)), isFalse);
+      expect(
+        isPremiumRequired(const HttpFailure('nope', 402, 'not a map')),
+        isFalse,
+      );
+    });
+
+    test('a non-402 HttpFailure is false even with the exact body', () {
+      expect(
+        isPremiumRequired(
+          const HttpFailure('nope', 403, {'error': 'premium_required'}),
+        ),
+        isFalse,
+      );
+    });
+
+    test('every non-HttpFailure ApiError is false', () {
+      expect(isPremiumRequired(const BackendNotConfigured()), isFalse);
+      expect(isPremiumRequired(const NetworkFailure('boom')), isFalse);
+      expect(isPremiumRequired(const Unauthorized()), isFalse);
+    });
+  });
 }

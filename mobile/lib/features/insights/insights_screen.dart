@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/auth/tier.dart';
+import '../../core/auth/tier_controller.dart';
 import '../../core/diary/calendar_date.dart';
 import '../../core/diary/experiment.dart';
 import '../../core/diary/pattern.dart';
@@ -128,6 +130,10 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
     context.push('/settings');
   }
 
+  /// Opens the placeholder upgrade screen (M-3, #48) -- what every locked
+  /// state on this page leads to.
+  void _openUpgrade() => context.push('/upgrade');
+
   Future<void> _acknowledge() async {
     try {
       await ref
@@ -222,6 +228,15 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
     });
     final insightsAsync = ref.watch(insightsControllerProvider);
     final data = insightsAsync.value;
+    // M-3, #48: read once here and threaded down as plain data, the same
+    // way `data` itself is -- `PatternCard` and `MoodTrendChart` render
+    // what they are told rather than each watching `tierProvider` on their
+    // own. `.value` rather than `.requireValue`: while the tier is still
+    // loading (a rare first-frame race, since `TierController.build` never
+    // awaits anything unless it is actually signed in) this reads as
+    // `false`, the same fail-locked default `TierController` itself falls
+    // back to on a fetch error -- never a premium surface on a guess.
+    final isPremium = ref.watch(tierProvider).value == Tier.premium;
 
     return Scaffold(
       body: Stack(
@@ -263,6 +278,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
                   else
                     _Content(
                       data: data,
+                      isPremium: isPremium,
                       onOpenEntry: _openEntry,
                       onAcknowledge: () => unawaited(_acknowledge()),
                       onTestPattern: (pattern) => unawaited(
@@ -274,6 +290,7 @@ class _InsightsScreenState extends ConsumerState<InsightsScreen>
                           activeExperiment: data.activeExperiment,
                         ),
                       ),
+                      onUpgrade: _openUpgrade,
                       keyForPattern: _keyFor,
                       onOpenRecommendation: _openRecommendedPattern,
                     ),
@@ -331,17 +348,26 @@ class _FirstLoadState extends StatelessWidget {
 class _Content extends StatelessWidget {
   const _Content({
     required this.data,
+    required this.isPremium,
     required this.onOpenEntry,
     required this.onAcknowledge,
     required this.onTestPattern,
+    required this.onUpgrade,
     required this.keyForPattern,
     required this.onOpenRecommendation,
   });
 
   final InsightsPageState data;
+
+  /// M-3, #48: gates the mood-trend chart's longer ranges and every
+  /// pattern card's "Test this pattern" action.
+  final bool isPremium;
   final void Function(String entryId, CalendarDate entryDate) onOpenEntry;
   final VoidCallback onAcknowledge;
   final void Function(Pattern pattern) onTestPattern;
+
+  /// Opens the placeholder upgrade screen.
+  final VoidCallback onUpgrade;
 
   /// Looks up (creating on first use) the [GlobalKey] a given pattern id's
   /// [PatternCard] renders under -- what lets [onOpenRecommendation] find and
@@ -369,7 +395,10 @@ class _Content extends StatelessWidget {
         // CH-1: the mood-over-time chart, above even the withdrawal
         // notices -- it is the one thing on this screen that answers "how
         // have I been" at a glance, before any pattern-level detail.
-        const MoodTrendChart(),
+        MoodTrendChart(
+          historySpanDays: data.historySpanDays,
+          onUpgrade: onUpgrade,
+        ),
         const SizedBox(height: JournalSpacing.x4),
         // The one thing a user must never have to notice for themselves is
         // a pattern they were told about quietly going away.
@@ -406,6 +435,8 @@ class _Content extends StatelessWidget {
               onOpenEntry: onOpenEntry,
               activeExperiment: data.activeExperiment,
               onTestPattern: onTestPattern,
+              isPremium: isPremium,
+              onUpgrade: onUpgrade,
             ),
             const SizedBox(height: JournalSpacing.x4),
           ],
@@ -632,8 +663,8 @@ class _InsufficientDataState extends StatelessWidget {
     title: const Text('Not enough data yet'),
     supporting: Text(
       'Keep logging entries — once a topic and a feeling repeat at least '
-      '${constants.minOccurrenceThreshold} times in the last '
-      '${constants.recencyWindowDays} days, the pattern shows up here.',
+      '${constants.minOccurrenceThreshold} times in ${constants.windowPhrase}, '
+      'the pattern shows up here.',
       textAlign: TextAlign.center,
     ),
   );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/diary/diary_providers.dart';
 import '../../core/diary/experiment.dart';
@@ -8,6 +9,7 @@ import '../../core/network/api_error.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/widgets/journal.dart';
+import '../../core/widgets/premium_lock.dart';
 
 /// "Test this pattern": the setup sheet a pattern card opens (R-3b).
 ///
@@ -61,6 +63,21 @@ class _ExperimentSetupSheetState extends ConsumerState<ExperimentSetupSheet> {
   bool _isSubmitting = false;
   String? _errorMessage;
 
+  /// M-3, #48: `POST /experiments` answered `premium_required`.
+  ///
+  /// `PatternCard` already keeps a free account from reaching this sheet at
+  /// all -- its "Test this pattern" action is replaced by an Upgrade prompt
+  /// before this sheet ever opens. This flag is the defensive second layer
+  /// for the one way that guard can still be stale: the account's tier
+  /// lapsed between this sheet opening and the tap on Start (exactly what
+  /// the orchestrator's manual tier-flip demo exercises). Task 4's own
+  /// words -- "a request that comes back `premium_required` should surface
+  /// the locked state, not an error snackbar" -- apply here too, so this
+  /// gets its own flag rather than folding into [_errorMessage] and being
+  /// rendered as backend prose a moment after the sheet insisted the
+  /// account could start one.
+  bool _premiumRequired = false;
+
   /// A `change`-badged pattern (the topic is worth cutting back on) is
   /// tested by doing less of it; a `keep`-badged one, by doing more.
   /// `PatternCard` only ever offers this sheet from the confirmed tier,
@@ -94,6 +111,7 @@ class _ExperimentSetupSheetState extends ConsumerState<ExperimentSetupSheet> {
     setState(() {
       _isSubmitting = true;
       _errorMessage = null;
+      _premiumRequired = false;
     });
     try {
       final experiment = await ref
@@ -115,7 +133,11 @@ class _ExperimentSetupSheetState extends ConsumerState<ExperimentSetupSheet> {
       if (!mounted) return;
       setState(() {
         _isSubmitting = false;
-        _errorMessage = _messageFor(error);
+        if (isPremiumRequired(error)) {
+          _premiumRequired = true;
+        } else {
+          _errorMessage = _messageFor(error);
+        }
       });
     }
   }
@@ -130,6 +152,7 @@ class _ExperimentSetupSheetState extends ConsumerState<ExperimentSetupSheet> {
     setState(() {
       _isSubmitting = true;
       _errorMessage = null;
+      _premiumRequired = false;
     });
     try {
       await ref.read(experimentsApiProvider).abandon(blocking.id);
@@ -149,7 +172,11 @@ class _ExperimentSetupSheetState extends ConsumerState<ExperimentSetupSheet> {
       if (!mounted) return;
       setState(() {
         _isSubmitting = false;
-        _errorMessage = _messageFor(error);
+        if (isPremiumRequired(error)) {
+          _premiumRequired = true;
+        } else {
+          _errorMessage = _messageFor(error);
+        }
       });
     }
   }
@@ -176,45 +203,60 @@ class _ExperimentSetupSheetState extends ConsumerState<ExperimentSetupSheet> {
             const SizedBox(height: JournalSpacing.x3),
             Text(_hypothesisText, style: theme.textTheme.bodyLarge),
             const SizedBox(height: JournalSpacing.x4),
-            if (blocking != null) ...[
-              Text(
-                'An experiment is already running: '
-                '${blocking.patternTopic}. Only one can run at a time.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: journal.onSurfaceVariant,
-                ),
+            // M-3, #48: a lapsed tier answers this exact sheet's own
+            // request, not a hypothetical elsewhere -- so it takes priority
+            // over the single-active conflict below. Reaching this is rare
+            // (see [_premiumRequired]'s own doc comment), but when it
+            // happens there is nothing this sheet can still offer: not the
+            // length picker, and not "abandon and start instead" either,
+            // since starting a replacement would fail exactly the same way.
+            if (_premiumRequired) ...[
+              PremiumLock(
+                message: 'Experiments are a Premium feature.',
+                onUpgrade: () => context.push('/upgrade'),
               ),
               const SizedBox(height: JournalSpacing.x4),
             ] else ...[
-              _LengthPicker(
-                lengthDays: _lengthDays,
-                constants: widget.constants,
-                onChange: _isSubmitting ? null : _changeLength,
-              ),
-              const SizedBox(height: JournalSpacing.x4),
-            ],
-            if (_errorMessage case final message?) ...[
-              Text(
-                message,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.error,
+              if (blocking != null) ...[
+                Text(
+                  'An experiment is already running: '
+                  '${blocking.patternTopic}. Only one can run at a time.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: journal.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: JournalSpacing.x4),
+              ] else ...[
+                _LengthPicker(
+                  lengthDays: _lengthDays,
+                  constants: widget.constants,
+                  onChange: _isSubmitting ? null : _changeLength,
+                ),
+                const SizedBox(height: JournalSpacing.x4),
+              ],
+              if (_errorMessage case final message?) ...[
+                Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+                const SizedBox(height: JournalSpacing.x3),
+              ],
+              SizedBox(
+                width: double.infinity,
+                child: PillButton(
+                  onPressed: _isSubmitting
+                      ? null
+                      : (blocking != null ? _abandonAndStart : _start),
+                  child: Text(
+                    blocking != null
+                        ? 'Abandon it and start this instead'
+                        : 'Start',
+                  ),
                 ),
               ),
-              const SizedBox(height: JournalSpacing.x3),
             ],
-            SizedBox(
-              width: double.infinity,
-              child: PillButton(
-                onPressed: _isSubmitting
-                    ? null
-                    : (blocking != null ? _abandonAndStart : _start),
-                child: Text(
-                  blocking != null
-                      ? 'Abandon it and start this instead'
-                      : 'Start',
-                ),
-              ),
-            ),
           ],
         ),
       ),

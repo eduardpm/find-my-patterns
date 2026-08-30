@@ -26,6 +26,7 @@ import 'features/entry/entry_detail_screen.dart';
 import 'features/experiments/experiment_results_screen.dart';
 import 'features/insights/digest_screen.dart';
 import 'features/insights/insights_screen.dart';
+import 'features/premium/upgrade_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/shell/app_shell.dart';
 import 'features/today/today_screen.dart';
@@ -155,8 +156,18 @@ final routerProvider = Provider<GoRouter>((ref) {
         // doc comment for why the fetch has to happen before this route is
         // even pushed.
         path: '/digest',
+        // `extra` is `null` for exactly one reason: M-3's `_openDigest`
+        // pushed here after `GET /insights/digest` answered
+        // `premium_required` rather than a digest -- see `DigestScreen`'s
+        // own doc comment for why that gets this same route rather than
+        // the unreachable-backend fallback to Insights below.
         builder: (context, state) =>
-            DigestScreen(digest: state.extra! as Digest),
+            DigestScreen(digest: state.extra as Digest?),
+      ),
+      GoRoute(
+        // M-3, #48: where every `PremiumLock`'s Upgrade action leads.
+        path: '/upgrade',
+        builder: (context, state) => const UpgradeScreen(),
       ),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
     ],
@@ -240,23 +251,34 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
     await ref.read(openDigestSignalProvider.notifier).checkLaunchTap();
   }
 
-  /// Fetches the current digest and opens the sheet for it, or falls back to
-  /// Insights when the backend cannot answer.
+  /// Fetches the current digest and opens the sheet for it, opens the same
+  /// sheet locked when the account cannot have one, or falls back to
+  /// Insights when the backend cannot answer at all.
   ///
   /// Task 2's own words: "if the digest API is unreachable at fire time, the
   /// notification simply opens Insights (never show stale content as
   /// fresh)." The fetch happens *before* navigating anywhere, specifically
   /// so this method — not [DigestScreen] — is the one place that decides
-  /// which of the two destinations a tap actually leads to; a screen that
+  /// which of the three destinations a tap actually leads to; a screen that
   /// tried to render its own fetch failure would either show a spinner
   /// forever or flash something digest-shaped before falling back, both of
   /// which are exactly the "stale content shown as fresh" task 2 forbids.
+  ///
+  /// M-3 (#48) adds the middle case: `premium_required` is not "the backend
+  /// could not be reached" -- it is a definite, honest answer -- so it does
+  /// not fall back to Insights either. It gets the digest route with no
+  /// digest to show, which is task 4's "surface the locked state, not an
+  /// error" applied to the one entry point this feature has.
   Future<void> _openDigest() async {
     final Digest digest;
     try {
       digest = await ref.read(insightsApiProvider).digest();
-    } on ApiError {
+    } on ApiError catch (error) {
       if (!mounted) return;
+      if (isPremiumRequired(error)) {
+        unawaited(ref.read(routerProvider).push('/digest'));
+        return;
+      }
       ref.read(routerProvider).go(AppConfig.insightsPath);
       return;
     }

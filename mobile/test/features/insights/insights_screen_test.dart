@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:find_my_patterns/core/auth/tier.dart';
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/diary_providers.dart';
 import 'package:find_my_patterns/core/diary/digest.dart';
@@ -78,9 +79,13 @@ class _ControllableInsightsApi implements InsightsApi {
 }
 
 void main() {
-  Harness configuredHarness(FakeHttpAdapter adapter) => Harness(
+  Harness configuredHarness(
+    FakeHttpAdapter adapter, {
+    Tier tier = Tier.premium,
+  }) => Harness(
     settings: const AppSettings(backend: BackendAddress(host: '10.0.2.2')),
     adapter: adapter,
+    tier: tier,
   );
 
   testWidgets('shows a spinner before the first load, and nothing else yet', (
@@ -631,6 +636,36 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      'a free account sees the Upgrade prompt instead, on the pattern card '
+      'itself (M-3, #48)',
+      (tester) async {
+        final adapter = FakeHttpAdapter([
+          FakeReply(200, body: feelingsCatalogJson()),
+          FakeReply(
+            200,
+            body: insightsResultJson(
+              patterns: [patternJson(topic: 'coffee', direction: 'change')],
+            ),
+          ),
+          FakeReply(200, body: whenInsightsJson()),
+          noActiveExperimentReply(),
+          FakeReply(200, body: seriesJson()),
+        ]);
+        await tester.pumpWidget(
+          configuredHarness(adapter, tier: Tier.free).wrap(
+            const InsightsScreen(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Experiments — Premium'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Test this pattern'), findsNothing);
+        expect(find.text('Experiments — Premium'), findsOneWidget);
+      },
+    );
   });
 
   testWidgets('a refresh failure surfaces a snack bar without losing the '
@@ -731,7 +766,14 @@ void main() {
 /// Domain-object versions of the JSON fixtures, for the [_ControllableInsightsApi]
 /// tests that skip HTTP and JSON decoding entirely.
 InsightsResult insightsResultFromFixture({List<Pattern> patterns = const []}) =>
-    InsightsResult(patterns, const [], 0, false, EngineConstants.placeholder);
+    InsightsResult(
+      patterns,
+      const [],
+      0,
+      false,
+      EngineConstants.placeholder,
+      null,
+    );
 
 Pattern patternFixture({
   String id = 'pattern-1',
