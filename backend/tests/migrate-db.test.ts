@@ -803,3 +803,131 @@ describe('migrateDiary — M-1b step 2: topics.name uniqueness rebuild (#46)', (
     db.close();
   });
 });
+
+describe('migrateDiary — M-1b step 2 follow-up: csv_imports.content_hash per-user primary key rebuild (#142)', () => {
+  /**
+   * `pre-grouped-vocabulary.db` predates `csv_imports` entirely — the table was added by L-1b
+   * (#35), after this fixture was captured — so on its own it would only exercise the `CREATE
+   * TABLE IF NOT EXISTS csv_imports` path in `MIGRATION_STATEMENTS`. To exercise the sequence a
+   * years-old diary that has *already* imported files goes through — the original bare-
+   * `content_hash`-primary-key table, then #134's `ADD COLUMN user_id`, then this ticket's
+   * constraint rebuild, all inside the same `migrateDiary` call — this block first creates that
+   * pre-M-1b `csv_imports` shape directly on the copied fixture and seeds it with rows, the same
+   * way the fixture itself was once a real diary predating `user_id`.
+   */
+  function seedPreM1bCsvImports(): void {
+    const db = new Database(target);
+    db.exec(`
+      CREATE TABLE csv_imports (
+        content_hash VARCHAR(64) NOT NULL,
+        source VARCHAR(16) NOT NULL,
+        imported_at DATETIME NOT NULL,
+        entry_count INTEGER NOT NULL,
+        report_json JSON NOT NULL,
+        PRIMARY KEY (content_hash)
+      )
+    `);
+    db.prepare(
+      `INSERT INTO csv_imports (content_hash, source, imported_at, entry_count, report_json)
+       VALUES (?, 'daylio', ?, ?, ?)`,
+    ).run('a'.repeat(64), '2026-01-01 00:00:00.000000', 3, '{}');
+    db.prepare(
+      `INSERT INTO csv_imports (content_hash, source, imported_at, entry_count, report_json)
+       VALUES (?, 'daylio', ?, ?, ?)`,
+    ).run('b'.repeat(64), '2026-02-01 00:00:00.000000', 5, '{}');
+    db.close();
+  }
+
+  it('preserves every csv_imports row while changing the primary key to per-user', () => {
+    seedPreM1bCsvImports();
+    const before = read<{ content_hash: string; source: string; entry_count: number }>(
+      'SELECT content_hash, source, entry_count FROM csv_imports ORDER BY content_hash',
+    );
+    expect(before).toHaveLength(2);
+
+    migrateDiary(target);
+
+    const after = read<{
+      content_hash: string;
+      user_id: string;
+      source: string;
+      entry_count: number;
+    }>('SELECT content_hash, user_id, source, entry_count FROM csv_imports ORDER BY content_hash');
+    expect(
+      after.map(({ content_hash, source, entry_count }) => ({ content_hash, source, entry_count })),
+    ).toEqual(before);
+    for (const row of after) expect(row.user_id).toBe(DEFAULT_USER_ID);
+
+    // The constraint itself changed, not just the data — `sqlite_master` is the only place that
+    // fact is recorded.
+    const db = new Database(target, { readonly: true });
+    const schemaSql = (
+      db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'csv_imports'`)
+        .get() as { sql: string }
+    ).sql;
+    db.close();
+    expect(schemaSql).toMatch(/PRIMARY\s+KEY\s*\(\s*user_id\s*,\s*content_hash\s*\)/i);
+
+    expect(() => {
+      const opened = openDiary(target);
+      assertCompatible(opened);
+      opened.close();
+    }).not.toThrow();
+  });
+
+  it('is idempotent — a second run neither duplicates nor drops a csv_imports row', () => {
+    seedPreM1bCsvImports();
+    migrateDiary(target);
+    const once = read<Record<string, unknown>>('SELECT * FROM csv_imports ORDER BY content_hash');
+
+    migrateDiary(target);
+    expect(
+      read<Record<string, unknown>>('SELECT * FROM csv_imports ORDER BY content_hash'),
+    ).toEqual(once);
+  });
+
+  it('lets two different users each commit an import of the same file content, once one exists', () => {
+    migrateDiary(target);
+    const db = new Database(target);
+    const secondUserId = '00000000-0000-0000-0000-000000000002';
+    db.prepare(`INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)`).run(
+      secondUserId,
+      'second@example.invalid',
+      'disabled:no-password-set',
+      '2026-01-01 00:00:00.000000',
+    );
+    const now = '2026-01-01 00:00:00.000000';
+    const sharedHash = 'c'.repeat(64);
+    // The first account's own commit of this file.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO csv_imports (content_hash, user_id, source, imported_at, entry_count, report_json)
+           VALUES (?, ?, 'daylio', ?, 1, '{}')`,
+        )
+        .run(sharedHash, DEFAULT_USER_ID, now),
+    ).not.toThrow();
+    // Same key: a different account committing the exact same file content — this is exactly what
+    // the old bare `PRIMARY KEY (content_hash)` could not allow, and what makes the composite key
+    // the right fix rather than an unnecessary one.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO csv_imports (content_hash, user_id, source, imported_at, entry_count, report_json)
+           VALUES (?, ?, 'daylio', ?, 1, '{}')`,
+        )
+        .run(sharedHash, secondUserId, now),
+    ).not.toThrow();
+    // The same (user_id, content_hash) pair twice is still a collision.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO csv_imports (content_hash, user_id, source, imported_at, entry_count, report_json)
+           VALUES (?, ?, 'daylio', ?, 1, '{}')`,
+        )
+        .run(sharedHash, secondUserId, now),
+    ).toThrow();
+    db.close();
+  });
+});
