@@ -164,10 +164,22 @@ class _IntensityRow extends StatelessWidget {
           ],
         ),
         const SizedBox(height: JournalSpacing.x2),
-        Row(
+        // `Wrap`, not a bare `Row`: each stop is a fixed 48dp touch
+        // target (the platform floor, never shrunk to fit -- the same
+        // rule `_IntensityStop`'s own doc comment states), so a 5-stop
+        // scale's width does not vary with text scale at all -- it
+        // already overflows a 320dp screen by 32px at the *default*
+        // scale, nowhere near 2x, once this editor's own padding and
+        // `IntensityDials`'s card padding are subtracted from the
+        // available width. Wrapping to a second row of stops, the same
+        // fix `FeelingChips`'s own fixed-size group chips use, keeps
+        // every stop full size and tappable rather than shrinking the
+        // circles or letting them paint off the card's edge.
+        Wrap(
+          spacing: JournalSpacing.x2,
+          runSpacing: JournalSpacing.x2,
           children: [
-            for (var stop = min; stop <= max; stop++) ...[
-              if (stop > min) const SizedBox(width: JournalSpacing.x2),
+            for (var stop = min; stop <= max; stop++)
               _IntensityStop(
                 feeling: feeling,
                 stop: stop,
@@ -178,7 +190,6 @@ class _IntensityRow extends StatelessWidget {
                 // "optional" only holds until the first tap.
                 onTap: () => onChange(currentValue == stop ? null : stop),
               ),
-            ],
           ],
         ),
       ],
