@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { decodeDate } from '../db/codecs';
 import { experimentCreateSchema, parseOrThrow } from '../common/validation';
+import { RequiresPremium } from '../billing/requires-premium.guard';
 import {
   ActiveExperimentExistsError,
   ExperimentNotActiveError,
@@ -30,12 +31,25 @@ import {
  * malformed body, an out-of-range length, a non-qualifying pattern and an already-active
  * experiment are all "the request was understood, the value was not acceptable" — the same reason
  * every other invalid field in this API answers 422.
+ *
+ * M-3 (#48): only **creating** an experiment is gated. `GET /active`, `GET /:id/results` and
+ * `POST /:id/abandon` all stay reachable regardless of tier — the product rule this ticket applies
+ * everywhere is "never paywall reading back", and the two GETs are exactly that: a lapsed premium
+ * user must still be able to see the experiment they already started and read the results it
+ * already produced, the same as they can still read every diary entry they wrote while premium.
+ * `abandon` is deliberately ungated too, for a related but distinct reason — it is the only way to
+ * clear a stuck `active` experiment (`ActiveExperimentExistsError` below blocks a second `create`
+ * while one exists), so gating it would trap a lapsed user who started an experiment while premium
+ * behind a wall they can no longer pay through to get past: they could neither finish it nor
+ * abandon it to start fresh once premium again. Gating stops them from *starting* new premium
+ * value, which `create` alone already does.
  */
 @Controller('experiments')
 export class ExperimentsController {
   constructor(private readonly experiments: ExperimentsService) {}
 
   @Post()
+  @RequiresPremium()
   async create(@Body() body: unknown): Promise<ExperimentOut> {
     const input = parseOrThrow(experimentCreateSchema, body ?? {});
     // `experimentCreateSchema` only checks `start_date`'s shape (`YYYY-MM-DD`); a value that is

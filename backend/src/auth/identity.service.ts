@@ -162,14 +162,27 @@ export class AuthService {
     const userId = this.resolveToken(rawToken);
     if (!userId)
       throw new UnauthorizedException('The bearer token is missing, unknown or expired.');
-    const user = this.db
-      .prepare('SELECT id, email, created_at FROM users WHERE id = ?')
-      .get(userId) as UserOut | undefined;
+    const user = this.byId(userId);
     // The session outlived its user only if something else deleted the user row directly — there
     // is no such route yet, but `sessions.user_id` cascades on delete (`schema.ts`) for the day
     // there is one, so this stays consistent rather than serving a session for nobody.
     if (!user) throw new UnauthorizedException('The bearer token is missing, unknown or expired.');
     return user;
+  }
+
+  /**
+   * A plain lookup by id, with no token involved — added for M-3 (#48): `AuthController#me`'s
+   * `SINGLE_USER_MODE` fallback needs to answer "who is the default user" without a session to
+   * resolve, the same shape `me` already had internally before this was pulled out as its own
+   * method. Returns `null` rather than throwing, unlike `me` above — a missing user here is a
+   * caller's decision to make (`AuthController` still needs to choose whether that is a 401 or
+   * something else), not automatically "the caller's credential was bad" the way it is for `me`.
+   */
+  byId(userId: string): UserOut | null {
+    const user = this.db
+      .prepare('SELECT id, email, created_at FROM users WHERE id = ?')
+      .get(userId) as UserOut | undefined;
+    return user ?? null;
   }
 }
 

@@ -267,7 +267,17 @@ export interface Withdrawal {
  */
 export interface EngineConstants {
   min_occurrence_threshold: number;
-  recency_window_days: number;
+  /**
+   * M-3 (#48): `null` means the response was not window-limited at all (a premium account, or any
+   * future non-gated deployment) — the backend's own `constants.ts` doc comment on this same field
+   * explains why "the window this response actually used" can no longer always be a number. This
+   * client has no tier UI (that is explicitly out of scope for #48 — see `recencyWindowPhrase`
+   * below, its one consumer), but the type still has to be honest about what the wire can send,
+   * since a stale `number` here would silently mis-render for any account this backend ever grants
+   * premium to (today: only the dev-only `POST /billing/admin/grant` escape hatch, but the type
+   * should not assume that stays true).
+   */
+  recency_window_days: number | null;
   min_lift: number;
   strong_lift: number;
   strong_min_occurrences: number;
@@ -276,6 +286,20 @@ export interface EngineConstants {
   min_bucket_entries: number;
   min_intensity: number;
   max_intensity: number;
+}
+
+/**
+ * The phrase this client's copy builds `recency_window_days` into — one place, so
+ * `InsightsScreen.tsx` and `PatternCard.tsx` cannot describe the same number two different ways.
+ *
+ * M-3 (#48): a `null` window (premium, full range) is not a case this client designs a locked or
+ * upgraded experience for — that is explicitly out of scope here — it only has to keep existing
+ * sentences true rather than interpolating `null` into them. "across your full history" is what
+ * "no window was applied" means in plain language, in the same voice the rest of this screen's
+ * copy already uses (see `historical.length > 0`'s "kept, and clearly marked" sentence).
+ */
+export function recencyWindowPhrase(days: number | null): string {
+  return days === null ? 'across your full history' : `in the last ${days} days`;
 }
 
 export interface Insights {

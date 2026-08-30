@@ -1,4 +1,5 @@
 import { Controller, Get, HttpException, HttpStatus, Query } from '@nestjs/common';
+import { RequiresPremium } from '../billing/requires-premium.guard';
 import { DigestService, InvalidDigestWeekError, type DigestResponse } from './digest.service';
 
 /**
@@ -16,8 +17,16 @@ import { DigestService, InvalidDigestWeekError, type DigestResponse } from './di
  * is a client-side fallback (`mobile/lib/core/notifications/reminder_service.dart`'s digest tap
  * handler) — nothing here needs to special-case an unreachable server, because the server being
  * unreachable is exactly the case in which this endpoint is never called at all.
+ *
+ * M-3 (#48): gated whole, not "computed but window-limited" the way patterns are — the issue lists
+ * "weekly digest" itself, not a scoped-down version of it, as the premium feature (daylio-
+ * competitive-analysis.md §11.2), and R-2's own ticket explicitly deferred this: "build it unguarded
+ * now, gating arrives with M-3." `@RequiresPremium()` on the whole controller rather than only the
+ * one handler it has today is future-proofing against a second route landing here unguarded by
+ * omission, not a sign a second route is planned.
  */
 @Controller('insights')
+@RequiresPremium()
 export class DigestController {
   constructor(private readonly digest: DigestService) {}
 

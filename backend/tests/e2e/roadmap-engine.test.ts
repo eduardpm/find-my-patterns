@@ -10,6 +10,7 @@
 import Database from 'better-sqlite3';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_USER_ID } from '../../src/auth/default-user';
 import { MIN_OCCURRENCE_THRESHOLD, RECENCY_WINDOW_DAYS } from '../../src/insights/constants';
 import { bootOnFresh, teardown, type Harness } from '../helpers/app';
 
@@ -17,7 +18,11 @@ let h: Harness;
 const server = () => h.app.getHttpServer();
 
 beforeEach(async () => {
-  h = await bootOnFresh();
+  // `manualEntitlements: true` costs nothing for the tests that don't use it — it only reaches
+  // `POST /billing/admin/grant`, which I3-SC1 below needs (M-3, #48): a free-tier `GET /insights`
+  // no longer returns `status: 'historical'` rows at all, and I3-SC1 is specifically about that
+  // label existing and being correct, not about the free/paid boundary a different suite covers.
+  h = await bootOnFresh({ manualEntitlements: true });
 });
 afterEach(async () => {
   await teardown(h);
@@ -405,6 +410,10 @@ describe('A2 — a pattern that goes away says why', () => {
 
 describe('I3 — the count means what the sentence says', () => {
   it('labels a pattern historical when the window is thin but the history is not — I3-SC1', async () => {
+    await request(server())
+      .post('/billing/admin/grant')
+      .send({ user_id: DEFAULT_USER_ID, tier: 'premium' })
+      .expect(200);
     for (let index = 0; index < 3; index += 1) {
       await write(`Tea number ${index}.`, ['calm'], 90 + index);
     }

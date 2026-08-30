@@ -65,6 +65,11 @@ export async function createApp(
     AppModule.forRoot(options.databasePath, {
       playVerifier: options.playVerifier,
       manualEntitlements: options.manualEntitlements,
+      // M-3 (#48): `AppModule` did not previously need to know this — `installIdentityGate` below
+      // was the only consumer. `AuthController#me` now needs it too (see `SINGLE_USER_MODE`'s doc
+      // comment in `auth/identity.controller.ts`), so it travels into the module the same way
+      // `manualEntitlements` already does, resolved once here rather than twice.
+      singleUserMode: options.singleUserMode,
     }),
     { logger: ['error', 'warn'] },
   );

@@ -5,7 +5,12 @@ import { Icon } from '../components/Icon';
 import { PatternCard } from '../components/PatternCard';
 import { WhenPanel } from '../components/WhenPanel';
 import { WithdrawalNotice } from '../components/WithdrawalNotice';
-import type { Insights, Pattern, WhenInsights } from '../domain/types';
+import {
+  recencyWindowPhrase,
+  type Insights,
+  type Pattern,
+  type WhenInsights,
+} from '../domain/types';
 import { useRefreshable } from '../hooks/useRefreshable';
 
 /**
@@ -89,9 +94,9 @@ function InsightsBody({
           <p className="empty-state__title">Not enough entries yet</p>
           <p>
             Keep writing. Once a topic and a feeling show up together often enough — at least{' '}
-            {insights.constants.min_occurrence_threshold} times in the last{' '}
-            {insights.constants.recency_window_days} days — the pattern will appear here, on this
-            screen and on your phone, identically.
+            {insights.constants.min_occurrence_threshold} times{' '}
+            {recencyWindowPhrase(insights.constants.recency_window_days)} — the pattern will appear
+            here, on this screen and on your phone, identically.
           </p>
         </div>
       ) : (
@@ -100,7 +105,7 @@ function InsightsBody({
             heading="Happening now"
             patterns={active}
             insights={insights}
-            emptyText={`Nothing is repeating often enough in the last ${insights.constants.recency_window_days} days to call it a pattern right now.`}
+            emptyText={`Nothing is repeating often enough ${recencyWindowPhrase(insights.constants.recency_window_days)} to call it a pattern right now.`}
           />
           {historical.length > 0 && (
             <PatternList
