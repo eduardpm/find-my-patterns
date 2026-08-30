@@ -223,25 +223,58 @@ class _EntryDetailScreenState extends ConsumerState<EntryDetailScreen> {
       appBar: AppBar(
         title: const Text('Entry'),
         backgroundColor: Colors.transparent,
-        leading: IconButton(
+        leading: Semantics(
+          container: true,
+          button: true,
           // In the editor, back means "leave the editor" rather than
           // "leave the entry": one gesture, one step out, so an
           // accidental tap never costs more than it looks like it will.
-          onPressed: state.isEditing ? notifier.cancelEditing : _close,
-          icon: const Icon(Icons.arrow_back),
-          tooltip: state.isEditing ? 'Stop editing' : 'Back',
+          label: state.isEditing ? 'Stop editing' : 'Back',
+          onTap: state.isEditing ? notifier.cancelEditing : _close,
+          // `tooltip` alone would only reach the semantics tree's
+          // `tooltip` field, not its `label` -- the accessible name a
+          // screen reader announces -- so this replaces `IconButton`'s
+          // own semantics with an explicit one (the same pattern
+          // `pattern_echo_panel.dart`'s dismiss button uses).
+          child: ExcludeSemantics(
+            child: IconButton(
+              onPressed: state.isEditing ? notifier.cancelEditing : _close,
+              icon: const Icon(Icons.arrow_back),
+              tooltip: state.isEditing ? 'Stop editing' : 'Back',
+            ),
+          ),
         ),
         actions: [
           if (!state.isEditing)
-            IconButton(
-              onPressed: entry == null ? null : notifier.startEditing,
-              icon: const Icon(Icons.edit),
-              tooltip: 'Edit entry',
+            Semantics(
+              container: true,
+              button: true,
+              enabled: entry != null,
+              label: 'Edit entry',
+              onTap: entry == null ? null : notifier.startEditing,
+              child: ExcludeSemantics(
+                child: IconButton(
+                  onPressed: entry == null ? null : notifier.startEditing,
+                  icon: const Icon(Icons.edit),
+                  tooltip: 'Edit entry',
+                ),
+              ),
             ),
-          IconButton(
-            onPressed: entry == null ? null : () => unawaited(_confirmDelete()),
-            icon: const Icon(Icons.delete),
-            tooltip: 'Delete entry',
+          Semantics(
+            container: true,
+            button: true,
+            enabled: entry != null,
+            label: 'Delete entry',
+            onTap: entry == null ? null : () => unawaited(_confirmDelete()),
+            child: ExcludeSemantics(
+              child: IconButton(
+                onPressed: entry == null
+                    ? null
+                    : () => unawaited(_confirmDelete()),
+                icon: const Icon(Icons.delete),
+                tooltip: 'Delete entry',
+              ),
+            ),
           ),
         ],
       ),

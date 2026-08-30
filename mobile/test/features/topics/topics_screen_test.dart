@@ -314,6 +314,13 @@ void main() {
     await tester.tap(find.text('Exercise'));
     await tester.pumpAndSettle();
 
+    // #150 task 1: the accessible name comes from the semantics tree's
+    // `label`, not `IconButton`'s own `tooltip` field.
+    expect(
+      find.bySemanticsLabel('Remove the alias gym from exercise'),
+      findsOneWidget,
+    );
+
     await tester.tap(find.byTooltip('Remove the alias gym from exercise'));
     await tester.pumpAndSettle();
 
@@ -398,6 +405,10 @@ void main() {
       harness.wrap(screen(onClose: () => closed = true)),
     );
     await tester.pumpAndSettle();
+
+    // #150 task 1: the accessible name comes from the semantics tree's
+    // `label`, not `IconButton`'s own `tooltip` field.
+    expect(find.bySemanticsLabel('Back'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Back'));
     expect(closed, isTrue);

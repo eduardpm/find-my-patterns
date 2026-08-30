@@ -68,10 +68,24 @@ class TopicsScreen extends ConsumerWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    IconButton(
-                      onPressed: onClose,
-                      icon: const Icon(Icons.arrow_back),
-                      tooltip: 'Back',
+                    // `tooltip` alone would only reach the semantics
+                    // tree's `tooltip` field, not its `label` -- the
+                    // accessible name a screen reader announces -- so
+                    // this replaces `IconButton`'s own semantics with an
+                    // explicit one (the same pattern
+                    // `pattern_echo_panel.dart`'s dismiss button uses).
+                    Semantics(
+                      container: true,
+                      button: true,
+                      label: 'Back',
+                      onTap: onClose,
+                      child: ExcludeSemantics(
+                        child: IconButton(
+                          onPressed: onClose,
+                          icon: const Icon(Icons.arrow_back),
+                          tooltip: 'Back',
+                        ),
+                      ),
                     ),
                     const SizedBox(width: JournalSpacing.x2),
                     Expanded(
@@ -330,10 +344,23 @@ class _AliasChip extends StatelessWidget {
     mainAxisSize: MainAxisSize.min,
     children: [
       StatusBadge(alias),
-      IconButton(
-        onPressed: onRemove,
-        icon: const Icon(Icons.close, size: 14),
-        tooltip: 'Remove the alias $alias from $topicName',
+      // `tooltip` alone would only reach the semantics tree's `tooltip`
+      // field, not its `label` -- the accessible name a screen reader
+      // announces -- so this replaces `IconButton`'s own semantics with
+      // an explicit one (the same pattern `pattern_echo_panel.dart`'s
+      // dismiss button uses).
+      Semantics(
+        container: true,
+        button: true,
+        label: 'Remove the alias $alias from $topicName',
+        onTap: onRemove,
+        child: ExcludeSemantics(
+          child: IconButton(
+            onPressed: onRemove,
+            icon: const Icon(Icons.close, size: 14),
+            tooltip: 'Remove the alias $alias from $topicName',
+          ),
+        ),
       ),
     ],
   );

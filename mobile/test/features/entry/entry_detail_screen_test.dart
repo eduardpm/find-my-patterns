@@ -496,6 +496,10 @@ void main() {
 
     expect(find.byTooltip('Edit entry'), findsOneWidget);
     expect(find.text('Edit'), findsNothing);
+    // #150 task 1: the accessible name comes from the semantics tree's
+    // `label`, not `IconButton`'s own `tooltip` field.
+    expect(find.bySemanticsLabel('Edit entry'), findsOneWidget);
+    expect(find.bySemanticsLabel('Delete entry'), findsOneWidget);
   });
 
   testWidgets('the entry is no longer available after a failed load', (
@@ -565,6 +569,10 @@ void main() {
     await tester.tap(find.byTooltip('Edit entry'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('Stop editing'), findsOneWidget);
+    // #150 task 1: the label swaps with the tooltip -- "Back" while
+    // reading, "Stop editing" once the editor is open.
+    expect(find.bySemanticsLabel('Stop editing'), findsOneWidget);
+    expect(find.bySemanticsLabel('Back'), findsNothing);
 
     await tester.tap(find.byTooltip('Stop editing'));
     await tester.pumpAndSettle();
@@ -582,6 +590,11 @@ void main() {
     var closed = false;
     await tester.pumpWidget(app(harness, onClose: () => closed = true));
     await tester.pumpAndSettle();
+
+    // #150 task 1: the accessible name comes from the semantics tree's
+    // `label`, not `IconButton`'s own `tooltip` field -- see
+    // `pattern_echo_panel.dart`'s dismiss button for the same distinction.
+    expect(find.bySemanticsLabel('Back'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Back'));
 

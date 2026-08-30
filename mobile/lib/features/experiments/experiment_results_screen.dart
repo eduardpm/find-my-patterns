@@ -116,9 +116,23 @@ class _ExperimentResultsScreenState
       appBar: AppBar(
         title: const Text('Experiment'),
         backgroundColor: Colors.transparent,
-        leading: IconButton(
-          onPressed: _close,
-          icon: const Icon(Icons.arrow_back),
+        // `tooltip` alone would only reach the semantics tree's `tooltip`
+        // field, not its `label` -- the accessible name a screen reader
+        // announces -- so this replaces `IconButton`'s own semantics with
+        // an explicit one (the same pattern `pattern_echo_panel.dart`'s
+        // dismiss button uses).
+        leading: Semantics(
+          container: true,
+          button: true,
+          label: 'Back',
+          onTap: _close,
+          child: ExcludeSemantics(
+            child: IconButton(
+              onPressed: _close,
+              icon: const Icon(Icons.arrow_back),
+              tooltip: 'Back',
+            ),
+          ),
         ),
       ),
       body: Stack(
