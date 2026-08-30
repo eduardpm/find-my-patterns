@@ -55,29 +55,30 @@ import { DEFAULT_USER_ID } from '../auth/default-user';
 // once two users can each have their own `pattern_echo_log` row, `"key"` alone can no longer tell
 // them apart, so the primary key becomes the composite `(user_id, "key")` below.
 //
-// --- Two global uniqueness constraints, one fixed here, one deliberately not (M-1b step 2, #46) --
+// --- Two global uniqueness constraints, both now fixed (M-1b step 2, #46 and #142) --------------
 // #134 flagged both `topics.name`'s bare `UNIQUE` and `csv_imports.content_hash`'s bare primary key
-// as real multi-tenant defects and left them for this ticket to decide. They are not the same
-// defect in practice, and #46 treats them differently:
+// as real multi-tenant defects. They were not the same defect in practice, and were fixed in two
+// separate tickets rather than one:
 //
-//  - `topics.name` is fixed here, below, to `UNIQUE (user_id, name)`. Every service that reads or
-//    writes `topics` was already scoping its queries by `user_id` as part of this ticket's own
-//    work (`TopicsService`) — but the bare `UNIQUE (name)` constraint meant two ordinary accounts
-//    both mentioning "coffee" (an entirely routine occurrence, not an edge case) would collide the
-//    moment the second one's `INSERT` ran, turning `GET /insights` — the single most-called
-//    endpoint, since it recomputes on every read — into a 500 for that account. That is not a rare
-//    coincidence to defer; it is the ordinary case for two unrelated diaries. Migrated via a table
-//    rebuild (`MIGRATION_STATEMENTS` below), the same technique `diary_meta`'s primary-key change
-//    already uses, since SQLite has no `ALTER TABLE ... ADD CONSTRAINT`.
-//  - `csv_imports.content_hash` stays a bare, global primary key, deliberately. Its collision only
-//    fires when two different accounts import byte-identical files — genuinely rare, unlike two
-//    people both writing about coffee — and `DaylioImportService`/`DaylioImportController`
-//    (`daylio-import.service.ts`'s `DaylioContentHashCollisionError` doc comment) already turn that
-//    rare case into an honest 409 instead of a silent no-op or an unhandled 500. Rebuilding this
-//    table's primary key to `(user_id, content_hash)` is real work — it changes what "idempotent"
-//    means for every future import, not just an ownership filter — and belongs in its own
-//    reviewable, migration-tested follow-up (named in this ticket's PR description) rather than
-//    folded into an already-large one under time pressure.
+//  - `topics.name` is fixed here, below, to `UNIQUE (user_id, name)` (#46). Every service that
+//    reads or writes `topics` was already scoping its queries by `user_id` as part of that
+//    ticket's own work (`TopicsService`) — but the bare `UNIQUE (name)` constraint meant two
+//    ordinary accounts both mentioning "coffee" (an entirely routine occurrence, not an edge case)
+//    would collide the moment the second one's `INSERT` ran, turning `GET /insights` — the single
+//    most-called endpoint, since it recomputes on every read — into a 500 for that account. That
+//    is not a rare coincidence to defer; it is the ordinary case for two unrelated diaries.
+//    Migrated via a table rebuild (`MIGRATION_STATEMENTS` below), the same technique `diary_meta`'s
+//    primary-key change already uses, since SQLite has no `ALTER TABLE ... ADD CONSTRAINT`.
+//  - `csv_imports.content_hash` is fixed the same way, below, to primary key
+//    `(user_id, content_hash)` (#142, this ticket's own follow-up). Its collision only fires when
+//    two different accounts import byte-identical files — genuinely rare, unlike two people both
+//    writing about coffee — which is why #46 deliberately deferred it rather than folding it into
+//    an already-large PR under time pressure, mitigating it in the meantime with an honest 409
+//    (`DaylioContentHashCollisionError` in `daylio-import.service.ts`) instead of a silent no-op or
+//    an unhandled 500. That mitigation is gone now that the real fix has landed: two accounts can
+//    genuinely both commit the same file independently, so `DaylioContentHashCollisionError` and
+//    its 409 handling in `DaylioImportController` were dead code and have been removed. Migrated
+//    via the same table-rebuild technique as `topics.name` just above.
 
 export const SCHEMA_STATEMENTS: string[] = [
   `CREATE TABLE feeling_groups (
@@ -315,9 +316,12 @@ export const SCHEMA_STATEMENTS: string[] = [
   // accepted, kept for `GET`-free auditability — "what did this import actually do" never requires
   // re-parsing the original file.
   //
-  // `user_id` is added (M-1b, #134) but `content_hash` stays the bare primary key: see this file's
-  // top-of-file note (M-1b step 2, #46) on why that per-user uniqueness fix is deliberately left to
-  // a follow-up ticket rather than this one.
+  // `user_id` is part of the primary key (M-1b step 2 follow-up, #142), not just an ownership
+  // column: two different accounts committing byte-identical files is a genuine, if rare, case
+  // (unlike two people both writing about "coffee"), and a bare `content_hash` key made the second
+  // account's commit fail on the primary key even though `DaylioImportService.buildReport`'s
+  // "already imported" check was already correctly scoped to the caller's own `user_id`. See this
+  // file's top-of-file note for the full history.
   `CREATE TABLE csv_imports (
      content_hash VARCHAR(64) NOT NULL,
      user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
@@ -325,7 +329,7 @@ export const SCHEMA_STATEMENTS: string[] = [
      imported_at DATETIME NOT NULL,
      entry_count INTEGER NOT NULL,
      report_json JSON NOT NULL,
-     PRIMARY KEY (content_hash),
+     PRIMARY KEY (user_id, content_hash),
      FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
@@ -464,6 +468,22 @@ function topicsAlreadyRebuilt(db: Database.Database): boolean {
     .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'topics'`)
     .get() as { sql: string } | undefined;
   return !!row?.sql && /UNIQUE\s*\(\s*user_id\s*,\s*name\s*\)/i.test(row.sql);
+}
+
+/**
+ * `true` once `csv_imports` already carries the composite `PRIMARY KEY (user_id, content_hash)`
+ * the rebuild below installs — read directly off `sqlite_master.sql`, the same "ask the database
+ * what shape it actually is" check `topicsAlreadyRebuilt` uses, and for the same reason: `user_id`
+ * exists on this table either way, whether it arrived via the `ALTER TABLE csv_imports ADD COLUMN
+ * user_id ...` statement above or via the `CREATE TABLE IF NOT EXISTS csv_imports` statement
+ * further up (for a diary old enough to have lacked the table entirely) — so a column-presence
+ * guard cannot tell "already rebuilt" apart from "not yet rebuilt".
+ */
+function csvImportsAlreadyRebuilt(db: Database.Database): boolean {
+  const row = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'csv_imports'`)
+    .get() as { sql: string } | undefined;
+  return !!row?.sql && /PRIMARY\s+KEY\s*\(\s*user_id\s*,\s*content_hash\s*\)/i.test(row.sql);
 }
 
 export const MIGRATION_STATEMENTS: MigrationStatement[] = [
@@ -698,8 +718,11 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
   },
   {
     // `user_id` (M-1b, #134): see the note on the `entry_feelings` statement above.
-    // `content_hash` stays the bare primary key — see this file's top-of-file M-1b step 2 (#46)
-    // note on why that per-user uniqueness fix is deliberately left to a follow-up ticket.
+    // `content_hash` stays the bare primary key *here* deliberately: this statement only covers a
+    // diary old enough to lack the table entirely, and the composite-key rebuild below
+    // (`csvImportsAlreadyRebuilt`, M-1b step 2 follow-up, #142) picks up a table this statement
+    // created the same way it picks up one grown by the `ALTER TABLE` below — there is no need to
+    // duplicate the new shape here when the rebuild already handles both starting points uniformly.
     sql: `CREATE TABLE IF NOT EXISTS csv_imports (
               content_hash VARCHAR(64) NOT NULL,
               user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
@@ -870,6 +893,41 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
   },
   { sql: `DROP TABLE topics`, skipIf: topicsAlreadyRebuilt },
   { sql: `ALTER TABLE topics_new RENAME TO topics`, skipIf: topicsAlreadyRebuilt },
+
+  // --- `csv_imports.content_hash` per-user primary key: a constraint rebuild (M-1b step 2
+  // follow-up, #142) ------------------------------------------------------------------------------
+  // See this file's top-of-file note for why this one, unlike `topics.name` just above, waited for
+  // its own ticket rather than landing in #46: a same-file collision across two different accounts
+  // is a rare coincidence, not the routine case two people both writing about "coffee" was — but it
+  // is real, and `DaylioContentHashCollisionError`'s 409 in `DaylioImportController` only mitigated
+  // it rather than fixing it. Both are now removed as dead code.
+  //
+  // `user_id` already exists on this table by the time this block runs — either via the `ALTER
+  // TABLE csv_imports ADD COLUMN user_id ...` statement above, or via the `CREATE TABLE IF NOT
+  // EXISTS csv_imports` statement further up, for a diary old enough to have lacked the table
+  // entirely — so, exactly like `topics`, a column-presence guard cannot tell "already rebuilt"
+  // apart from "not yet rebuilt": both states have the column. `skipIf` instead inspects
+  // `sqlite_master.sql` for this table directly, checking for the new primary key's own text.
+  {
+    sql: `CREATE TABLE csv_imports_new (
+              content_hash VARCHAR(64) NOT NULL,
+              user_id VARCHAR(36) NOT NULL,
+              source VARCHAR(16) NOT NULL,
+              imported_at DATETIME NOT NULL,
+              entry_count INTEGER NOT NULL,
+              report_json JSON NOT NULL,
+              PRIMARY KEY (user_id, content_hash),
+              FOREIGN KEY(user_id) REFERENCES users (id)
+            )`,
+    skipIf: csvImportsAlreadyRebuilt,
+  },
+  {
+    sql: `INSERT INTO csv_imports_new (content_hash, user_id, source, imported_at, entry_count, report_json)
+          SELECT content_hash, user_id, source, imported_at, entry_count, report_json FROM csv_imports`,
+    skipIf: csvImportsAlreadyRebuilt,
+  },
+  { sql: `DROP TABLE csv_imports`, skipIf: csvImportsAlreadyRebuilt },
+  { sql: `ALTER TABLE csv_imports_new RENAME TO csv_imports`, skipIf: csvImportsAlreadyRebuilt },
 
   // --- `diary_meta` ownership: a primary-key rebuild, not an `ADD COLUMN` (M-1b, #134) ------------
   // Every table above keeps its primary key and only gains a column. `diary_meta` cannot: its key

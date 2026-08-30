@@ -598,7 +598,7 @@ describe('GET /export?format=json|markdown', () => {
   });
 });
 
-describe('daylio import — dry-run, commit, and the documented content_hash collision', () => {
+describe('daylio import — dry-run, commit, and cross-account import independence', () => {
   const csvFor = (mood: string): Buffer =>
     Buffer.from(
       `full_date,date,weekday,time,mood,activities,note_title,note\n` +
@@ -637,7 +637,7 @@ describe('daylio import — dry-run, commit, and the documented content_hash col
     expect(commitB).toMatchObject({ idempotent: false, imported_count: 1 });
   });
 
-  it('DOCUMENTED KNOWN GAP: csv_imports.content_hash is still a global primary key (see PR description) — a second account committing the exact same bytes a first account already committed collides with 409, rather than importing independently', async () => {
+  it("two accounts committing byte-identical files each get their own independent import history (#142), and each account's own re-commit of that file stays idempotent", async () => {
     const identicalCsv = csvFor('meh');
     const dryA = (
       await userA.client
@@ -645,15 +645,17 @@ describe('daylio import — dry-run, commit, and the documented content_hash col
         .attach('file', identicalCsv, 'shared.csv')
         .expect(200)
     ).body as { report_hash: string };
-    await userA.client
-      .post('/import/daylio/commit')
-      .attach('file', identicalCsv, 'shared.csv')
-      .field('report_hash', dryA.report_hash)
-      .expect(200);
+    const commitA = (
+      await userA.client
+        .post('/import/daylio/commit')
+        .attach('file', identicalCsv, 'shared.csv')
+        .field('report_hash', dryA.report_hash)
+        .expect(200)
+    ).body as { idempotent: boolean; imported_count: number };
+    expect(commitA).toMatchObject({ idempotent: false, imported_count: 1 });
 
     // User B's own dry-run of the identical bytes is correctly scoped — filtered by B's own
-    // `user_id`, per `daylio-import.service.ts`'s `DaylioContentHashCollisionError` doc comment —
-    // so it honestly reports "not yet imported by me," never A's history.
+    // `user_id` — so it honestly reports "not yet imported by me," never A's history.
     const dryB = (
       await userB.client
         .post('/import/daylio/dry-run')
@@ -662,14 +664,36 @@ describe('daylio import — dry-run, commit, and the documented content_hash col
     ).body as { report_hash: string; already_imported: boolean };
     expect(dryB.already_imported).toBe(false);
 
-    // But the commit collides on the still-global primary key — a real, tracked, deliberately
-    // deferred limitation (schema.ts's M-1b note; this ticket's PR description), surfaced here as
-    // an honest 409 rather than a silent no-op or an unhandled 500.
-    await userB.client
-      .post('/import/daylio/commit')
-      .attach('file', identicalCsv, 'shared.csv')
-      .field('report_hash', dryB.report_hash)
-      .expect(409);
+    // The commit now succeeds too: `csv_imports`' primary key is `(user_id, content_hash)` (#142),
+    // so two different accounts committing the exact same bytes no longer collide the way they did
+    // before this ticket (formerly an honest 409 via `DaylioContentHashCollisionError`, now removed
+    // as dead code).
+    const commitB = (
+      await userB.client
+        .post('/import/daylio/commit')
+        .attach('file', identicalCsv, 'shared.csv')
+        .field('report_hash', dryB.report_hash)
+        .expect(200)
+    ).body as { idempotent: boolean; imported_count: number };
+    expect(commitB).toMatchObject({ idempotent: false, imported_count: 1 });
+
+    // User A re-committing the same file is still idempotent — the per-user `alreadyImported`
+    // check this ticket leaves untouched.
+    const dryAAgain = (
+      await userA.client
+        .post('/import/daylio/dry-run')
+        .attach('file', identicalCsv, 'shared.csv')
+        .expect(200)
+    ).body as { report_hash: string; already_imported: boolean };
+    expect(dryAAgain.already_imported).toBe(true);
+    const commitAAgain = (
+      await userA.client
+        .post('/import/daylio/commit')
+        .attach('file', identicalCsv, 'shared.csv')
+        .field('report_hash', dryAAgain.report_hash)
+        .expect(200)
+    ).body as { idempotent: boolean; imported_count: number };
+    expect(commitAAgain).toMatchObject({ idempotent: true, imported_count: 0 });
   });
 });
 

@@ -19,24 +19,6 @@ import { interpretDaylioRow, parseDaylioCsv, type DaylioParsedRow } from './dayl
 /** The submitted `report_hash` does not match a fresh dry-run of this exact file. */
 export class DaylioReportHashMismatchError extends Error {}
 
-/**
- * `csv_imports.content_hash` is still a bare, globally-unique primary key (`schema.ts`'s M-1b
- * note names this as a real, deliberately-deferred multi-tenant defect: fixing it means rebuilding
- * the table's key to `(user_id, content_hash)`, which belongs in its own reviewable, migration-
- * tested PR rather than folded into this already-large one). The practical consequence: two
- * different accounts can never both import the same byte-identical export.
- *
- * Before this ticket, that showed up as a *silent* no-op for whichever account imported second —
- * `buildReport`'s `alreadyImported` check unfiltered by owner would tell a second account "this was
- * already imported," which is a false claim about *their* diary. Filtering that check by `user_id`
- * (below) removes the false claim, but exposes the real one: a second account's dry-run correctly
- * says "never imported," and its commit then collides with the first account's row on the bare
- * primary key. This error turns that collision into an honest, catchable failure instead of an
- * unhandled 500 — a real improvement within this ticket's scope, though not the actual fix, which
- * is the follow-up ticket the PR description names.
- */
-export class DaylioContentHashCollisionError extends Error {}
-
 export interface MoodMappingEntry {
   daylioMood: string;
   feelingKey: FeelingKey;
@@ -241,9 +223,10 @@ export class DaylioImportService {
 
     const reportCore = { ...hashedFields, collisions: sortedCollisions };
 
-    // Filtered by `user_id`, per this method's own doc comment on `DaylioContentHashCollisionError`:
-    // whether *this account* already imported this exact file, never whether some other account
-    // did.
+    // Filtered by `user_id`: whether *this account* already imported this exact file, never
+    // whether some other account did — `csv_imports`' primary key is `(user_id, content_hash)`
+    // (M-1b step 2 follow-up, #142), so two different accounts each have their own row for the
+    // same bytes.
     const previousRow = handle
       .prepare(
         'SELECT imported_at, entry_count FROM csv_imports WHERE user_id = ? AND content_hash = ?',
@@ -317,58 +300,40 @@ export class DaylioImportService {
     // own transaction inside this one via a savepoint, so a failure partway through a large import
     // rolls the entire commit back rather than leaving some entries written and the file still
     // unmarked — which is exactly the state a retry could turn into a double-import.
-    let entryIds: string[];
-    try {
-      entryIds = handle.transaction((): string[] => {
-        const ids: string[] = [];
-        for (const { row, feelingKey } of importable) {
-          const entry = this.entries.createImportedEntry(userId, {
-            rawText: composeRawText(row.noteTitle, row.note),
-            entryDate: row.entryDate,
-            createdAt: row.createdAt,
-            feelingKey,
-            origin: 'daylio_import',
-          });
-          ids.push(entry.id);
-          if (row.activities.length > 0) {
-            // 'import' (L-1b, #35): a Daylio activity tag, not text a keyword scan found — see
-            // TopicsService.linkTopics's doc comment for why this must not be 'keyword'.
-            this.topics.linkTopics(userId, entry.id, row.activities, 'import');
-          }
+    //
+    // `csv_imports`' primary key is `(user_id, content_hash)` (M-1b step 2 follow-up, #142), so
+    // this insert can no longer collide with another account's row for the same bytes the way it
+    // once did — the only remaining collision this transaction could hit is this same account
+    // re-committing a file the `alreadyImported` check above already caught, which never reaches
+    // here.
+    const entryIds = handle.transaction((): string[] => {
+      const ids: string[] = [];
+      for (const { row, feelingKey } of importable) {
+        const entry = this.entries.createImportedEntry(userId, {
+          rawText: composeRawText(row.noteTitle, row.note),
+          entryDate: row.entryDate,
+          createdAt: row.createdAt,
+          feelingKey,
+          origin: 'daylio_import',
+        });
+        ids.push(entry.id);
+        if (row.activities.length > 0) {
+          // 'import' (L-1b, #35): a Daylio activity tag, not text a keyword scan found — see
+          // TopicsService.linkTopics's doc comment for why this must not be 'keyword'.
+          this.topics.linkTopics(userId, entry.id, row.activities, 'import');
         }
-
-        handle
-          .prepare(
-            `INSERT INTO csv_imports (content_hash, user_id, source, imported_at, entry_count,
-             report_json)
-             VALUES (?, ?, 'daylio', ?, ?, ?)`,
-          )
-          .run(
-            report.contentHash,
-            userId,
-            encodeDateTime(nowUtc()),
-            ids.length,
-            encodeJson(report),
-          );
-
-        return ids;
-      });
-    } catch (error) {
-      // See `DaylioContentHashCollisionError`'s doc comment: `csv_imports.content_hash` is still a
-      // bare, global primary key, so a different account committing this exact file first collides
-      // here rather than being caught by the (correctly per-user-scoped) `alreadyImported` check
-      // above.
-      if (
-        error instanceof Error &&
-        /UNIQUE constraint failed: csv_imports\.content_hash/.test(error.message)
-      ) {
-        throw new DaylioContentHashCollisionError(
-          'This exact file was already imported by a different account. Per-account import ' +
-            'history for identical files is a known limitation, tracked separately.',
-        );
       }
-      throw error;
-    }
+
+      handle
+        .prepare(
+          `INSERT INTO csv_imports (content_hash, user_id, source, imported_at, entry_count,
+           report_json)
+           VALUES (?, ?, 'daylio', ?, ?, ?)`,
+        )
+        .run(report.contentHash, userId, encodeDateTime(nowUtc()), ids.length, encodeJson(report));
+
+      return ids;
+    });
 
     return {
       idempotent: false,
