@@ -31,8 +31,28 @@ import 'year_grid.dart';
 /// The month name and year, e.g. "August 2026".
 final DateFormat _monthLabelFormat = DateFormat.yMMMM();
 
-/// Monday-first weekday headers over the grid.
+/// Monday-first weekday headers over the grid, two-letter form.
 const List<String> _weekdayLabels = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+
+/// The single-letter fallback for [_weekdayLabels], same order, used
+/// uniformly across all seven columns once the two-letter form no longer
+/// fits — never only for the one column whose glyphs happen to be widest.
+/// See [_WeekdayHeaderRow].
+const List<String> _weekdayInitials = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+/// The full weekday name for each entry of [_weekdayLabels], same order —
+/// carried explicitly so a screen reader's announced name never depends on
+/// which abbreviation length happens to fit visually. See
+/// [_WeekdayHeaderRow].
+const List<String> _weekdayFullNames = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+];
 
 /// The strongest rating a day cell's intensity bar is drawn against.
 ///
@@ -307,14 +327,7 @@ class _CalendarGrid extends StatelessWidget {
 
     return Column(
       children: [
-        Row(
-          children: [
-            for (final label in _weekdayLabels)
-              Expanded(
-                child: Center(child: Eyebrow(label)),
-              ),
-          ],
-        ),
+        _WeekdayHeaderRow(scaler: scaler),
         const SizedBox(height: JournalSpacing.x2),
         // `GridView.count`'s implicit `childAspectRatio: 1` forced every
         // cell to stay exactly as tall as it is wide -- fine at the
@@ -393,6 +406,95 @@ class _CalendarGrid extends StatelessWidget {
           },
         ),
       ],
+    );
+  }
+}
+
+/// Monday-first weekday headers over the grid: two-letter abbreviations
+/// ("MO", "TU", ...) when every column's own share of the row can hold the
+/// widest of them, falling back to single letters ("M", "T", ...) for every
+/// column at once once it can't.
+///
+/// The single comment on #155 reproduced a defect here at 320dp/2x: "M" is
+/// the widest capital in the label set, so the original
+/// `Expanded(child: Center(child: Eyebrow(label)))` per column let *only*
+/// the "MO" column wrap onto a second line while its six siblings stayed on
+/// one — a ragged, two-line-tall header over a grid whose day-cell columns
+/// underneath were otherwise fine. Nothing threw, so `takeException()`
+/// passed straight through it (the defect's own words).
+///
+/// The fix measures the widest two-letter label's own natural width against
+/// the real per-column width — the same `TextPainter`-at-the-real-scaler
+/// technique [_measureHeight] below uses for the day numbers — and, if it
+/// does not fit, drops *every* column to a single letter together, never
+/// only the one column whose glyphs happen to be widest. That is the
+/// "single shared decision for all seven" this needed: dropping only the
+/// "MO" column to "M" would still leave every column on one line, but with
+/// six columns two letters wide and one column one letter wide — uniform in
+/// line count, not in abbreviation length.
+///
+/// Dropping to single letters shortens the *visible* label, but must not
+/// shorten the *spoken* one: [Eyebrow] derives its `Semantics.label` from
+/// the same string it paints, so swapping in `_weekdayInitials` without
+/// more would silently shrink a screen reader's announced name from
+/// "Tuesday" to "T" too — a regression in the exact thing #150 spent its
+/// effort on. Each single-letter cell instead wraps [Eyebrow] in its own
+/// outer `Semantics(container: true, label: ...)` carrying
+/// [_weekdayFullNames], the same "explicit outer `Semantics` +
+/// `ExcludeSemantics` over an icon/label-only child" shape
+/// `ACCESSIBILITY.md` §2 already uses for every icon-only control in this
+/// app — `container: true` is required, not decorative, because without it
+/// this sits inside `ListView`'s per-item semantics merging and all seven
+/// labels collapse into one node whose label concatenates every weekday
+/// name on one line, the same way `_MonthSwitcher`'s two chevrons already
+/// need it to stay addressable on their own. So the announced name becomes
+/// "Monday", arguably clearer than "Mo" ever was, never "M".
+class _WeekdayHeaderRow extends StatelessWidget {
+  const _WeekdayHeaderRow({required this.scaler});
+
+  /// The real ambient [TextScaler], passed down from [_CalendarGrid] so this
+  /// measures against the same scale the day-number grid below it does.
+  final TextScaler scaler;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const columns = 7;
+        final columnWidth = constraints.maxWidth / columns;
+        // The widest two-letter label's own natural (unwrapped) width —
+        // "MO" on every real font this app ships, but measured rather than
+        // assumed, since a test's substituted font need not agree with a
+        // device's.
+        final widestLabelWidth = _weekdayLabels
+            .map(
+              (label) => _measureWidth(
+                JournalType.eyebrowCase(label),
+                JournalType.eyebrow,
+                scaler,
+              ),
+            )
+            .reduce(math.max);
+        final fitsTwoLetters = widestLabelWidth <= columnWidth;
+        return Row(
+          children: [
+            for (var i = 0; i < _weekdayLabels.length; i++)
+              Expanded(
+                child: Center(
+                  child: fitsTwoLetters
+                      ? Eyebrow(_weekdayLabels[i])
+                      : Semantics(
+                          container: true,
+                          label: _weekdayFullNames[i],
+                          child: ExcludeSemantics(
+                            child: Eyebrow(_weekdayInitials[i]),
+                          ),
+                        ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -568,6 +670,22 @@ double _measureHeight(
     textScaler: scaler,
   )..layout(maxWidth: maxWidth);
   return painter.height;
+}
+
+/// The natural, unwrapped width [text] would render at in [style] under
+/// [scaler] — the same [TextPainter] machinery [_measureHeight] above uses,
+/// but laid out at unbounded width, since [_WeekdayHeaderRow] wants to know
+/// how wide a label *wants* to be before deciding whether it fits, not how
+/// tall it renders once already squeezed into a width. See
+/// `today/day_summary_card.dart`'s `_measure`, which asks this same
+/// question for that screen's own rows.
+double _measureWidth(String text, TextStyle? style, TextScaler scaler) {
+  final painter = TextPainter(
+    text: TextSpan(text: text, style: style),
+    textDirection: TextDirection.ltr,
+    textScaler: scaler,
+  )..layout();
+  return painter.width;
 }
 
 /// `"<day>, today, <N> entries, <feelings>, intensity N"`, or `"<day>, no entries"`.
