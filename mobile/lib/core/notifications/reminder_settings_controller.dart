@@ -18,6 +18,20 @@ import 'reminder_schedule.dart';
 /// that a widget would have to squirrel away in its own state to survive a
 /// rebuild.
 class RemindersController extends AsyncNotifier<bool> {
+  /// The tail of every `save` call issued so far, chained one after another.
+  ///
+  /// `reminders_card.dart` fires every mutation through
+  /// `unawaited(controller.save(...))`, so a second tap can call [save]
+  /// while the first call's body -- persist, then reconcile the plugin --
+  /// is still awaiting a step of it. Left alone, two such calls run their
+  /// cancel-then-schedule pairs concurrently and can interleave: one call's
+  /// `scheduleAll` landing after the other's cancel, arming an alarm neither
+  /// call's own final state wanted (#153). Chaining each [save] after
+  /// whichever is already in flight keeps every call's body running start
+  /// to finish before the next one begins, so calls apply in the order they
+  /// were made instead of racing.
+  Future<void> _saveChain = Future<void>.value();
+
   @override
   Future<bool> build() async {
     // `ref.read`, not `ref.watch`: this only has to answer once, the first
@@ -51,7 +65,25 @@ class RemindersController extends AsyncNotifier<bool> {
   /// controller's view of the current answer, which is what keeps the
   /// denial note accurate if the user grants it from system settings
   /// mid-session and comes back.
-  Future<void> save(List<ReminderTime> reminders) async {
+  ///
+  /// Chained onto [_saveChain] rather than run directly -- see that field's
+  /// own doc comment for why a caller that fires this without awaiting it
+  /// (`reminders_card.dart`'s `unawaited(controller.save(...))`) needs that
+  /// serialisation.
+  Future<void> save(List<ReminderTime> reminders) {
+    final chained = _saveChain
+        // Swallow a previous call's failure here, in the link used only for
+        // sequencing -- an earlier save throwing must not stop every save
+        // after it from ever running. The failure itself still reaches that
+        // earlier call's own caller through the future `save` returned for
+        // it, below.
+        .catchError((_) {})
+        .then((_) => _save(reminders));
+    _saveChain = chained;
+    return chained;
+  }
+
+  Future<void> _save(List<ReminderTime> reminders) async {
     final anyEnabled = reminders.any((reminder) => reminder.enabled);
     var blocked = false;
     if (anyEnabled) {
@@ -76,21 +108,22 @@ class RemindersController extends AsyncNotifier<bool> {
       for (final reminder in reminders)
         if (reminder.enabled) ReminderSlot(reminder.hour, reminder.minute),
     ];
-    // Every reschedule starts from a clean slate: a reminder that was just
-    // disabled, removed, or moved to a new time must not leave its old
-    // alarm still armed under an id nothing here tracks any more.
-    await service.cancelAll();
-    if (slots.isNotEmpty) {
-      await service.scheduleAll(slots: slots);
-    }
-    // R-2: `cancelAll` above is `flutter_local_notifications`' only
-    // cancellation broad enough to guarantee a removed reminder's alarm is
-    // really gone (see the comment above it) — but it cancels *every*
-    // scheduled notification, including the weekly digest, which is armed
-    // independently of this reminder list under its own id. Re-arming it
-    // here immediately closes that gap; without this call the digest would
-    // stay silently cancelled until the app's next cold start
-    // (`app.dart#_restore` re-arms it too, but only then).
+    // Reconciles against whatever the platform actually has armed, rather
+    // than cancelling everything and rescheduling from scratch (#153): a
+    // reminder that was just disabled, removed, or moved to a new time must
+    // not leave its old alarm armed under an id nothing here tracks any
+    // more, and neither must an alarm that leaked from some earlier save --
+    // `ReminderService.reconcileReminders`'s own doc comment covers why a
+    // blunt `cancelAll` here can't make that second guarantee the way this
+    // can.
+    await service.reconcileReminders(slots: slots);
+    // Refreshes the digest alarm from current settings after every
+    // reminders save, independently of what `reconcileReminders` above just
+    // did to the reminder alarms -- it deliberately never touches the
+    // digest's own id, so this call no longer exists to repair collateral
+    // damage from a blunt `cancelAll` the way it did before. It stays as a
+    // harmless, idempotent re-affirmation of the digest's own state; see
+    // `DigestSettingsController.rearm`'s own doc comment for what it does.
     await ref.read(digestSettingsControllerProvider.notifier).rearm();
   }
 }

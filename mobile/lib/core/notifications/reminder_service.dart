@@ -270,9 +270,9 @@ class ReminderService {
   /// Schedules every slot in [slots], cancelling nothing first.
   ///
   /// The caller decides which slots that is — usually the user's currently
-  /// enabled reminders — and is responsible for calling [cancelAll] first
-  /// when the set of slots has changed, so a removed or disabled reminder's
-  /// old alarm doesn't linger.
+  /// enabled reminders. This alone does not clean up a slot that used to be
+  /// scheduled and no longer should be — see [reconcileReminders] for the
+  /// caller that needs that guarantee too.
   Future<void> scheduleAll({required List<ReminderSlot> slots}) async {
     final now = DateTime.now();
     for (final slot in slots) {
@@ -281,7 +281,45 @@ class ReminderService {
   }
 
   /// Cancels every scheduled reminder.
+  ///
+  /// Blunt on purpose — see [reconcileReminders] for the targeted
+  /// alternative that both `RemindersController` and the app's cold start
+  /// use instead, precisely because this one cancels the digest and the
+  /// first-pattern notification too (#153).
   Future<void> cancelAll() => plugin.cancelAll();
+
+  /// Cancels whichever pending reminder alarms are not in [slots], then
+  /// schedules [slots] -- the self-healing alternative to [cancelAll]
+  /// followed by [scheduleAll].
+  ///
+  /// Reads [NotificationsPlugin.pendingNotificationRequests] rather than
+  /// deriving what to cancel from the caller's previous slot list: the
+  /// defect this exists to fix (#153) was a reminder alarm that outlived
+  /// every setting that could have described it -- turned off, removed, or
+  /// left over from an earlier release's id scheme -- so nothing this app
+  /// remembers about its own past calls can be trusted to name it. Asking
+  /// the platform what is actually armed, and cancelling whatever is not in
+  /// [slots], repairs a leak like that the next time this runs, not just
+  /// prevents a fresh one.
+  ///
+  /// Skips [_firstPatternNotificationId] and [_digestNotificationId]: this
+  /// reconciles the reminder alarms only, the same boundary [cancelDigest]
+  /// keeps on the digest side, so the two features never cancel each
+  /// other's notification.
+  Future<void> reconcileReminders({required List<ReminderSlot> slots}) async {
+    final desiredIds = slots.map((slot) => slot.id).toSet();
+    final pending = await plugin.pendingNotificationRequests();
+    for (final request in pending) {
+      if (request.id == _firstPatternNotificationId ||
+          request.id == _digestNotificationId) {
+        continue;
+      }
+      if (!desiredIds.contains(request.id)) {
+        await plugin.cancel(id: request.id);
+      }
+    }
+    await scheduleAll(slots: slots);
+  }
 
   /// Schedules the weekly digest notification (R-2) for [slot], replacing
   /// whichever day/time it was previously armed for.

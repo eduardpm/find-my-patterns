@@ -153,6 +153,65 @@ void main() {
     });
   });
 
+  group('reconcileReminders', () {
+    test('schedules every given slot, the same as scheduleAll', () async {
+      await service.reconcileReminders(slots: _testSlots);
+
+      expect(plugin.scheduledCalls, hasLength(_testSlots.length));
+      expect(
+        plugin.scheduledCalls.map((call) => call.id).toSet(),
+        _testSlots.map((slot) => slot.id).toSet(),
+      );
+    });
+
+    test('never calls cancelAll, only targeted cancels', () async {
+      await service.reconcileReminders(slots: _testSlots);
+      expect(plugin.cancelAllCallCount, 0);
+    });
+
+    test(
+      'cancels a pending id with no slot in the desired set (#153) -- the '
+      'shape of the 12:00 alarm the issue found with no matching setting',
+      () async {
+        // Stands in for an alarm the platform already has armed that this
+        // call was never told about -- a leak from an earlier release's id
+        // scheme, a crash mid-save, or a lost race, exactly the situation
+        // `reconcileReminders`'s own doc comment describes.
+        const leaked = ReminderSlot(12, 0);
+        plugin.pendingIds.add(leaked.id);
+
+        await service.reconcileReminders(slots: const [ReminderSlot(9, 0)]);
+
+        expect(plugin.cancelledIds, contains(leaked.id));
+      },
+    );
+
+    test(
+      'never cancels the first-pattern or digest reserved ids, even when '
+      'nothing is enabled',
+      () async {
+        plugin.pendingIds.addAll({-1, -2});
+
+        await service.reconcileReminders(slots: const []);
+
+        expect(plugin.cancelledIds, isNot(contains(-1)));
+        expect(plugin.cancelledIds, isNot(contains(-2)));
+      },
+    );
+
+    test(
+      'does not cancel a pending id that is already in the desired set',
+      () async {
+        const slot = ReminderSlot(9, 0);
+        plugin.pendingIds.add(slot.id);
+
+        await service.reconcileReminders(slots: const [slot]);
+
+        expect(plugin.cancelledIds, isEmpty);
+      },
+    );
+  });
+
   group('showFirstPatternNotification', () {
     test('shows immediately, under a payload distinct from any reminder '
         'slot id', () async {

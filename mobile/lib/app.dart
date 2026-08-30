@@ -206,8 +206,9 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
     await _armReminders(settings.reminders);
   }
 
-  /// Initialises the reminder plugin, re-arms whichever reminders are
-  /// currently enabled, and asks whether the app was launched by tapping one.
+  /// Initialises the reminder plugin, reconciles the scheduled alarms
+  /// against whichever reminders are currently enabled, and asks whether the
+  /// app was launched by tapping one.
   ///
   /// The order matters: the plugin has to be initialised before a launch tap
   /// can be read.
@@ -215,11 +216,18 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
   /// This never requests the notification permission itself — that only
   /// happens when the user turns a reminder on from Settings
   /// (`RemindersController.save`), not unconditionally on every cold start.
-  /// Rescheduling from the stored settings here is what makes a reminder
-  /// survive the app itself being restarted, alongside the native
-  /// `flutter_local_notifications` boot receivers already declared in the
-  /// Android manifest, which re-arm the same alarms across an actual device
-  /// reboot without this method's help.
+  ///
+  /// Reconciling here, not just scheduling (#153), is what repairs a
+  /// reminder alarm left over from a previous run — a race between two
+  /// saves, a crash mid-save, or an earlier id scheme — without the user
+  /// having to visit Settings and touch a reminder themselves first: cold
+  /// start is the one moment every install reliably passes through, so it's
+  /// the backstop for a leak `RemindersController.save`'s own reconcile call
+  /// missed. This is also what makes a reminder survive the app itself
+  /// being restarted, alongside the native `flutter_local_notifications`
+  /// boot receivers already declared in the Android manifest, which re-arm
+  /// the same alarms across an actual device reboot without this method's
+  /// help.
   Future<void> _armReminders(List<ReminderTime> reminders) async {
     final service = ref.read(reminderServiceProvider);
     await service.initialize();
@@ -227,14 +235,12 @@ class _FindMyPatternsAppState extends ConsumerState<FindMyPatternsApp> {
       for (final reminder in reminders)
         if (reminder.enabled) ReminderSlot(reminder.hour, reminder.minute),
     ];
-    if (slots.isNotEmpty) {
-      await service.scheduleAll(slots: slots);
-    }
+    await service.reconcileReminders(slots: slots);
     // R-2: re-arms the weekly digest from stored settings, the same
-    // survives-a-restart guarantee `scheduleAll` above gives reminders.
-    // `DigestSettingsController.rearm` also cancels it outright when the
-    // digest is off, so this is safe to call unconditionally rather than
-    // branching on `AppSettings.digest.enabled` here too.
+    // survives-a-restart guarantee `reconcileReminders` above gives
+    // reminders. `DigestSettingsController.rearm` also cancels it outright
+    // when the digest is off, so this is safe to call unconditionally
+    // rather than branching on `AppSettings.digest.enabled` here too.
     await ref.read(digestSettingsControllerProvider.notifier).rearm();
     if (!mounted) return;
     await ref.read(openComposerSignalProvider.notifier).checkLaunchTap();
