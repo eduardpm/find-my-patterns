@@ -218,8 +218,15 @@ class _GuidedQuestionFlowState extends State<GuidedQuestionFlow> {
           child: const Text('Write freely instead'),
         ),
         const SizedBox(height: JournalSpacing.x3),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        // `Wrap`, not `Row` (#165) -- two fixed-size pill buttons that do
+        // not both fit one line at 320dp/2x ("Back" + "Save entry" needed
+        // 152-176px more than the row had). Each pill keeps its full label
+        // rather than shrinking or truncating; when they don't share a
+        // line, "Save entry"/"Next" drops to its own line below "Back"
+        // instead of overflowing it.
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          runSpacing: JournalSpacing.x2,
           children: [
             if (currentStep > 0)
               SecondaryPillButton(
@@ -357,8 +364,14 @@ class _StepTrack extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        // `Wrap`, not `Row` (#165) -- "Guided" and "Step N of M" no longer
+        // share one line once the step count and the text scale both grow
+        // (measured 152-167px short of the row's own width at 320dp/2x).
+        // Neither label is truncated or shrunk; "Step N of M" drops to its
+        // own line below "Guided" instead of overflowing it.
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          runSpacing: JournalSpacing.x1,
           children: [
             const Eyebrow('Guided'),
             Eyebrow('Step ${current + 1} of $total'),

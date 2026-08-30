@@ -187,6 +187,15 @@ class _VoiceAnswerRecorderState extends ConsumerState<VoiceAnswerRecorder> {
     );
   }
 
+  // Every branch's label is wrapped in `Flexible` (#165) -- the pill's own
+  // horizontal padding (2x `JournalSpacing.x5`) eats a fixed 48px regardless
+  // of screen width, so as text scale grows that padding claims a bigger
+  // share of what is left for the label, and a bare `Text` inside a
+  // `mainAxisSize.min` `Row` has nothing telling it to wrap instead of
+  // overflowing (measured 127-167px past the row at 320dp/2x, on the idle
+  // branch -- the state every composer stage mounts this widget in). Each
+  // label keeps its full wording; a `Flexible` lets it drop to a second
+  // line rather than being truncated or shrunk.
   Widget _buildButton() => switch (_phase) {
     _RecorderPhase.transcribing => SecondaryPillButton(
       onPressed: null,
@@ -202,7 +211,7 @@ class _VoiceAnswerRecorderState extends ConsumerState<VoiceAnswerRecorder> {
             ),
           ),
           const SizedBox(width: JournalSpacing.x2),
-          const Text('Transcribing…'),
+          const Flexible(child: Text('Transcribing…')),
         ],
       ),
     ),
@@ -213,7 +222,7 @@ class _VoiceAnswerRecorderState extends ConsumerState<VoiceAnswerRecorder> {
         children: [
           const _RecordingDot(),
           const SizedBox(width: JournalSpacing.x2),
-          const Text('Stop recording'),
+          const Flexible(child: Text('Stop recording')),
         ],
       ),
     ),
@@ -224,7 +233,7 @@ class _VoiceAnswerRecorderState extends ConsumerState<VoiceAnswerRecorder> {
         children: [
           Icon(Icons.mic, size: 18),
           SizedBox(width: JournalSpacing.x2),
-          Text('Speak instead'),
+          Flexible(child: Text('Speak instead')),
         ],
       ),
     ),

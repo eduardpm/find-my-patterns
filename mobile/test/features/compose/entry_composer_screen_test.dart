@@ -1657,12 +1657,7 @@ void main() {
         // `RenderFlex` overflow (unlike the FAB defect fixed in
         // `today_screen.dart`), so `takeException()` alone would have
         // caught it. This test instead measures the chip's own rendered
-        // rect: `guided_question_flow.dart` and `voice_answer_recorder.dart`
-        // carry their own pre-existing overflows on this same screen at
-        // this scale (both files this split does not own -- reported in
-        // the PR body, not fixed here), so a blanket
-        // `expect(tester.takeException(), isNull)` here would fail for
-        // reasons outside this fix's scope.
+        // rect.
         tester.view.physicalSize = const Size(320, 3000);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
@@ -1681,20 +1676,12 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        // Drains the guided stage's own pre-existing, out-of-scope
-        // overflow (see the comment above) so it does not fail this test
-        // at teardown -- flutter_test fails a test for any exception
-        // still un-drained when it ends, whether or not the test itself
-        // ever asserts on `takeException()`.
-        tester.takeException();
         // Off the guided stage onto freeform, where the chip is simplest
         // to measure cleanly.
         await tester.tap(find.text('Write freely instead'));
         await tester.pump();
-        // Same drain, for freeform's own pre-existing, out-of-scope
-        // `VoiceAnswerRecorder` overflow.
-        tester.takeException();
 
+        expect(tester.takeException(), isNull);
         final chip = find.text('Writing about Wednesday, August 26');
         expect(chip, findsOneWidget);
         final chipRect = tester.getRect(chip);
@@ -1747,9 +1734,6 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        // Drains the guided stage's own pre-existing, out-of-scope
-        // overflow -- see the backdated-chip test above for why.
-        tester.takeException();
         containerOf(
                   tester,
                 )
@@ -1762,17 +1746,13 @@ void main() {
 
         await tester.tap(find.text('Write freely instead'));
         await tester.pump();
-        // Drains freeform's own pre-existing, out-of-scope
-        // `VoiceAnswerRecorder` overflow.
-        tester.takeException();
         await tester.enterText(find.byType(TextFormField), 'A long day.');
         await tester.pump();
         await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
-        tester.takeException();
         final banner = find.text('Reading your entry…');
         await pumpUntilFound(tester, banner);
-        tester.takeException();
 
+        expect(tester.takeException(), isNull);
         expect(banner, findsOneWidget);
         final bannerRect = tester.getRect(banner);
         final scrollViewRect = tester.getRect(
@@ -1795,12 +1775,16 @@ void main() {
     // The matrix from ACCESSIBILITY.md §3 -- 320/360dp width x
     // 1.0/1.3/2.0 textScale -- against the confirm-feeling stage, which
     // is where this split's own structures concentrate
-    // (`_TargetDateChip`, `_ReadingEntryBanner`, the picker's own layout)
-    // once past the guided/freeform stages this split does not own.
+    // (`_TargetDateChip`, `_ReadingEntryBanner`, the picker's own layout),
+    // reached by passing through the guided and freeform stages
+    // (`guided_question_flow.dart`, `voice_answer_recorder.dart`). Those
+    // two used to overflow on the way through (#165) and this test drained
+    // the exceptions to get past them; now that #165 is fixed, the path is
+    // asserted overflow-free end to end, not just at the destination.
     for (final width in [320.0, 360.0]) {
       for (final scale in [1.0, 1.3, 2.0]) {
         testWidgets(
-          'the confirm-feeling stage renders with no *new* overflow at '
+          'the confirm-feeling stage renders with no overflow at '
           '${width}dp / ${scale}x',
           (tester) async {
             tester.view.physicalSize = Size(width, 3000);
@@ -1827,27 +1811,35 @@ void main() {
               ),
             );
             await tester.pumpAndSettle();
-            // Drains the guided stage's own pre-existing, out-of-scope
-            // overflow (guided_question_flow.dart, not owned by this
-            // split -- see the backdated-chip test above).
-            tester.takeException();
             await tester.tap(find.text('Write freely instead'));
             await tester.pump();
-            // Drains freeform's own pre-existing, out-of-scope
-            // VoiceAnswerRecorder overflow.
-            tester.takeException();
             await tester.enterText(find.byType(TextFormField), 'A long day.');
             await tester.pump();
             await tester.tap(find.widgetWithText(ElevatedButton, 'Save entry'));
             await tester.pumpAndSettle();
-            // A last drain for any transitional-frame echo of the
-            // freeform stage's own pre-existing overflow while it
-            // animates out -- everything asserted below is this split's
-            // own code (`_ConfirmFeelingStep`'s static structure,
-            // `_TargetDateChip`), not `guided_question_flow.dart` or
-            // `voice_answer_recorder.dart`.
-            tester.takeException();
 
+            // #165's own two overflows (guided_question_flow.dart,
+            // voice_answer_recorder.dart) are fixed, so this no longer
+            // drains blindly. What is left, only at 320dp/2.0x, is a
+            // separate, pre-existing overflow confirmed (via a one-off
+            // `FlutterError.onError` capture during triage) to originate
+            // in `lib/core/widgets/feeling_chips.dart:139` -- the confirm-
+            // feeling picker's own chips -- filed as #176 rather than
+            // fixed here: `lib/core/widgets/` is owned by a concurrent
+            // sweep batch, not this one. `tester.takeException()`'s own
+            // exception carries no file/line, only the summary below, so
+            // that is what is matched; anything else still fails this
+            // test.
+            final pending = tester.takeException();
+            if (pending != null) {
+              expect(
+                pending.toString(),
+                contains('overflowed by 29 pixels'),
+                reason:
+                    'only #176\'s known FeelingChip overflow is '
+                    'tolerated here',
+              );
+            }
             expect(find.text('How did that feel?'), findsOneWidget);
             expect(
               find.text(
