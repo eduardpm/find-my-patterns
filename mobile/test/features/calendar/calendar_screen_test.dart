@@ -424,7 +424,8 @@ void main() {
     );
 
     testWidgets(
-      'the weekday header keeps two-letter labels at 1.0x, where they fit',
+      'the weekday header keeps two-letter labels at 1.0x, where they fit, '
+      'and still announces full weekday names (#155 follow-up)',
       (tester) async {
         useTallScreen(tester);
         final handle = tester.ensureSemantics();
@@ -440,6 +441,18 @@ void main() {
 
         expect(find.text('MO'), findsOneWidget);
         expect(find.text('SU'), findsOneWidget);
+        // At the default scale, `Eyebrow`'s own bare `Semantics(label:
+        // ...)` -- no `container: true` -- sits inside `ListView`'s
+        // per-item semantics scoping and all seven columns merge into one
+        // node reading "Mo\nTu\n...\nSu" (confirmed on-device on `main`
+        // before this fix). The two-letter branch must carry the same
+        // unconditional `Semantics(container: true, label:
+        // _weekdayFullNames[i])` wrap as the single-letter branch, so the
+        // announced name is "Monday".."Sunday" here too, not merged and
+        // not the two-letter abbreviation -- the accessible name must not
+        // depend on which text scale happens to be active.
+        expect(find.bySemanticsLabel('Monday'), findsOneWidget);
+        expect(find.bySemanticsLabel('Sunday'), findsOneWidget);
         handle.dispose();
       },
     );

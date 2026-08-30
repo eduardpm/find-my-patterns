@@ -438,17 +438,29 @@ class _CalendarGrid extends StatelessWidget {
 /// the same string it paints, so swapping in `_weekdayInitials` without
 /// more would silently shrink a screen reader's announced name from
 /// "Tuesday" to "T" too — a regression in the exact thing #150 spent its
-/// effort on. Each single-letter cell instead wraps [Eyebrow] in its own
-/// outer `Semantics(container: true, label: ...)` carrying
-/// [_weekdayFullNames], the same "explicit outer `Semantics` +
+/// effort on. Every cell, not just the single-letter ones, instead wraps
+/// [Eyebrow] in its own outer `Semantics(container: true, label: ...)`
+/// carrying [_weekdayFullNames], the same "explicit outer `Semantics` +
 /// `ExcludeSemantics` over an icon/label-only child" shape
 /// `ACCESSIBILITY.md` §2 already uses for every icon-only control in this
 /// app — `container: true` is required, not decorative, because without it
 /// this sits inside `ListView`'s per-item semantics merging and all seven
 /// labels collapse into one node whose label concatenates every weekday
 /// name on one line, the same way `_MonthSwitcher`'s two chevrons already
-/// need it to stay addressable on their own. So the announced name becomes
-/// "Monday", arguably clearer than "Mo" ever was, never "M".
+/// need it to stay addressable on their own.
+///
+/// The wrap is unconditional on purpose, covering the two-letter branch as
+/// much as the single-letter one: a bare `Eyebrow(_weekdayLabels[i])` falls
+/// back to [Eyebrow]'s own `Semantics(label: text)`, which has no
+/// `container: true` of its own — a live accessibility-tree dump at the
+/// default text scale, on `main` before this fix, showed exactly the
+/// merged-node failure mode above, one node reading
+/// `"Mo\nTu\nWe\nTh\nFr\nSa\nSu"`. Conditioning the wrap on
+/// `fitsTwoLetters` would have made the announced name depend on text
+/// scale — seven addressable "Monday".."Sunday" nodes at a scale that
+/// forces single letters, one merged blob at a scale that doesn't. So the
+/// announced name is always "Monday".."Sunday", never "Mo" and never "M",
+/// regardless of which abbreviation is on screen.
 class _WeekdayHeaderRow extends StatelessWidget {
   const _WeekdayHeaderRow({required this.scaler});
 
@@ -481,15 +493,23 @@ class _WeekdayHeaderRow extends StatelessWidget {
             for (var i = 0; i < _weekdayLabels.length; i++)
               Expanded(
                 child: Center(
-                  child: fitsTwoLetters
-                      ? Eyebrow(_weekdayLabels[i])
-                      : Semantics(
-                          container: true,
-                          label: _weekdayFullNames[i],
-                          child: ExcludeSemantics(
-                            child: Eyebrow(_weekdayInitials[i]),
-                          ),
-                        ),
+                  // Unconditional wrap -- see the class doc for why this
+                  // cannot be skipped on the two-letter branch: a bare
+                  // `Eyebrow` falls back to its own un-`container`ed
+                  // `Semantics`, which merges into one blob node alongside
+                  // its six siblings the moment this sits inside
+                  // `ListView`'s per-item semantics scoping.
+                  child: Semantics(
+                    container: true,
+                    label: _weekdayFullNames[i],
+                    child: ExcludeSemantics(
+                      child: Eyebrow(
+                        fitsTwoLetters
+                            ? _weekdayLabels[i]
+                            : _weekdayInitials[i],
+                      ),
+                    ),
+                  ),
                 ),
               ),
           ],
