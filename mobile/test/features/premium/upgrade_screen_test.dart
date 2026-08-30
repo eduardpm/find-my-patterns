@@ -28,4 +28,47 @@ void main() {
       );
     },
   );
+
+  group('dynamic type at the required matrix (#155)', () {
+    // `upgrade_screen.dart:25`'s `Stack` -- flagged as "likely clean" by
+    // the orchestrator, but a negative result stated with a number is
+    // still a real deliverable here. Every cell is measured, not assumed.
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 1.3, 2.0]) {
+        testWidgets(
+          'renders with no overflow at ${width.toInt()}dp / ${scale}x',
+          (tester) async {
+            tester.view.physicalSize = Size(width, 3000);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
+            await tester.pumpWidget(
+              Builder(
+                builder: (context) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(textScaler: TextScaler.linear(scale)),
+                  child: MaterialApp(
+                    theme: buildLightTheme(),
+                    home: const UpgradeScreen(),
+                  ),
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+
+            expect(tester.takeException(), isNull);
+            expect(find.text('Premium'), findsOneWidget);
+            expect(
+              find.textContaining('N-of-1 experiments'),
+              findsOneWidget,
+            );
+            expect(
+              find.textContaining('Purchasing is not available'),
+              findsOneWidget,
+            );
+          },
+        );
+      }
+    }
+  });
 }
