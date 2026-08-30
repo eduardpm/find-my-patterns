@@ -741,6 +741,73 @@ void main() {
       );
     },
   );
+
+  group('FeelingChips — the sheet insets for the top system bar', () {
+    // Defect found on the live diary at 320dp/2x: the sheet's first group
+    // heading and its first chip row sat behind the status bar, overlapping
+    // the clock. `_FeelingSheet` already wraps its content in a `SafeArea`,
+    // so this proves that inset is actually effective against a real top
+    // `MediaQuery` padding -- a `SafeArea` with a widget above it that
+    // still claims the full screen height (see `_FeelingSheet`'s own doc
+    // comment on `isScrollControlled: true`'s uncapped height) does not
+    // automatically clear a status bar it is not told about.
+    testWidgets(
+      "the first group's heading renders below a simulated status bar, "
+      'at 320dp/2x',
+      (tester) async {
+        const topInset = 40.0;
+        tester.view.physicalSize = const Size(320, 900);
+        tester.view.devicePixelRatio = 1;
+        tester.view.padding = const FakeViewPadding(top: topInset);
+        addTearDown(tester.view.reset);
+
+        await tester.pumpWidget(
+          Builder(
+            // `.copyWith` on the *ambient* data (itself already carrying
+            // `topInset` from `tester.view.padding` above), not a fresh
+            // `MediaQueryData(textScaler: ...)` -- the latter replaces
+            // every other field, including `padding`, with its own
+            // defaults, which would zero out the very inset this test
+            // means to check and pass for the wrong reason.
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: const _Harness(),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Uplifted'));
+        await tester.pumpAndSettle();
+
+        // A positive assertion the sheet actually opened and rendered its
+        // content, pairing the geometry check below the way #150's own
+        // lesson (seven prior instances of a rendered-nothing false green)
+        // requires.
+        expect(find.text('Uplifted'), findsWidgets);
+        expect(find.text('Happy'), findsOneWidget);
+
+        final headingTop = tester.getTopLeft(find.text('Uplifted').last).dy;
+        final firstChipTop = tester.getTopLeft(find.text('Happy')).dy;
+
+        expect(
+          headingTop,
+          greaterThanOrEqualTo(topInset),
+          reason:
+              'the "Uplifted" section heading must clear the simulated '
+              'status bar inset, not paint underneath it',
+        );
+        expect(
+          firstChipTop,
+          greaterThanOrEqualTo(topInset),
+          reason:
+              'the first chip row ("Happy") must also clear the status '
+              'bar -- this is the row the issue found hard to read and '
+              'hard to tap',
+        );
+      },
+    );
+  });
 }
 
 /// A group chip's own pill -- the [Container] that carries the border,
