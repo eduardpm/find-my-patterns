@@ -731,7 +731,14 @@ void main() {
 /// Domain-object versions of the JSON fixtures, for the [_ControllableInsightsApi]
 /// tests that skip HTTP and JSON decoding entirely.
 InsightsResult insightsResultFromFixture({List<Pattern> patterns = const []}) =>
-    InsightsResult(patterns, const [], 0, false, EngineConstants.placeholder);
+    InsightsResult(
+      patterns,
+      const [],
+      0,
+      false,
+      EngineConstants.placeholder,
+      null,
+    );
 
 Pattern patternFixture({
   String id = 'pattern-1',

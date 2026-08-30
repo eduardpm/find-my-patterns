@@ -5,6 +5,7 @@ import '../../core/config/app_config.dart';
 import '../../core/diary/digest.dart';
 import '../../core/theme/journal_metrics.dart';
 import '../../core/widgets/journal.dart';
+import '../../core/widgets/premium_lock.dart';
 
 /// [R-2] The sheet a tap on the weekly digest notification opens: one
 /// pattern, one recommendation, one movement figure.
@@ -25,15 +26,40 @@ import '../../core/widgets/journal.dart';
 /// (`Recommendation` in `core/diary/pattern.dart`) are rendered verbatim,
 /// the same `mobile/CLAUDE.md` rule every other insights screen in this app
 /// follows.
+///
+/// [digest] is `null` for exactly one reason (M-3, #48): `_openDigest`
+/// (`app.dart`) got `premium_required` back from `GET /insights/digest`
+/// instead of a digest to show. That is a different fact from "the backend
+/// could not be reached" -- task 2's own fallback above -- so it gets a
+/// different destination: this same route, rendering the locked state
+/// below, rather than the silent redirect to Insights an unreachable
+/// backend still gets.
 class DigestScreen extends StatelessWidget {
-  /// Builds the digest sheet for [digest].
+  /// Builds the digest sheet for [digest], or the locked state when
+  /// [digest] is `null`.
   const DigestScreen({super.key, required this.digest});
 
-  /// The week's digest, fetched once before this screen was pushed.
-  final Digest digest;
+  /// The week's digest, fetched once before this screen was pushed, or
+  /// `null` when the fetch answered `premium_required` instead.
+  final Digest? digest;
 
   @override
   Widget build(BuildContext context) {
+    final digest = this.digest;
+    if (digest == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Your week in patterns')),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(JournalSpacing.x4),
+            child: PremiumLock(
+              message: 'Weekly digests are a Premium feature.',
+              onUpgrade: () => context.push('/upgrade'),
+            ),
+          ),
+        ),
+      );
+    }
     final theme = Theme.of(context);
     final highlight = digest.highlight;
     final recommendation = digest.recommendation;

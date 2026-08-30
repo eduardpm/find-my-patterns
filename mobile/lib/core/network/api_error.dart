@@ -53,3 +53,29 @@ final class const HttpFailure(
   @override
   int get statusCode => status;
 }
+
+/// Whether [error] is the backend's `402 premium_required` (M-3, #48):
+/// `POST /experiments` and `GET /insights/digest` answer this literal body,
+/// `{"error": "premium_required"}`, when the caller's tier does not cover
+/// the feature (`backend/tests/contract/free-paid-boundary.test.ts`).
+///
+/// A predicate over [HttpFailure] rather than a new sealed [ApiError] case.
+/// [Unauthorized] earns its own case because *every* request can answer
+/// 401, so every exhaustive `switch (error)` in this app already has to
+/// decide what a 401 means. `premium_required` is nothing like that: it
+/// only ever comes back from the two calls above, so giving it a sealed
+/// variant would force the switches in `day_entries_controller.dart`,
+/// `entry_detail_controller.dart`, `experiment_results_screen.dart`,
+/// `mood_trend_chart.dart`, `insights_screen.dart` and
+/// `topics_controller.dart` -- none of which ever call a gated endpoint --
+/// to each grow a branch that can structurally never run there. One
+/// predicate, checked at the two call sites that actually need it
+/// (`experiment_setup_sheet.dart`, `app.dart`'s digest-tap handler), says
+/// the same thing without that cost.
+bool isPremiumRequired(ApiError error) =>
+    error is HttpFailure &&
+    error.statusCode == 402 &&
+    switch (error.body) {
+      {'error': 'premium_required'} => true,
+      _ => false,
+    };

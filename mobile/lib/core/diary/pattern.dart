@@ -232,7 +232,15 @@ class const Withdrawal(
 /// 30 from here rather than from a constant of its own.
 class const EngineConstants(
   final int minOccurrenceThreshold,
-  final int recencyWindowDays,
+
+  /// The recency window the engine actually applied, in days -- `null` when
+  /// none was (M-3, #48): a premium account's `GET /insights` computes over
+  /// the full diary rather than a trailing window, and reports that by
+  /// sending this field back as `null` rather than some sentinel like `0`
+  /// or `-1`. Every screen that renders this reads [windowPhrase] rather
+  /// than interpolating the raw value, so "in the last 30 days" and "across
+  /// your full history" are never one string with a hole in it.
+  final int? recencyWindowDays,
   final double minLift,
   final double strongLift,
   final int strongMinOccurrences,
@@ -245,7 +253,9 @@ class const EngineConstants(
   /// Used only before the first response lands, so a screen can lay itself
   /// out without branching on null. Every value is overwritten by the
   /// backend's own on the first read; none of them is ever shown as a fact
-  /// on its own.
+  /// on its own -- including [recencyWindowDays] here reading `30`, which is
+  /// simply a plausible non-null placeholder, the same as every other field
+  /// on this class.
   static const EngineConstants placeholder = EngineConstants(
     3,
     30,
@@ -258,6 +268,16 @@ class const EngineConstants(
     1,
     5,
   );
+
+  /// How [recencyWindowDays] reads inside a sentence: "the last 30 days"
+  /// when a window applies, or "your full history" when [recencyWindowDays]
+  /// is `null` -- M-3's premium case. Every render site that used to
+  /// interpolate the raw day count goes through this instead, so the day
+  /// the field can be `null` is the day those sentences read correctly
+  /// rather than saying "in the last null days".
+  String get windowPhrase => recencyWindowDays == null
+      ? 'your full history'
+      : 'the last $recencyWindowDays days';
 }
 
 /// Wraps `GET /insights`' response, including the "not enough data yet"
@@ -268,6 +288,13 @@ class const InsightsResult(
   final int newWithdrawalCount,
   final bool insufficientData,
   final EngineConstants constants,
+
+  /// How many days the diary actually spans -- every entry, not only
+  /// confirmed evidence -- and identical for free and premium (M-3, #48).
+  /// Exists specifically so a locked state can name a real number
+  /// ("Patterns across your full 14 months — Premium") instead of a guess;
+  /// see [historySpanPhrase]. `null` on an empty diary, for either tier.
+  final int? historySpanDays,
 );
 
 /// One weekday or time-of-day bucket in the "when" view.
@@ -503,9 +530,20 @@ Withdrawal withdrawalFromJson(JsonObject json) => Withdrawal(
 
 /// Decodes the engine's constants, defaulting every field to
 /// [EngineConstants.placeholder]'s value.
+///
+/// [EngineConstants.recencyWindowDays] is the one field here where "absent"
+/// and "explicitly `null`" have to read differently: a backend old enough
+/// to predate this key entirely still means "assume the historical 30-day
+/// window", the ordinary missing-field default every other field on this
+/// class already applies; a current backend sending the key with a `null`
+/// value means M-3's premium case, "no window applied", and coercing that
+/// to `30` would be exactly the hardcoded guess `mobile/CLAUDE.md` forbids.
+/// `containsKey` is what tells the two apart -- `as int?` alone cannot.
 EngineConstants engineConstantsFromJson(JsonObject json) => EngineConstants(
   json['min_occurrence_threshold'] as int? ?? 3,
-  json['recency_window_days'] as int? ?? 30,
+  json.containsKey('recency_window_days')
+      ? json['recency_window_days'] as int?
+      : 30,
   _toDouble(json['min_lift']) ?? 1.5,
   _toDouble(json['strong_lift']) ?? 3.0,
   json['strong_min_occurrences'] as int? ?? 5,
@@ -538,7 +576,27 @@ InsightsResult insightsResultFromJson(
   engineConstantsFromJson(
     (json['constants'] as JsonObject?) ?? const <String, Object?>{},
   ),
+  json['history_span_days'] as int?,
 );
+
+/// Turns a raw day count into the phrase a locked state's copy uses --
+/// "14 months", "3 weeks", "12 days" -- never a bare day count once it is
+/// large enough that a reader would have to do that arithmetic themselves
+/// (the issue's own example: "Patterns across your full 14 months —
+/// Premium"). Callers branch on [InsightsResult.historySpanDays] being
+/// `null` (an empty diary, same for both tiers) before reaching for this --
+/// there is no "0 days" phrase to produce here.
+String historySpanPhrase(int days) {
+  if (days >= 60) {
+    final months = (days / 30).round();
+    return '$months month${months == 1 ? '' : 's'}';
+  }
+  if (days >= 14) {
+    final weeks = (days / 7).round();
+    return '$weeks week${weeks == 1 ? '' : 's'}';
+  }
+  return '$days day${days == 1 ? '' : 's'}';
+}
 
 /// Decodes one weekday or time-of-day bucket.
 WhenBucket whenBucketFromJson(JsonObject json) => WhenBucket(

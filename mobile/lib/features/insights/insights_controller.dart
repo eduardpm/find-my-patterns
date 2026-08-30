@@ -22,6 +22,12 @@ class const InsightsPageState({
   final EngineConstants constants = EngineConstants.placeholder,
   final WhenInsights? whenInsights,
 
+  /// How many days the diary spans (M-3, #48) -- see
+  /// [InsightsResult.historySpanDays]. `null` before the first response
+  /// lands, the same "never shown as a fact" rule every other placeholder
+  /// default on this page follows.
+  final int? historySpanDays,
+
   /// The experiment currently running (R-3b), or `null` when none is.
   /// Fetched alongside `GET /insights`, the same "own independent fetch,
   /// swallowed on failure" shape [whenInsights] already has -- see
@@ -65,6 +71,7 @@ class InsightsController extends AsyncNotifier<InsightsPageState> {
       newWithdrawalCount: result.newWithdrawalCount,
       insufficientData: result.insufficientData,
       constants: result.constants,
+      historySpanDays: result.historySpanDays,
       whenInsights: await _fetchWhenInsights(api),
       activeExperiment: await _fetchActiveExperiment(),
     );

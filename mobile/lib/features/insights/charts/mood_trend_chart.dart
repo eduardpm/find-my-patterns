@@ -17,13 +17,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/auth/tier.dart';
+import '../../../core/auth/tier_controller.dart';
 import '../../../core/diary/calendar_date.dart';
 import '../../../core/diary/diary_providers.dart';
 import '../../../core/diary/mood_series.dart';
+import '../../../core/diary/pattern.dart' show historySpanPhrase;
 import '../../../core/network/api_error.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/journal_metrics.dart';
 import '../../../core/widgets/journal.dart';
+import '../../../core/widgets/premium_lock.dart';
 import '../../../core/widgets/status_views.dart';
 
 /// The date span the switcher above the chart offers.
@@ -56,6 +60,14 @@ enum MoodTrendPeriod {
   /// How this period reads inside the accessibility summary sentence, e.g.
   /// "the last 30 days".
   final String summaryLabel;
+
+  /// Whether a free account cannot select this period (M-3, #48): only
+  /// [days30] fits inside `GET /insights/series`'s free-tier 30-day cap
+  /// (`backend/tests/contract/free-paid-boundary.test.ts`) -- [days90] and
+  /// [year] both exceed it and would come back a `422`, so this client
+  /// never sends either as free rather than reacting to that rejection
+  /// after the fact.
+  bool get isLockedForFree => this != MoodTrendPeriod.days30;
 }
 
 /// The clock [MoodTrendController] resolves "today" on.
@@ -94,6 +106,18 @@ class MoodTrendController extends AsyncNotifier<MoodSeries> {
     final api = ref.watch(insightsApiProvider);
     final today = CalendarDate.today(now: ref.watch(moodTrendNowProvider));
     final from = today.addDays(-(period.days - 1));
+    // M-3, #48: a free account selecting a locked period (90 days, a year)
+    // still fetches -- deliberately not gated on tier here. `tierProvider`
+    // is itself asynchronous, and watching it from inside another
+    // `AsyncNotifier.build` would make *every* build of this provider run
+    // twice: once while `tierProvider` is still resolving, once again the
+    // moment it settles -- doubling `GET /insights/series` on ordinary page
+    // load, for every account, to save one request that only a free
+    // account manually switching to a locked range ever sends. That would
+    // be `422` on the real backend (`free-paid-boundary.test.ts`), and
+    // harmless here: `MoodTrendChart` renders its own locked state instead
+    // of this provider's value whenever the period is locked for the
+    // account's tier, so the wasted response is simply never read.
     return api.series(from: from, to: today);
   }
 
@@ -131,11 +155,28 @@ const double _chartHeight = 160;
 /// see `insights_screen.dart`.
 class MoodTrendChart extends ConsumerWidget {
   /// Creates the mood-trend chart.
-  const MoodTrendChart({super.key});
+  const MoodTrendChart({super.key, this.historySpanDays, this.onUpgrade});
+
+  /// `InsightsResult.historySpanDays` (`core/diary/pattern.dart`), read by
+  /// the locked state's copy so it names a real span rather than guessing
+  /// one. `null` before Insights' own fetch has resolved, or on an empty
+  /// diary -- either way the locked state falls back to a spanless phrase
+  /// rather than showing "your full null".
+  final int? historySpanDays;
+
+  /// Opens the placeholder upgrade screen. Read only while locked.
+  final VoidCallback? onUpgrade;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final period = ref.watch(moodTrendPeriodProvider);
+    // Read directly rather than taken as a constructor field: `_LockedTrend`
+    // below has to agree with [MoodTrendController]'s own tier read (it
+    // decides whether a fetch happens at all), and the only way those two
+    // can never disagree is for both to watch the same provider rather than
+    // one being handed a value the other independently derives.
+    final isPremium = ref.watch(tierProvider).value == Tier.premium;
+    final locked = !isPremium && period.isLockedForFree;
     final async = ref.watch(moodTrendControllerProvider);
     final series = async.value;
     final theme = Theme.of(context);
@@ -158,7 +199,13 @@ class MoodTrendChart extends ConsumerWidget {
                 ref.read(moodTrendPeriodProvider.notifier).select(next),
           ),
           const SizedBox(height: JournalSpacing.x4),
-          if (series == null)
+          // M-3, #48: a locked range replaces the chart outright -- never a
+          // blurred or partial one underneath the lock -- and takes
+          // priority over the loading/error/content states below, which
+          // only ever apply to a range this account can actually fetch.
+          if (locked)
+            _LockedTrend(historySpanDays: historySpanDays, onUpgrade: onUpgrade)
+          else if (series == null)
             if (async.error case final ApiError error)
               _ChartError(
                 message: _messageFor(error),
@@ -179,6 +226,37 @@ class MoodTrendChart extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// M-3, #48: what a 90-day or year selection shows for a free account,
+/// instead of the chart it would otherwise fetch.
+///
+/// States both facts the issue's own copy examples cover in one message --
+/// what is already on screen ("Last 30 days shown"), and what a real span
+/// from [historySpanDays] would unlock ("Patterns across your full 14
+/// months — Premium") -- since here, unlike the standalone cases those two
+/// examples describe elsewhere, both are true about the same chart at once.
+class _LockedTrend extends StatelessWidget {
+  const _LockedTrend({required this.historySpanDays, required this.onUpgrade});
+
+  final int? historySpanDays;
+  final VoidCallback? onUpgrade;
+
+  @override
+  Widget build(BuildContext context) => PremiumLock(
+    message: _lockedTrendMessage(historySpanDays),
+    onUpgrade: onUpgrade,
+  );
+}
+
+/// "Last 30 days shown. Patterns across your full 14 months — Premium."; or,
+/// with no span to name yet, "Last 30 days shown. Patterns across your full
+/// history — Premium."
+String _lockedTrendMessage(int? historySpanDays) {
+  final span = historySpanDays == null
+      ? 'full history'
+      : 'full ${historySpanPhrase(historySpanDays)}';
+  return 'Last 30 days shown. Patterns across your $span — Premium.';
 }
 
 /// The 30/90/year segmented control. Every segment is at least

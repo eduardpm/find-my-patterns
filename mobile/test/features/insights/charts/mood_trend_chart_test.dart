@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:find_my_patterns/core/auth/tier.dart';
+import 'package:find_my_patterns/core/auth/tier_controller.dart';
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/diary_providers.dart';
 import 'package:find_my_patterns/core/diary/digest.dart';
@@ -8,10 +10,13 @@ import 'package:find_my_patterns/core/diary/mood_series.dart';
 import 'package:find_my_patterns/core/diary/pattern.dart';
 import 'package:find_my_patterns/core/network/api_error.dart';
 import 'package:find_my_patterns/core/theme/app_theme.dart';
+import 'package:find_my_patterns/core/widgets/premium_lock.dart';
 import 'package:find_my_patterns/features/insights/charts/mood_trend_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../support/fake_tier.dart';
 
 /// A double over [InsightsApi] whose only implemented method is [series] --
 /// the mood-trend chart never calls the other four, so a call to any of
@@ -53,12 +58,20 @@ class _FakeInsightsApi implements InsightsApi {
 void main() {
   const today = CalendarDate(2026, 8, 28);
 
+  /// [tier] defaults to [Tier.premium] -- not [Tier.free] -- so every test
+  /// in this file written before M-3 keeps exercising every range rather
+  /// than a lock nothing told it to expect. The handful of tests below that
+  /// are specifically about the free/locked path pass `Tier.free`
+  /// explicitly.
   Widget buildChart(
-    FutureOr<MoodSeries> Function(CalendarDate from, CalendarDate to) respond,
-  ) => ProviderScope(
+    FutureOr<MoodSeries> Function(CalendarDate from, CalendarDate to) respond, {
+    Tier tier = Tier.premium,
+    int? historySpanDays,
+  }) => ProviderScope(
     overrides: [
       insightsApiProvider.overrideWithValue(_FakeInsightsApi(respond)),
       moodTrendNowProvider.overrideWithValue(today.toDateTime()),
+      tierProvider.overrideWith(() => FixedTierController(tier)),
     ],
     // See `Harness.noRetry`'s own doc: without this, a failed fetch below
     // would retry on a real backoff timer instead of staying in its error
@@ -66,8 +79,10 @@ void main() {
     retry: (retryCount, error) => null,
     child: MaterialApp(
       theme: buildLightTheme(),
-      home: const Scaffold(
-        body: SingleChildScrollView(child: MoodTrendChart()),
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: MoodTrendChart(historySpanDays: historySpanDays),
+        ),
       ),
     ),
   );
@@ -314,6 +329,9 @@ void main() {
           overrides: [
             insightsApiProvider.overrideWithValue(api),
             moodTrendNowProvider.overrideWithValue(today.toDateTime()),
+            tierProvider.overrideWith(
+              () => FixedTierController(Tier.premium),
+            ),
           ],
           retry: (retryCount, error) => null,
           child: MaterialApp(
@@ -345,4 +363,133 @@ void main() {
       handle.dispose();
     },
   );
+
+  group('free tier (M-3, #48)', () {
+    testWidgets('the default 30-day range is unlocked and unaffected', (
+      tester,
+    ) async {
+      final api = _FakeInsightsApi(
+        (from, to) => const MoodSeries([
+          MoodSeriesPoint(CalendarDate(2026, 8, 26), 0.0, 1, 1),
+          MoodSeriesPoint(CalendarDate(2026, 8, 27), 0.0, 1, 1),
+          MoodSeriesPoint(CalendarDate(2026, 8, 28), 0.0, 1, 1),
+        ]),
+      );
+      await tester.pumpWidget(
+        buildChart(
+          (from, to) => api.series(from: from, to: to),
+          tier: Tier.free,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(api.seriesCalls, hasLength(1));
+      expect(find.byType(PremiumLock), findsNothing);
+      expect(find.text('90 days'), findsOneWidget);
+    });
+
+    testWidgets(
+      'selecting 90 days shows the lock, naming the real history span, '
+      'instead of whatever the (would-be-422) fetch answers',
+      (tester) async {
+        final api = _FakeInsightsApi(
+          (from, to) => const MoodSeries([
+            MoodSeriesPoint(CalendarDate(2026, 8, 26), 0.0, 1, 1),
+          ]),
+        );
+        await tester.pumpWidget(
+          buildChart(
+            (from, to) => api.series(from: from, to: to),
+            tier: Tier.free,
+            historySpanDays: 425,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('90 days'));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(PremiumLock), findsOneWidget);
+        expect(
+          find.text(
+            'Last 30 days shown. Patterns across your full 14 months — '
+            'Premium.',
+          ),
+          findsOneWidget,
+        );
+        // No chart, no error, no skeleton underneath the lock -- see
+        // `MoodTrendController.build`'s own doc comment for why this
+        // client still lets the (real-backend-422) request go out rather
+        // than gating the fetch itself: whatever it answers is simply
+        // never rendered while the period stays locked for this tier.
+        expect(find.byKey(const Key('moodTrendScrubArea')), findsNothing);
+        expect(find.textContaining('Not enough days'), findsNothing);
+      },
+    );
+
+    testWidgets('selecting Year locks the chart with no span to name yet', (
+      tester,
+    ) async {
+      final api = _FakeInsightsApi(
+        (from, to) => const MoodSeries([
+          MoodSeriesPoint(CalendarDate(2026, 8, 26), 0.0, 1, 1),
+        ]),
+      );
+      await tester.pumpWidget(
+        buildChart(
+          (from, to) => api.series(from: from, to: to),
+          tier: Tier.free,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Year'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          'Last 30 days shown. Patterns across your full history — Premium.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('tapping Upgrade on the locked chart calls onUpgrade', (
+      tester,
+    ) async {
+      var upgradeTapped = false;
+      final api = _FakeInsightsApi(
+        (from, to) => const MoodSeries([
+          MoodSeriesPoint(CalendarDate(2026, 8, 26), 0.0, 1, 1),
+        ]),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            insightsApiProvider.overrideWithValue(api),
+            moodTrendNowProvider.overrideWithValue(today.toDateTime()),
+            tierProvider.overrideWith(() => FixedTierController(Tier.free)),
+          ],
+          retry: (retryCount, error) => null,
+          child: MaterialApp(
+            theme: buildLightTheme(),
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: MoodTrendChart(
+                  onUpgrade: () => upgradeTapped = true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('90 days'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Upgrade'));
+
+      expect(upgradeTapped, isTrue);
+    });
+  });
 }
