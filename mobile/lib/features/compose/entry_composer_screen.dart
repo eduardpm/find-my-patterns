@@ -338,10 +338,22 @@ class _TargetDateChip extends StatelessWidget {
                 color: theme.colorScheme.onSurfaceVariant,
               ),
               const SizedBox(width: JournalSpacing.x2),
-              Text(
-                'Writing about ${_targetDateFormat.format(date.toDateTime())}',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              // #155: this `Text` had no `Flexible` around it -- the
+              // family of overflow ACCESSIBILITY.md §3 describes. At
+              // 320dp/textScale 2.0 the full date phrase overflowed this
+              // `Row` by several hundred pixels (measured in this suite's
+              // own text-rendering environment) without wrapping, since
+              // `Align`'s loose constraint let the `Row` size to its
+              // children's unclamped intrinsic width. Wrapping, not
+              // shrinking or truncating, matches the fix used everywhere
+              // else in this app for a label beside a fixed icon.
+              Flexible(
+                child: Text(
+                  'Writing about '
+                  '${_targetDateFormat.format(date.toDateTime())}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],

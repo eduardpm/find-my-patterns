@@ -1602,4 +1602,70 @@ void main() {
       },
     );
   });
+
+  group('dynamic type (#155b)', () {
+    testWidgets(
+      'the backdated header chip (#36) wraps its date phrase instead of '
+      'overflowing the screen at 320dp/2x',
+      (tester) async {
+        // #155: `_TargetDateChip`'s `Row` (icon + "Writing about ..."
+        // text) had no `Flexible` around the text -- the family of
+        // overflow ACCESSIBILITY.md §3 describes, and a genuine
+        // `RenderFlex` overflow (unlike the FAB defect fixed in
+        // `today_screen.dart`), so `takeException()` alone would have
+        // caught it. This test instead measures the chip's own rendered
+        // rect: `guided_question_flow.dart` and `voice_answer_recorder.dart`
+        // carry their own pre-existing overflows on this same screen at
+        // this scale (both files this split does not own -- reported in
+        // the PR body, not fixed here), so a blanket
+        // `expect(tester.takeException(), isNull)` here would fail for
+        // reasons outside this fix's scope.
+        tester.view.physicalSize = const Size(320, 3000);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await tester.pumpWidget(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: buildTestable(
+                replies: bootReplies(),
+                targetDate: const CalendarDate(2026, 8, 26),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        // Drains the guided stage's own pre-existing, out-of-scope
+        // overflow (see the comment above) so it does not fail this test
+        // at teardown -- flutter_test fails a test for any exception
+        // still un-drained when it ends, whether or not the test itself
+        // ever asserts on `takeException()`.
+        tester.takeException();
+        // Off the guided stage onto freeform, where the chip is simplest
+        // to measure cleanly.
+        await tester.tap(find.text('Write freely instead'));
+        await tester.pump();
+        // Same drain, for freeform's own pre-existing, out-of-scope
+        // `VoiceAnswerRecorder` overflow.
+        tester.takeException();
+
+        final chip = find.text('Writing about Wednesday, August 26');
+        expect(chip, findsOneWidget);
+        final chipRect = tester.getRect(chip);
+        expect(
+          chipRect.left,
+          greaterThanOrEqualTo(0),
+          reason: 'the chip text must not render past the left screen edge',
+        );
+        expect(
+          chipRect.right,
+          lessThanOrEqualTo(320),
+          reason: 'the chip text must not render past the right screen edge',
+        );
+      },
+    );
+  });
 }
