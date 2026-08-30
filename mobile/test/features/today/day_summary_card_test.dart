@@ -7,6 +7,7 @@ import 'package:find_my_patterns/core/widgets/feeling_chips.dart';
 import 'package:find_my_patterns/features/today/day_summary_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/intl.dart';
 
 import '../../support/harness.dart';
 
@@ -62,9 +63,7 @@ void main() {
           ? Harness().wrap(card)
           : Harness().scope(
               MediaQuery(
-                data: MediaQueryData(
-                  textScaler: TextScaler.linear(textScale),
-                ),
+                data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
                 child: MaterialApp(home: Scaffold(body: card)),
               ),
             ),
@@ -92,10 +91,7 @@ void main() {
       of: barFinder,
       matching: find.byType(FractionallySizedBox),
     );
-    return (
-      track: tester.getSize(barFinder),
-      fill: tester.getSize(fillFinder),
-    );
+    return (track: tester.getSize(barFinder), fill: tester.getSize(fillFinder));
   }
 
   group('the strongest rating', () {
@@ -163,9 +159,7 @@ void main() {
 
     testWidgets(
       'is absent when nothing was rated, rather than showing a zero',
-      (
-        tester,
-      ) async {
+      (tester) async {
         // A day nobody used the dial on must look exactly as it did before the
         // dial existed — an unrated day is not a quiet one.
         await pumpCard(
@@ -181,25 +175,24 @@ void main() {
       },
     );
 
-    testWidgets(
-      'is absent when the entries on screen cannot account for the '
-      "roll-up's number, rather than showing a rating with no name",
-      (tester) async {
-        // The roll-up says 4, but nothing loaded on screen was actually
-        // rated 4 -- naming a feeling here would be a guess this client
-        // has no business making.
-        await pumpCard(
-          tester,
-          entries: [
-            entryAt('a', DateTime.utc(2026, 8, 28, 9), [grateful]),
-          ],
-          summary: const DaySummary(date, [grateful], intensity: 4),
-        );
+    testWidgets('is absent when the entries on screen cannot account for the '
+        "roll-up's number, rather than showing a rating with no name", (
+      tester,
+    ) async {
+      // The roll-up says 4, but nothing loaded on screen was actually
+      // rated 4 -- naming a feeling here would be a guess this client
+      // has no business making.
+      await pumpCard(
+        tester,
+        entries: [
+          entryAt('a', DateTime.utc(2026, 8, 28, 9), [grateful]),
+        ],
+        summary: const DaySummary(date, [grateful], intensity: 4),
+      );
 
-        expect(find.text('STRONGEST'), findsNothing);
-        expect(find.textContaining('/5'), findsNothing);
-      },
-    );
+      expect(find.text('STRONGEST'), findsNothing);
+      expect(find.textContaining('/5'), findsNothing);
+    });
   });
 
   group('the intensity bar', () {
@@ -360,5 +353,134 @@ void main() {
       expect(find.text('2'), findsOneWidget);
       expect(find.text('entries'), findsOneWidget);
     });
+  });
+
+  group('the count/time-span row (#131)', () {
+    // The key on the row itself (see `day_summary_card.dart`'s
+    // `daySummaryCountSpanRow`) -- finding it by type would also match the
+    // "STRONGEST" row further down the card.
+    const rowKey = ValueKey('daySummaryCountSpanRow');
+
+    final format = DateFormat.jm();
+
+    // A full day, from a 7:15 AM entry to a 10:40 PM one: the span reads
+    // its longest realistic shape, "7:15 AM – 10:40 PM" -- as wide as this
+    // card ever asks it to be. Ten filler entries at noon push the count to
+    // two digits without touching the span's own two endpoints.
+    //
+    // Local (not `.utc`) `DateTime`s: the card runs every `createdAt`
+    // through `.toLocal()` before formatting it, so a UTC fixture here would
+    // format differently depending on the machine's own time zone offset --
+    // exactly the kind of environment-dependent flake this file should not
+    // introduce chasing a layout bug.
+    final busyDayEntries = [
+      entryAt('first', DateTime(2026, 8, 28, 7, 15), [grateful]),
+      for (var i = 0; i < 10; i++)
+        entryAt('mid$i', DateTime(2026, 8, 28, 12), [grateful]),
+      entryAt('last', DateTime(2026, 8, 28, 22, 40), [grateful]),
+    ];
+    final busyDaySpan =
+        '${format.format(DateTime(2026, 8, 28, 7, 15))} – '
+        '${format.format(DateTime(2026, 8, 28, 22, 40))}';
+
+    testWidgets(
+      'the span sits flush against the row\'s own trailing edge when it '
+      'fits on one line',
+      (tester) async {
+        await pumpCard(
+          tester,
+          entries: [
+            entryAt('a', DateTime(2026, 8, 28, 7, 15), [grateful]),
+          ],
+        );
+
+        final spanText = 'at ${format.format(DateTime(2026, 8, 28, 7, 15))}';
+        final rowRight = tester.getTopRight(find.byKey(rowKey)).dx;
+        final spanRight = tester.getTopRight(find.text(spanText)).dx;
+        // The span's `Text` sits inside an `Expanded`, which gives it a
+        // *tight* width constraint equal to whatever the row has left over
+        // -- so its own rendered box reaches exactly to the row's trailing
+        // edge regardless of `textAlign`, the same way `Spacer` used to
+        // push a fixed-width `Text` there. `closeTo` rather than strict
+        // equality only to absorb floating-point layout rounding.
+        expect(spanRight, closeTo(rowRight, 0.5));
+        // And it still shares the row with the count label rather than
+        // sitting on a line of its own -- its top sits above the label's
+        // bottom, i.e. the two vertically overlap.
+        expect(
+          tester.getTopLeft(find.text(spanText)).dy,
+          lessThan(tester.getBottomLeft(find.text('entry')).dy),
+        );
+      },
+    );
+
+    testWidgets(
+      'no overflow at 320dp width with a two-digit count and the longest '
+      'realistic span',
+      (tester) async {
+        // 320dp at the default text scale -- the literal reproduction this
+        // ticket names: "a narrower viewport, or a wide time span".
+        tester.view.physicalSize = const Size(320, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+
+        await pumpCard(tester, entries: busyDayEntries);
+
+        expect(tester.takeException(), isNull);
+        // The count is the fixed-ish side (#131's own reasoning for which
+        // side yields) -- "12" must still read in full, never "1…".
+        expect(find.text('12'), findsOneWidget);
+        expect(find.text(busyDaySpan), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'wraps the span to a second line under 360dp and 2x text scale, '
+      'rather than overflowing or truncating a number',
+      (tester) async {
+        // A single-digit count here, not `busyDayEntries`' two-digit one:
+        // at 2x text scale, "12" plus "entries" already claims more than a
+        // 360dp card's own content width by itself, with nothing left for
+        // any span at all -- a real defect, but on the *other* half of this
+        // row, and not the one #131 describes or this fix touches. See the
+        // audit note in the PR description. Isolating it here keeps this
+        // test about the span, the thing #131's `Expanded` actually fixed.
+        final entries = [
+          entryAt('a', DateTime(2026, 8, 28, 7, 15), [grateful]),
+          entryAt('b', DateTime(2026, 8, 28, 12), [grateful]),
+          entryAt('c', DateTime(2026, 8, 28, 22, 40), [grateful]),
+        ];
+        final span =
+            '${format.format(DateTime(2026, 8, 28, 7, 15))} – '
+            '${format.format(DateTime(2026, 8, 28, 22, 40))}';
+
+        // Baseline: the same text, the same 2x scale, on a width roomy
+        // enough that it still reads as one line -- so the height below is
+        // compared against the *same* font size and only the width
+        // actually changes.
+        await pumpCard(tester, entries: entries, textScale: 2);
+        expect(tester.takeException(), isNull);
+        final singleLineHeight = tester.getSize(find.text(span)).height;
+
+        tester.view.physicalSize = const Size(360, 1200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await pumpCard(tester, entries: entries, textScale: 2);
+
+        // This is the assertion that would have failed before #131: the
+        // unconstrained `Text` that used to sit after `Spacer()` never grew
+        // taller than one line at any width -- it just overflowed the
+        // `Row` horizontally instead (a `RenderFlex` exception here). No
+        // exception, plus a measurably taller box, is what tells apart
+        // "wrapped" from "overflowed and clipped".
+        expect(tester.takeException(), isNull);
+        final wrappedHeight = tester.getSize(find.text(span)).height;
+        expect(wrappedHeight, greaterThan(singleLineHeight * 1.4));
+        // Wrapping, not ellipsis -- the full string, digits included, is
+        // still the one rendered.
+        expect(find.text(span), findsOneWidget);
+        expect(find.text('3'), findsOneWidget);
+      },
+    );
   });
 }
