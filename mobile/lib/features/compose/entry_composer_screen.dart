@@ -475,10 +475,23 @@ class _RestoredDraftNotice extends StatelessWidget {
               label: 'Dismiss',
               onTap: onDismiss,
               child: ExcludeSemantics(
+                // #155: measured at 40x40 with no override at all --
+                // Material 3's default (unstyled) `IconButton` visual
+                // container is 40dp, not the 48dp `kMinInteractiveDimension`
+                // Material 2 defaulted to, so nothing here was actually
+                // falling back to a 48dp floor the way it looked like it
+                // should. Same fix `today_screen.dart`'s backdate-nudge
+                // dismiss already needed (#150 task 4): an explicit
+                // `constraints` floor at `JournalSpacing.x7`.
                 child: IconButton(
                   icon: const Icon(Icons.close, size: 18),
                   tooltip: 'Dismiss',
                   onPressed: onDismiss,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: JournalSpacing.x7,
+                    minHeight: JournalSpacing.x7,
+                  ),
                 ),
               ),
             ),

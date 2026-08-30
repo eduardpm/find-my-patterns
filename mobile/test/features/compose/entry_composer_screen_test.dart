@@ -1605,6 +1605,49 @@ void main() {
 
   group('dynamic type (#155b)', () {
     testWidgets(
+      "the restored-draft notice's dismiss button measures at least "
+      '48x48 with no explicit constraints override (#155)',
+      (tester) async {
+        // Unlike `today_screen.dart`'s backdate-nudge dismiss (#150 task
+        // 4, which needed an explicit `BoxConstraints` floor after a bare
+        // `BoxConstraints()` removed the platform default), this
+        // `IconButton` at ~line 466 sets neither `constraints:` nor
+        // `padding:`, so it should already fall back to `IconButton`'s
+        // own 48dp default -- confirmed here by measurement rather than
+        // by reading the constructor, per ACCESSIBILITY.md §4.
+        await tester.pumpWidget(
+          buildTestable(
+            replies: bootReplies(),
+            initialDraft: ComposerDraft(
+              mode: ComposerDraftMode.guided,
+              guidedAnswers: const {'general': 'Feeling okay.'},
+              savedAt: DateTime.utc(2026),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.bySemanticsLabel('Dismiss'), findsOneWidget);
+        final dismissSize = tester.getSize(find.byTooltip('Dismiss'));
+        expect(dismissSize.width, greaterThanOrEqualTo(48));
+        expect(dismissSize.height, greaterThanOrEqualTo(48));
+      },
+    );
+
+    testWidgets(
+      "the AppBar's Cancel button also measures at least 48x48 (#155)",
+      (tester) async {
+        await tester.pumpWidget(buildTestable(replies: bootReplies()));
+        await tester.pumpAndSettle();
+
+        expect(find.bySemanticsLabel('Cancel'), findsOneWidget);
+        final cancelSize = tester.getSize(find.byTooltip('Cancel'));
+        expect(cancelSize.width, greaterThanOrEqualTo(48));
+        expect(cancelSize.height, greaterThanOrEqualTo(48));
+      },
+    );
+
+    testWidgets(
       'the backdated header chip (#36) wraps its date phrase instead of '
       'overflowing the screen at 320dp/2x',
       (tester) async {
