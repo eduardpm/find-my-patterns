@@ -36,8 +36,15 @@ const REQUIRED: Record<string, Record<string, string>> = {
     group_key: 'VARCHAR(32)',
     sort_order: 'INTEGER',
   },
+  // --- Multi-tenant scoping, step 1 (M-1b, #134) --------------------------------------------------
+  // Every table below this comment through `csv_imports` gained a `user_id VARCHAR(36)` column;
+  // see `schema.ts`'s top-of-file note for the full table-by-table classification (reference
+  // vocabulary and already-user-keyed tables are deliberately not touched). Registering it here is
+  // what `assertCompatible` needs to keep treating a migrated diary as fully interpreted — an
+  // unregistered column is invisible to FR-018, not merely unchecked.
   entry_feelings: {
     entry_id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
     feeling_key: 'VARCHAR(32)',
     position: 'INTEGER',
     intensity: 'INTEGER',
@@ -51,6 +58,7 @@ const REQUIRED: Record<string, Record<string, string>> = {
   },
   topics: {
     id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
     name: 'VARCHAR(128)',
     aliases: 'JSON',
     first_seen_at: 'DATETIME',
@@ -58,6 +66,7 @@ const REQUIRED: Record<string, Record<string, string>> = {
   },
   diary_entries: {
     id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
     created_at: 'DATETIME',
     updated_at: 'DATETIME',
     entry_date: 'DATE',
@@ -71,15 +80,22 @@ const REQUIRED: Record<string, Record<string, string>> = {
   },
   guiding_question_answers: {
     id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
     entry_id: 'VARCHAR(36)',
     question_key: 'VARCHAR(64)',
     question_text_snapshot: 'VARCHAR(256)',
     answer_text: 'VARCHAR(1024)',
     order_index: 'INTEGER',
   },
-  entry_topics: { entry_id: 'VARCHAR(36)', topic_id: 'VARCHAR(36)', extracted_by: 'VARCHAR(16)' },
+  entry_topics: {
+    entry_id: 'VARCHAR(36)',
+    topic_id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
+    extracted_by: 'VARCHAR(16)',
+  },
   patterns: {
     id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
     topic_id: 'VARCHAR(36)',
     feeling_key: 'VARCHAR(32)',
     occurrence_count: 'INTEGER',
@@ -104,9 +120,14 @@ const REQUIRED: Record<string, Record<string, string>> = {
     narration_attempts: 'INTEGER',
     narration_next_attempt_at: 'DATETIME',
   },
-  pattern_entries: { pattern_id: 'VARCHAR(36)', entry_id: 'VARCHAR(36)' },
+  pattern_entries: {
+    pattern_id: 'VARCHAR(36)',
+    entry_id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
+  },
   pattern_withdrawals: {
     id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
     pattern_key: 'VARCHAR(160)',
     topic_id: 'VARCHAR(36)',
     topic_name: 'VARCHAR(128)',
@@ -119,9 +140,12 @@ const REQUIRED: Record<string, Record<string, string>> = {
     withdrawn_at: 'DATETIME',
     superseded_at: 'DATETIME',
   },
-  diary_meta: { key: 'VARCHAR(64)', value: 'TEXT' },
+  // `key` alone is no longer the primary key (`schema.ts`'s M-1b note) — `assertCompatible` only
+  // checks column presence/type here, not key-ness, so this entry is otherwise unchanged.
+  diary_meta: { user_id: 'VARCHAR(36)', key: 'VARCHAR(64)', value: 'TEXT' },
   experiments: {
     id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
     pattern_topic: 'VARCHAR(128)',
     pattern_feeling: 'VARCHAR(32)',
     hypothesis_kind: 'VARCHAR(16)',
@@ -132,6 +156,7 @@ const REQUIRED: Record<string, Record<string, string>> = {
   },
   inference_jobs: {
     id: 'VARCHAR(36)',
+    user_id: 'VARCHAR(36)',
     kind: 'VARCHAR(32)',
     entry_id: 'VARCHAR(36)',
     status: 'VARCHAR(16)',
@@ -146,10 +171,12 @@ const REQUIRED: Record<string, Record<string, string>> = {
     entry_id: 'VARCHAR(36)',
     topic_id: 'VARCHAR(36)',
     feeling_key: 'VARCHAR(32)',
+    user_id: 'VARCHAR(36)',
     source: 'VARCHAR(16)',
   },
   csv_imports: {
     content_hash: 'VARCHAR(64)',
+    user_id: 'VARCHAR(36)',
     source: 'VARCHAR(16)',
     imported_at: 'DATETIME',
     entry_count: 'INTEGER',
@@ -256,13 +283,24 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
     }
   }
 
+  // --- Multi-tenant identity (M-1a, #45) ----------------------------------------------------------
+  // Moved ahead of the table validators below (M-1b, #134): every one of them now also checks its
+  // rows' `user_id` against this set, so it has to exist before the first of them runs.
+  const userIds = new Set(
+    (db.prepare('SELECT id FROM users').all() as Array<{ id: string }>).map((row) => row.id),
+  );
+  // Every table this migration touches assumes at least the default user exists — #46's `user_id`
+  // foreign keys would otherwise have nothing to point at.
+  if (userIds.size === 0) problems.push('users contains no rows (the default user is missing)');
+
   validateRows(
     'entry_feelings',
-    db.prepare('SELECT entry_id AS id, feeling_key, position FROM entry_feelings').all() as Array<
-      Record<string, unknown>
-    >,
+    db
+      .prepare('SELECT entry_id AS id, user_id, feeling_key, position FROM entry_feelings')
+      .all() as Array<Record<string, unknown>>,
     problems,
     (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
       if (!feelingKeys.has(String(row.feeling_key))) throw new Error('unknown feeling key');
       if (!Number.isInteger(Number(row.position)) || Number(row.position) < 0) {
         throw new Error('invalid feeling position');
@@ -274,12 +312,13 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
     'diary_entries',
     db
       .prepare(
-        `SELECT id, created_at, updated_at, entry_date, mode, feeling_key, feeling_source, version,
-                feeling_intensity, origin FROM diary_entries`,
+        `SELECT id, user_id, created_at, updated_at, entry_date, mode, feeling_key, feeling_source,
+                version, feeling_intensity, origin FROM diary_entries`,
       )
       .all() as Array<Record<string, unknown>>,
     problems,
     (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
       decodeDateTime(String(row.created_at));
       decodeDateTime(String(row.updated_at));
       decodeDate(String(row.entry_date));
@@ -326,11 +365,12 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
 
   validateRows(
     'topics',
-    db.prepare('SELECT id, aliases, first_seen_at, last_seen_at FROM topics').all() as Array<
-      Record<string, unknown>
-    >,
+    db
+      .prepare('SELECT id, user_id, aliases, first_seen_at, last_seen_at FROM topics')
+      .all() as Array<Record<string, unknown>>,
     problems,
     (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
       const aliases = decodeJson<unknown>(String(row.aliases));
       if (!Array.isArray(aliases) || !aliases.every((item) => typeof item === 'string')) {
         throw new Error('aliases are not a string array');
@@ -344,12 +384,13 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
     'patterns',
     db
       .prepare(
-        `SELECT id, feeling_key, occurrence_count, direction, first_detected_at, last_updated_at,
-                kind, status FROM patterns`,
+        `SELECT id, user_id, feeling_key, occurrence_count, direction, first_detected_at,
+                last_updated_at, kind, status FROM patterns`,
       )
       .all() as Array<Record<string, unknown>>,
     problems,
     (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
       if (!feelingKeys.has(String(row.feeling_key))) throw new Error('unknown feeling key');
       // Zero is valid and meaningful: a **historical** pattern is one whose windowed count has
       // fallen to nothing while its lifetime evidence stands (I3-03/I3-05). Rejecting zero here
@@ -372,12 +413,13 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
     'experiments',
     db
       .prepare(
-        `SELECT id, pattern_feeling, hypothesis_kind, start_date, end_date, status, created_at
-         FROM experiments`,
+        `SELECT id, user_id, pattern_feeling, hypothesis_kind, start_date, end_date, status,
+                created_at FROM experiments`,
       )
       .all() as Array<Record<string, unknown>>,
     problems,
     (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
       if (!feelingKeys.has(String(row.pattern_feeling))) throw new Error('unknown feeling key');
       if (!['more_of', 'less_of'].includes(String(row.hypothesis_kind))) {
         throw new Error('invalid hypothesis kind');
@@ -394,10 +436,13 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
   validateRows(
     'entry_topic_feelings',
     db
-      .prepare('SELECT entry_id AS id, topic_id, feeling_key, source FROM entry_topic_feelings')
+      .prepare(
+        'SELECT entry_id AS id, topic_id, feeling_key, user_id, source FROM entry_topic_feelings',
+      )
       .all() as Array<Record<string, unknown>>,
     problems,
     (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
       if (!feelingKeys.has(String(row.feeling_key))) throw new Error('unknown feeling key');
       if (!PAIRING_SOURCES.includes(String(row.source)))
         throw new Error('unsupported pairing source');
@@ -408,11 +453,13 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
     'csv_imports',
     db
       .prepare(
-        'SELECT content_hash AS id, source, imported_at, entry_count, report_json FROM csv_imports',
+        `SELECT content_hash AS id, user_id, source, imported_at, entry_count, report_json
+         FROM csv_imports`,
       )
       .all() as Array<Record<string, unknown>>,
     problems,
     (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
       decodeDateTime(String(row.imported_at));
       if (!Number.isInteger(Number(row.entry_count)) || Number(row.entry_count) < 0) {
         throw new Error('invalid entry count');
@@ -420,14 +467,6 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
       JSON.parse(String(row.report_json));
     },
   );
-
-  // --- Multi-tenant identity (M-1a, #45) ----------------------------------------------------------
-  const userIds = new Set(
-    (db.prepare('SELECT id FROM users').all() as Array<{ id: string }>).map((row) => row.id),
-  );
-  // Every table this migration touches assumes at least the default user exists — #46's `user_id`
-  // foreign keys would otherwise have nothing to point at.
-  if (userIds.size === 0) problems.push('users contains no rows (the default user is missing)');
 
   validateRows(
     'users',
@@ -479,11 +518,13 @@ function validateStoredValues(db: DiaryDatabase, problems: string[]): void {
     'inference_jobs',
     db
       .prepare(
-        'SELECT id, kind, status, result_json, attempts, created_at, started_at, completed_at FROM inference_jobs',
+        `SELECT id, user_id, kind, status, result_json, attempts, created_at, started_at,
+                completed_at FROM inference_jobs`,
       )
       .all() as Array<Record<string, unknown>>,
     problems,
     (row) => {
+      if (!userIds.has(String(row.user_id))) throw new Error('unknown user id');
       if (!['entry_analysis', 'transcript_format'].includes(String(row.kind))) {
         throw new Error('unsupported job kind');
       }

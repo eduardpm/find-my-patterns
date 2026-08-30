@@ -1,3 +1,5 @@
+import { DEFAULT_USER_ID } from '../auth/default-user';
+
 /**
  * The diary schema.
  *
@@ -9,6 +11,56 @@
  * Creating a diary is an explicit act the user performs once. It is not something a server does on
  * startup, because "the file wasn't there so I made a new one" is indistinguishable from data loss.
  */
+
+// --- Multi-tenant scoping, step 1 (M-1b, #134) ----------------------------------------------------
+// Every user-data table below carries `user_id VARCHAR(36) NOT NULL DEFAULT '<DEFAULT_USER_ID>'`.
+// The default is deliberate, not a placeholder to remove later: #46 (M-1b step 2) is what threads a
+// real, authenticated user id into every INSERT this codebase makes — until that lands, every row
+// any service writes is still the one pre-multi-tenant user's data, so defaulting a column nothing
+// yet populates to `DEFAULT_USER_ID` is what keeps this change behaviour-preserving. The column is
+// plain `NOT NULL DEFAULT ...`, not `NOT NULL` bare, for exactly that reason: every existing
+// `INSERT` statement in `src/` still omits this column, and a bare `NOT NULL` would make every one
+// of them start failing the moment a fresh diary existed.
+//
+// `FOREIGN KEY(user_id) REFERENCES users (id)` is declared (matching `sessions`/`entitlements`
+// below) but never `ON DELETE CASCADE`: deleting a user is not a feature this codebase has, so
+// deciding what happens to their diary content on deletion is a decision for whichever ticket adds
+// that feature, not one to make speculatively here by copying a clause that happens to be nearby.
+// Declaring the FK at all is enforcement-optional in the same sense every other FK in this schema
+// already is — `database.ts` runs the live connection with `foreign_keys = OFF` — so it documents
+// the relationship for a reader without depending on SQLite to enforce it.
+//
+// Six tables in `compatibility.ts`'s `REQUIRED` map are deliberately **not** touched: `feelings`,
+// `feeling_groups` and `guiding_questions` are shared reference vocabulary, not user data — seeded
+// once by `initDiary`/`migrateDiary` and read the same way regardless of who is asking. `users`,
+// `sessions` and `entitlements` already carry the ownership this ticket is adding everywhere else
+// (M-1a, #45; M-2, #47). `alembic_version` is inert (`tests/fixtures/README.md`) and outside
+// `REQUIRED` entirely.
+//
+// Every other table here is user data, including five junction/child tables whose row is only
+// *transitively* owned through a parent (`entry_feelings`, `entry_topics`, `pattern_entries`,
+// `entry_topic_feelings`, `guiding_question_answers` — each already carries the id of a diary_entries
+// row that has its own `user_id`). Denormalising `user_id` onto them anyway is a deliberate choice,
+// not an oversight: #46 needs a `WHERE user_id = ?` (and a matching index) that works on the table
+// being queried, not one that depends on a join back to `diary_entries` being written correctly on
+// every call site that touches it. A missing or wrong join is exactly the kind of scoping bug this
+// split exists to make less likely; a column that is simply present is not.
+//
+// `diary_meta` is the one case worth arguing rather than asserting: its two keys —
+// `pattern_echo_log` (`insights/echo.service.ts`) and `withdrawals_acknowledged_at`
+// (`insights/patterns.service.ts`) — are both about what *this user* has already seen, not
+// anything the server tracks about itself, so it is user data and belongs in this list. Its old
+// primary key was the bare `"key"` string, which only worked because there was exactly one user;
+// once two users can each have their own `pattern_echo_log` row, `"key"` alone can no longer tell
+// them apart, so the primary key becomes the composite `(user_id, "key")` below.
+//
+// `topics.name` keeps its bare `UNIQUE` constraint and `csv_imports.content_hash` keeps its bare
+// primary key, unchanged, in both `SCHEMA_STATEMENTS` and the migration below — both are already
+// global uniqueness rules that will need to become per-user once #46 lets two different accounts
+// each write a topic called "work" or import the same Daylio export. Changing either now would be
+// exactly the kind of behaviour change this ticket forbids: `topics.name` uniqueness is enforced on
+// every entry save, and `csv_imports.content_hash` uniqueness is what makes an import idempotent
+// (`daylio-import.service.ts`). Left as a named follow-up for #46 rather than fixed here.
 
 export const SCHEMA_STATEMENTS: string[] = [
   `CREATE TABLE feeling_groups (
@@ -40,16 +92,19 @@ export const SCHEMA_STATEMENTS: string[] = [
 
   `CREATE TABLE topics (
      id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      name VARCHAR(128) NOT NULL,
      aliases JSON NOT NULL,
      first_seen_at DATETIME NOT NULL,
      last_seen_at DATETIME NOT NULL,
      PRIMARY KEY (id),
-     UNIQUE (name)
+     UNIQUE (name),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   `CREATE TABLE diary_entries (
      id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      created_at DATETIME NOT NULL,
      updated_at DATETIME NOT NULL,
      entry_date DATE NOT NULL,
@@ -65,21 +120,25 @@ export const SCHEMA_STATEMENTS: string[] = [
      -- MIGRATION_STATEMENTS below.
      origin VARCHAR(16) NOT NULL DEFAULT 'app',
      PRIMARY KEY (id),
-     FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
+     FOREIGN KEY(feeling_key) REFERENCES feelings ("key"),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   `CREATE TABLE entry_feelings (
      entry_id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      feeling_key VARCHAR(32) NOT NULL,
      position INTEGER NOT NULL,
      intensity INTEGER,
      PRIMARY KEY (entry_id, feeling_key),
      FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
-     FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
+     FOREIGN KEY(feeling_key) REFERENCES feelings ("key"),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   `CREATE TABLE guiding_question_answers (
      id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      entry_id VARCHAR(36) NOT NULL,
      question_key VARCHAR(64) NOT NULL,
      question_text_snapshot VARCHAR(256) NOT NULL,
@@ -87,20 +146,24 @@ export const SCHEMA_STATEMENTS: string[] = [
      order_index INTEGER NOT NULL,
      PRIMARY KEY (id),
      FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
-     FOREIGN KEY(question_key) REFERENCES guiding_questions ("key")
+     FOREIGN KEY(question_key) REFERENCES guiding_questions ("key"),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   `CREATE TABLE entry_topics (
      entry_id VARCHAR(36) NOT NULL,
      topic_id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      extracted_by VARCHAR(16),
      PRIMARY KEY (entry_id, topic_id),
      FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
-     FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE
+     FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE,
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   `CREATE TABLE patterns (
      id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      topic_id VARCHAR(36) NOT NULL,
      feeling_key VARCHAR(32) NOT NULL,
      occurrence_count INTEGER NOT NULL,
@@ -126,19 +189,23 @@ export const SCHEMA_STATEMENTS: string[] = [
      narration_next_attempt_at DATETIME,
      PRIMARY KEY (id),
      FOREIGN KEY(feeling_key) REFERENCES feelings ("key"),
-     FOREIGN KEY(topic_id) REFERENCES topics (id)
+     FOREIGN KEY(topic_id) REFERENCES topics (id),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   `CREATE TABLE pattern_entries (
      pattern_id VARCHAR(36) NOT NULL,
      entry_id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      PRIMARY KEY (pattern_id, entry_id),
      FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
-     FOREIGN KEY(pattern_id) REFERENCES patterns (id) ON DELETE CASCADE
+     FOREIGN KEY(pattern_id) REFERENCES patterns (id) ON DELETE CASCADE,
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   `CREATE TABLE inference_jobs (
      id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      kind VARCHAR(32) NOT NULL,
      entry_id VARCHAR(36) NOT NULL,
      status VARCHAR(16) NOT NULL,
@@ -149,11 +216,13 @@ export const SCHEMA_STATEMENTS: string[] = [
      started_at DATETIME,
      completed_at DATETIME,
      PRIMARY KEY (id),
-     FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE
+     FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   `CREATE TABLE pattern_withdrawals (
      id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      pattern_key VARCHAR(160) NOT NULL,
      topic_id VARCHAR(36) NOT NULL,
      topic_name VARCHAR(128) NOT NULL,
@@ -165,13 +234,18 @@ export const SCHEMA_STATEMENTS: string[] = [
      detail_text VARCHAR(512) NOT NULL,
      withdrawn_at DATETIME NOT NULL,
      superseded_at DATETIME,
-     PRIMARY KEY (id)
+     PRIMARY KEY (id),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
+  // `PRIMARY KEY (user_id, "key")`, not the bare `("key")` this table shipped with — see the M-1b
+  // note at the top of this file for why a per-user key/value fact needs the owner in its key.
   `CREATE TABLE diary_meta (
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      "key" VARCHAR(64) NOT NULL,
      value TEXT NOT NULL,
-     PRIMARY KEY ("key")
+     PRIMARY KEY (user_id, "key"),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   // --- N-of-1 experiments (R-3a) ------------------------------------------------------------
@@ -181,6 +255,7 @@ export const SCHEMA_STATEMENTS: string[] = [
   // is curated and stable, so a feeling key never goes stale the way a topic id can.
   `CREATE TABLE experiments (
      id VARCHAR(36) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      pattern_topic VARCHAR(128) NOT NULL,
      pattern_feeling VARCHAR(32) NOT NULL,
      hypothesis_kind VARCHAR(16) NOT NULL,
@@ -189,7 +264,8 @@ export const SCHEMA_STATEMENTS: string[] = [
      status VARCHAR(16) NOT NULL DEFAULT 'active',
      created_at DATETIME NOT NULL,
      PRIMARY KEY (id),
-     FOREIGN KEY(pattern_feeling) REFERENCES feelings ("key")
+     FOREIGN KEY(pattern_feeling) REFERENCES feelings ("key"),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   // --- Mixed-valence pairing (E-1a) -----------------------------------------------------------
@@ -206,11 +282,13 @@ export const SCHEMA_STATEMENTS: string[] = [
      entry_id VARCHAR(36) NOT NULL,
      topic_id VARCHAR(36) NOT NULL,
      feeling_key VARCHAR(32) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      source VARCHAR(16) NOT NULL,
      PRIMARY KEY (entry_id, topic_id, feeling_key),
      FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
      FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE,
-     FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
+     FOREIGN KEY(feeling_key) REFERENCES feelings ("key"),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   // --- Daylio CSV import idempotency (L-1b, #35) ------------------------------------------------
@@ -219,13 +297,18 @@ export const SCHEMA_STATEMENTS: string[] = [
   // finds its hash already here and writes nothing. `report_json` is the dry-run report that was
   // accepted, kept for `GET`-free auditability — "what did this import actually do" never requires
   // re-parsing the original file.
+  //
+  // `user_id` is added (M-1b, #134) but `content_hash` stays the bare primary key: see this file's
+  // top-of-file note on why that per-user uniqueness fix is left to #46.
   `CREATE TABLE csv_imports (
      content_hash VARCHAR(64) NOT NULL,
+     user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
      source VARCHAR(16) NOT NULL,
      imported_at DATETIME NOT NULL,
      entry_count INTEGER NOT NULL,
      report_json JSON NOT NULL,
-     PRIMARY KEY (content_hash)
+     PRIMARY KEY (content_hash),
+     FOREIGN KEY(user_id) REFERENCES users (id)
    )`,
 
   // --- Multi-tenant identity (M-1a, #45) ----------------------------------------------------------
@@ -283,6 +366,43 @@ export const SCHEMA_STATEMENTS: string[] = [
      PRIMARY KEY (user_id),
      FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
    )`,
+
+  // --- The first indexes in this schema (M-1b, #134) ----------------------------------------------
+  // `schema.ts` carried zero indexes before this — every read was a full-table scan, tolerable at
+  // one user's worth of data. Each index below is named for a query that already exists in `src/`
+  // today; #46 turns that query's `WHERE`/`ORDER BY` into a `user_id`-scoped one, and the leading
+  // `user_id` column is what makes that future filter an index seek rather than the scan it is now.
+  // None of these change any query's result — SQLite indexes are a plan choice, never a filter —
+  // which is what keeps adding them inside this behaviour-preserving ticket.
+  //
+  //  - `diary_entries(user_id, entry_date)`: `entries.repository.ts`'s
+  //    `WHERE entry_date >= ? AND entry_date <= ?` (month range) and `WHERE entry_date = ?`
+  //    (duplicate-entry check) both filter on exactly this pair once `user_id` joins them.
+  //  - `patterns(user_id, last_updated_at)`: `worker.ts`'s `narrateNextPattern` loads every pattern
+  //    `ORDER BY p.last_updated_at DESC, p.id`; `patterns.service.ts`'s own full-table pattern load
+  //    shares the same eventual `WHERE user_id = ?`.
+  //  - `inference_jobs(user_id, status)`: `worker.ts`'s `claimNext` (`WHERE status = 'queued' ...`)
+  //    and its two crash-recovery sweeps (`WHERE status = 'running' AND attempts ...`) all filter on
+  //    `status` alone today; `user_id` is the column #46 adds in front of it.
+  //  - `experiments(user_id, status)`: `experiments.service.ts`'s `WHERE status = 'active'`, used by
+  //    both `startExperiment`'s one-active-experiment check and `getActive`.
+  //  - `pattern_withdrawals(user_id, superseded_at)`: `patterns.service.ts#listWithdrawals`'s
+  //    `WHERE superseded_at IS NULL` — the "notices still current" filter every read of this table
+  //    already applies.
+  //
+  // Left out, deliberately, rather than added speculatively: every junction/child table this
+  // migration also gives a `user_id` (`entry_feelings`, `entry_topics`, `pattern_entries`,
+  // `entry_topic_feelings`, `guiding_question_answers`, and `topics`/`csv_imports`/`diary_meta`).
+  // Each is looked up today by the id of the parent row it hangs off (`entry_id`, `topic_id`,
+  // `pattern_id`, or — for `diary_meta` — its own primary key), and every one of those lookups is
+  // already covered by an existing `PRIMARY KEY`. No query in `src/` today scans any of them by
+  // `user_id` alone, so an index led by it would be speculating about a query #46 has not written
+  // yet — exactly what this ticket's own instructions say to leave out.
+  `CREATE INDEX idx_diary_entries_user_date ON diary_entries (user_id, entry_date)`,
+  `CREATE INDEX idx_patterns_user_updated ON patterns (user_id, last_updated_at)`,
+  `CREATE INDEX idx_inference_jobs_user_status ON inference_jobs (user_id, status)`,
+  `CREATE INDEX idx_experiments_user_status ON experiments (user_id, status)`,
+  `CREATE INDEX idx_pattern_withdrawals_user_superseded ON pattern_withdrawals (user_id, superseded_at)`,
 ];
 
 /**
@@ -319,13 +439,19 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
             )`,
   },
   {
+    // `user_id` (M-1b, #134) is baked in here for the diary old enough to be missing this table
+    // outright; the far more common case — a diary that already has it — is covered by the
+    // guarded `ALTER TABLE` in the M-1b block below, which this `CREATE TABLE IF NOT EXISTS` is a
+    // no-op against.
     sql: `CREATE TABLE IF NOT EXISTS entry_feelings (
               entry_id VARCHAR(36) NOT NULL,
+              user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
               feeling_key VARCHAR(32) NOT NULL,
               position INTEGER NOT NULL,
               PRIMARY KEY (entry_id, feeling_key),
               FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
-              FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
+              FOREIGN KEY(feeling_key) REFERENCES feelings ("key"),
+              FOREIGN KEY(user_id) REFERENCES users (id)
             )`,
   },
   {
@@ -342,8 +468,12 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
   // --- Withdrawal notices (A2) -----------------------------------------------------------------
   // Pattern identity, counts, a reason and timestamps. No diary text, ever (A2-08).
   {
+    // `user_id` (M-1b, #134): see the note on the `entry_feelings` statement above — this covers
+    // only the diary old enough to lack the table entirely; the guarded `ALTER TABLE` below covers
+    // the common case.
     sql: `CREATE TABLE IF NOT EXISTS pattern_withdrawals (
               id VARCHAR(36) NOT NULL,
+              user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
               pattern_key VARCHAR(160) NOT NULL,
               topic_id VARCHAR(36) NOT NULL,
               topic_name VARCHAR(128) NOT NULL,
@@ -355,16 +485,25 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
               detail_text VARCHAR(512) NOT NULL,
               withdrawn_at DATETIME NOT NULL,
               superseded_at DATETIME,
-              PRIMARY KEY (id)
+              PRIMARY KEY (id),
+              FOREIGN KEY(user_id) REFERENCES users (id)
             )`,
   },
 
   // --- Small key/value facts about the diary itself (A2-07's "since you last looked") -----------
+  // `user_id` and the composite primary key (M-1b, #134) are baked in here only for the diary old
+  // enough to lack this table entirely — a diary that already has it (every real one today) is
+  // rebuilt by the dedicated `diary_meta` ownership migration further below, which a `CREATE TABLE
+  // IF NOT EXISTS` cannot express: SQLite has no `ALTER TABLE ... ADD PRIMARY KEY`, and this
+  // table's key stops meaning what it used to mean the moment two users can each hold their own
+  // `pattern_echo_log` row.
   {
     sql: `CREATE TABLE IF NOT EXISTS diary_meta (
+              user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
               "key" VARCHAR(64) NOT NULL,
               value TEXT NOT NULL,
-              PRIMARY KEY ("key")
+              PRIMARY KEY (user_id, "key"),
+              FOREIGN KEY(user_id) REFERENCES users (id)
             )`,
   },
 
@@ -459,8 +598,10 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
 
   // --- N-of-1 experiments (R-3a) ------------------------------------------------------------
   {
+    // `user_id` (M-1b, #134): see the note on the `entry_feelings` statement above.
     sql: `CREATE TABLE IF NOT EXISTS experiments (
               id VARCHAR(36) NOT NULL,
+              user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
               pattern_topic VARCHAR(128) NOT NULL,
               pattern_feeling VARCHAR(32) NOT NULL,
               hypothesis_kind VARCHAR(16) NOT NULL,
@@ -469,21 +610,25 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
               status VARCHAR(16) NOT NULL DEFAULT 'active',
               created_at DATETIME NOT NULL,
               PRIMARY KEY (id),
-              FOREIGN KEY(pattern_feeling) REFERENCES feelings ("key")
+              FOREIGN KEY(pattern_feeling) REFERENCES feelings ("key"),
+              FOREIGN KEY(user_id) REFERENCES users (id)
             )`,
   },
 
   // --- Mixed-valence pairing (E-1a) -----------------------------------------------------------
   {
+    // `user_id` (M-1b, #134): see the note on the `entry_feelings` statement above.
     sql: `CREATE TABLE IF NOT EXISTS entry_topic_feelings (
               entry_id VARCHAR(36) NOT NULL,
               topic_id VARCHAR(36) NOT NULL,
               feeling_key VARCHAR(32) NOT NULL,
+              user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
               source VARCHAR(16) NOT NULL,
               PRIMARY KEY (entry_id, topic_id, feeling_key),
               FOREIGN KEY(entry_id) REFERENCES diary_entries (id) ON DELETE CASCADE,
               FOREIGN KEY(topic_id) REFERENCES topics (id) ON DELETE CASCADE,
-              FOREIGN KEY(feeling_key) REFERENCES feelings ("key")
+              FOREIGN KEY(feeling_key) REFERENCES feelings ("key"),
+              FOREIGN KEY(user_id) REFERENCES users (id)
             )`,
   },
 
@@ -514,13 +659,18 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
     column: 'origin',
   },
   {
+    // `user_id` (M-1b, #134): see the note on the `entry_feelings` statement above.
+    // `content_hash` stays the bare primary key — see this file's top-of-file M-1b note on why
+    // that per-user uniqueness fix is left to #46.
     sql: `CREATE TABLE IF NOT EXISTS csv_imports (
               content_hash VARCHAR(64) NOT NULL,
+              user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}',
               source VARCHAR(16) NOT NULL,
               imported_at DATETIME NOT NULL,
               entry_count INTEGER NOT NULL,
               report_json JSON NOT NULL,
-              PRIMARY KEY (content_hash)
+              PRIMARY KEY (content_hash),
+              FOREIGN KEY(user_id) REFERENCES users (id)
             )`,
   },
 
@@ -565,6 +715,152 @@ export const MIGRATION_STATEMENTS: MigrationStatement[] = [
               PRIMARY KEY (user_id),
               FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
             )`,
+  },
+
+  // --- Multi-tenant scoping, step 1 (M-1b, #134) ----------------------------------------------
+  // `user_id VARCHAR(36) NOT NULL DEFAULT '<DEFAULT_USER_ID>' REFERENCES users (id)` on every
+  // table this file's top-of-file note classifies as user data. The `ADD COLUMN`'s own default is
+  // the backfill: SQLite fills every existing row with it the instant the column exists, in the
+  // same statement, so there is no separate `UPDATE` to keep idempotent or to run in the right
+  // order relative to the column's own arrival.
+  //
+  // Placed after `users` above, not because `ADD COLUMN ... REFERENCES` requires the target table
+  // to already exist (SQLite never validates that at DDL time — proven in this ticket's own
+  // testing), but because it reads correctly: these columns exist to point at rows in the table
+  // just created.
+  //
+  // `migrateDiary` (`./migrate.ts`) runs this whole migration with `foreign_keys = OFF`, which is
+  // what makes the statements below legal at all: SQLite refuses `ALTER TABLE ... ADD COLUMN` for
+  // a column that carries both a `REFERENCES` clause and a non-NULL default while foreign keys are
+  // enforced ("Cannot add a REFERENCES column with non-NULL default value") — confirmed against
+  // this project's actual `better-sqlite3` version, which (unlike the `sqlite3` CLI) defaults
+  // `foreign_keys` to **on** for a fresh raw connection, exactly the trap #83's agent hit. Turning
+  // it off here matches the posture the running server already has permanently (`database.ts`) and
+  // the golden-fixture builder already needs (`build-golden-db.ts`) — it does not newly relax
+  // anything a real diary depended on.
+  {
+    sql: `ALTER TABLE topics ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'topics',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE diary_entries ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'diary_entries',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE entry_feelings ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'entry_feelings',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE guiding_question_answers ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'guiding_question_answers',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE entry_topics ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'entry_topics',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE patterns ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'patterns',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE pattern_entries ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'pattern_entries',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE pattern_withdrawals ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'pattern_withdrawals',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE experiments ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'experiments',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE inference_jobs ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'inference_jobs',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE entry_topic_feelings ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'entry_topic_feelings',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE csv_imports ADD COLUMN user_id VARCHAR(36) NOT NULL DEFAULT '${DEFAULT_USER_ID}' REFERENCES users (id)`,
+    table: 'csv_imports',
+    column: 'user_id',
+  },
+
+  // --- `diary_meta` ownership: a primary-key rebuild, not an `ADD COLUMN` (M-1b, #134) ------------
+  // Every table above keeps its primary key and only gains a column. `diary_meta` cannot: its key
+  // was the bare `"key"` string, which stops being unique the moment a second user can hold a
+  // `pattern_echo_log` row of their own, so the key must become the composite `(user_id, "key")` —
+  // and SQLite has no `ALTER TABLE ... ADD PRIMARY KEY` or `DROP PRIMARY KEY`, so changing one
+  // means rebuilding the table: create it under the new shape, copy every row across (owned by
+  // `DEFAULT_USER_ID` — the only owner a diary predating accounts could have), drop the old table,
+  // and rename the new one into its place.
+  //
+  // All four statements share the same guard (`table: 'diary_meta', column: 'user_id'`), which is
+  // what makes the sequence idempotent as a whole even though only the first statement's precise
+  // wording names that pair: the guard re-inspects `diary_meta` immediately before *each*
+  // statement, so on a second run the very first statement already finds `user_id` present (this
+  // rebuild having renamed `diary_meta_new` over it the first time) and every statement below is
+  // skipped in turn — including the final rename, which never gets a table to rename away from.
+  {
+    sql: `CREATE TABLE diary_meta_new (
+              user_id VARCHAR(36) NOT NULL,
+              "key" VARCHAR(64) NOT NULL,
+              value TEXT NOT NULL,
+              PRIMARY KEY (user_id, "key"),
+              FOREIGN KEY(user_id) REFERENCES users (id)
+            )`,
+    table: 'diary_meta',
+    column: 'user_id',
+  },
+  {
+    sql: `INSERT INTO diary_meta_new (user_id, "key", value)
+          SELECT '${DEFAULT_USER_ID}', "key", value FROM diary_meta`,
+    table: 'diary_meta',
+    column: 'user_id',
+  },
+  {
+    sql: `DROP TABLE diary_meta`,
+    table: 'diary_meta',
+    column: 'user_id',
+  },
+  {
+    sql: `ALTER TABLE diary_meta_new RENAME TO diary_meta`,
+    table: 'diary_meta',
+    column: 'user_id',
+  },
+
+  // --- The first indexes in this schema, for a migrated diary (M-1b, #134) -----------------------
+  // Identical to the five in `SCHEMA_STATEMENTS` — see that block's comment for which query in
+  // `src/` each one is for. `CREATE INDEX IF NOT EXISTS` is its own idempotency guard, unlike the
+  // `ADD COLUMN` statements above: SQLite does support `IF NOT EXISTS` for an index, just not for a
+  // column, so these need no `table`/`column` pair.
+  {
+    sql: `CREATE INDEX IF NOT EXISTS idx_diary_entries_user_date ON diary_entries (user_id, entry_date)`,
+  },
+  {
+    sql: `CREATE INDEX IF NOT EXISTS idx_patterns_user_updated ON patterns (user_id, last_updated_at)`,
+  },
+  {
+    sql: `CREATE INDEX IF NOT EXISTS idx_inference_jobs_user_status ON inference_jobs (user_id, status)`,
+  },
+  {
+    sql: `CREATE INDEX IF NOT EXISTS idx_experiments_user_status ON experiments (user_id, status)`,
+  },
+  {
+    sql: `CREATE INDEX IF NOT EXISTS idx_pattern_withdrawals_user_superseded ON pattern_withdrawals (user_id, superseded_at)`,
   },
 ];
 
