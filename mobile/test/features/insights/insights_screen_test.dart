@@ -514,10 +514,10 @@ void main() {
       await tester.pumpAndSettle();
 
       // The mood-trend chart above pushes this below the default test
-      // viewport.
-      await tester.ensureVisible(find.text('1 entries'));
+      // viewport. "1 entry" (singular, #150) not "1 entries".
+      await tester.ensureVisible(find.text('1 entry'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('1 entries'));
+      await tester.tap(find.text('1 entry'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Open'));
       await tester.pumpAndSettle();

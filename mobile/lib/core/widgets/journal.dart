@@ -392,9 +392,20 @@ class StatusBadge extends StatelessWidget {
               ),
               const SizedBox(width: JournalSpacing.x2),
             ],
-            Text(
-              JournalType.eyebrowCase(text),
-              style: JournalType.eyebrow.copyWith(color: resolvedColor),
+            // `Flexible`, not a bare `Text`: a non-flex child of a `Row`
+            // (`mainAxisSize.min` included) is always measured at its own
+            // unbounded natural width during layout, so without this a
+            // caller passing unpredictable text -- a user-typed topic
+            // alias, not one of this app's own short fixed words --
+            // overflows whatever container squeezed this badge instead of
+            // wrapping. Every other label-beside-a-fixed-icon row in this
+            // app (`FeelingChip`'s own content `Row`, for one) already
+            // wraps this way rather than truncating.
+            Flexible(
+              child: Text(
+                JournalType.eyebrowCase(text),
+                style: JournalType.eyebrow.copyWith(color: resolvedColor),
+              ),
             ),
           ],
         ),

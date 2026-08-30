@@ -413,4 +413,65 @@ void main() {
     await tester.tap(find.byTooltip('Back'));
     expect(closed, isTrue);
   });
+
+  testWidgets(
+    'a long topic name with several aliases renders with no overflow at '
+    '320dp/2x (#150)',
+    (tester) async {
+      // #150: two overflows surfaced by this fixture at once. The topic
+      // row's own `Row` (topic name `Expanded`, then a fixed entry-count
+      // `Eyebrow`, then the chevron) overflowed by 75px once a large
+      // count ("128 entries") had to share the line with a long topic
+      // name -- fixed by wrapping the count in `Flexible`. Once expanded,
+      // `_AliasChip`'s `StatusBadge` overflowed its own `Wrap` slot by
+      // 6.7px on a long alias ("workout") -- `StatusBadge` never wrapped
+      // its own label (a bare `Text` in a `Row`, unlike every other
+      // label-beside-an-icon row in this app), so this fixed
+      // `StatusBadge` itself rather than papering over it at just this
+      // one call site.
+      tester.view.physicalSize = const Size(320, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final harness = Harness(
+        settings: configured,
+        adapter: FakeHttpAdapter([
+          topicsReply([
+            topic(
+              id: 't1',
+              name: 'strength training and mobility work',
+              aliases: const ['gym', 'weights', 'lifting', 'workout'],
+              entryCount: 128,
+            ),
+          ]),
+        ]),
+      );
+
+      await tester.pumpWidget(
+        Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: harness.wrap(screen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // A positive assertion the row actually rendered, pairing the
+      // exception check above the way #150's own lesson (seven prior
+      // instances of a rendered-nothing false green) requires.
+      expect(
+        find.text('Strength training and mobility work'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Strength training and mobility work'));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('WORKOUT'), findsOneWidget);
+    },
+  );
 }
