@@ -380,10 +380,17 @@ class _AnalysingNotice extends StatelessWidget {
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
         const SizedBox(width: JournalSpacing.x3),
-        Text(
-          'Re-reading that entry…',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: context.journalColors.onSurfaceVariant,
+        // `Flexible`, not a bare `Text`: at 320dp/2x this overflowed by
+        // 410px (#155) -- the spinner and gap ahead of it are fixed-size,
+        // so this is the one sibling that has to give, the same
+        // `Flexible`-around-the-non-load-bearing-sibling shape
+        // `ACCESSIBILITY.md` §3 already documents.
+        Flexible(
+          child: Text(
+            'Re-reading that entry…',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: context.journalColors.onSurfaceVariant,
+            ),
           ),
         ),
       ],
@@ -444,10 +451,17 @@ class _FeelingProposalCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: JournalSpacing.x4),
-          Row(
+          // `Wrap`, not `Row`: `phrase` can name several feelings ("happy,
+          // sad and anxious"), and at 320dp/2x "Use <phrase>" alongside
+          // "Keep as is" no longer fit one line (679px of overflow, #155)
+          // -- "Keep as is" flows to a second line rather than either
+          // button shrinking or the row overflowing, the same fix shape
+          // as `_DayEntryCard`'s own Save/Cancel row below.
+          Wrap(
+            spacing: JournalSpacing.x2,
+            runSpacing: JournalSpacing.x2,
             children: [
               PillButton(onPressed: onAccept, child: Text('Use $phrase')),
-              const SizedBox(width: JournalSpacing.x2),
               SecondaryPillButton(
                 onPressed: onDismiss,
                 child: const Text('Keep as is'),
@@ -588,41 +602,41 @@ class _DayEntryCardState extends State<_DayEntryCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    // One shared `Wrap`, not a `Row` with the time pinned
+                    // in a fixed-width slot ahead of an `Expanded(Wrap(...))`
+                    // -- #155 found that at 320dp/2x the time label alone
+                    // (e.g. "9:00 AM" at eyebrow tracking) can grow wide
+                    // enough to starve the `Expanded` down to a sliver too
+                    // narrow for even one feeling's own dot-and-label row,
+                    // which cannot itself split across lines (`Wrap`
+                    // cannot break a single child in two), so it overflowed
+                    // *within* that sliver instead of ever reaching a new
+                    // line. Treating the time label as just another `Wrap`
+                    // item alongside each feeling gives every item the
+                    // *whole* row's width to decide whether it fits before
+                    // wrapping, the same "Wrap, not Row" fix
+                    // `ACCESSIBILITY.md` §3 already documents for
+                    // `IntensityDials` and `FeelingChips`.
+                    Wrap(
+                      spacing: JournalSpacing.x2,
+                      runSpacing: JournalSpacing.x1,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Padding(
-                          padding: const EdgeInsets.only(
-                            right: JournalSpacing.x2,
-                          ),
-                          child: Eyebrow(
-                            _timeFormat.format(entry.createdAt.toLocal()),
-                          ),
-                        ),
-                        Expanded(
-                          child: Wrap(
-                            spacing: JournalSpacing.x2,
-                            runSpacing: JournalSpacing.x1,
-                            crossAxisAlignment: WrapCrossAlignment.center,
+                        Eyebrow(_timeFormat.format(entry.createdAt.toLocal())),
+                        for (final feeling in entry.feelings)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              for (final feeling in entry.feelings)
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    _Dot(color: feeling.accent(journal)),
-                                    const SizedBox(width: JournalSpacing.x2),
-                                    Text(
-                                      feeling.label,
-                                      style: theme.textTheme.bodyMedium
-                                          ?.copyWith(
-                                            color: feeling.accent(journal),
-                                          ),
-                                    ),
-                                  ],
+                              _Dot(color: feeling.accent(journal)),
+                              const SizedBox(width: JournalSpacing.x2),
+                              Text(
+                                feeling.label,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: feeling.accent(journal),
                                 ),
+                              ),
                             ],
                           ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: JournalSpacing.x3),
@@ -634,13 +648,20 @@ class _DayEntryCardState extends State<_DayEntryCard> {
                       style: JournalType.prose,
                     ),
                     const SizedBox(height: JournalSpacing.x3),
-                    Row(
+                    // `Wrap`, not `Row`: at 320dp/2x "Save"/"Saving…" and
+                    // "Cancel" together no longer fit one line (133px of
+                    // overflow, #155) -- `Cancel` flows to a second line
+                    // rather than either button shrinking or the row
+                    // overflowing, the same fix shape as the header row
+                    // above.
+                    Wrap(
+                      spacing: JournalSpacing.x2,
+                      runSpacing: JournalSpacing.x2,
                       children: [
                         PillButton(
                           onPressed: isSaving ? null : widget.onSave,
                           child: Text(isSaving ? 'Saving…' : 'Save'),
                         ),
-                        const SizedBox(width: JournalSpacing.x2),
                         SecondaryPillButton(
                           onPressed: isSaving ? null : widget.onCancel,
                           child: const Text('Cancel'),

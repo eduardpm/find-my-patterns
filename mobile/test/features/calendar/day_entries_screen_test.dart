@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:find_my_patterns/core/config/config_providers.dart';
 import 'package:find_my_patterns/core/diary/calendar_date.dart';
 import 'package:find_my_patterns/core/diary/entry.dart';
@@ -581,5 +583,284 @@ void main() {
 
       expect(find.text('WEDNESDAY, AUGUST 5'), findsOneWidget);
     });
+  });
+
+  group('dynamic type at the required matrix (#155)', () {
+    // The structures the orchestrator flagged as worth probing
+    // (`day_entries_screen.dart` :177 the page `Stack`, :375/:425/:447 the
+    // analysing-notice and proposal-card `Row`s, :581/:591/:609/:637 the
+    // editing card's rows, :476 the feeling `_Dot`, :574 the editing
+    // card's `DecoratedBox`). Every cell is measured, not assumed --
+    // including the ones that render clean, so the zeroes are recorded as
+    // evidence the sweep actually happened.
+    Future<void> pumpAtScale(
+      WidgetTester tester,
+      Widget app, {
+      required double width,
+      required double scale,
+    }) async {
+      tester.view.physicalSize = Size(width, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: app,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    for (final width in [320.0, 360.0]) {
+      for (final scale in [1.0, 1.3, 2.0]) {
+        testWidgets(
+          'the entry list renders with no overflow at '
+          '${width.toInt()}dp / ${scale}x',
+          (tester) async {
+            final harness = configuredHarness(
+              FakeHttpAdapter([
+                FakeReply(200, body: feelingsCatalogJson()),
+                FakeReply(
+                  200,
+                  body: {
+                    'entries': [
+                      entryJson(
+                        id: 'entry-1',
+                        rawText: 'A fairly ordinary Wednesday, all told.',
+                        feelingKeys: const ['happy', 'sad', 'anxious'],
+                      ),
+                    ],
+                  },
+                ),
+              ]),
+            );
+            await pumpAtScale(tester, app(harness), width: width, scale: scale);
+
+            expect(tester.takeException(), isNull);
+            expect(find.text('WEDNESDAY, AUGUST 5'), findsOneWidget);
+            expect(find.text('1 entry'), findsOneWidget);
+            expect(find.text('Happy'), findsOneWidget);
+            expect(find.text('Anxious'), findsOneWidget);
+          },
+        );
+      }
+    }
+
+    testWidgets(
+      'the re-analysing notice renders with no overflow at 320dp/2x',
+      (tester) async {
+        final adapter = FakeHttpAdapter([
+          FakeReply(200, body: feelingsCatalogJson()),
+          FakeReply(
+            200,
+            body: {
+              'entries': [
+                entryJson(id: 'entry-1', rawText: 'Old text.', version: 3),
+              ],
+            },
+          ),
+          // PATCH.
+          FakeReply(
+            200,
+            body: entryJson(id: 'entry-1', rawText: 'New text.', version: 4),
+          ),
+          // Post-save refresh.
+          FakeReply(
+            200,
+            body: {
+              'entries': [
+                entryJson(id: 'entry-1', rawText: 'New text.', version: 4),
+              ],
+            },
+          ),
+        ]);
+        final harness = configuredHarness(adapter);
+        // `analysisPollDelayProvider` overridden with a `Completer` that is
+        // never completed, so the poll loop blocks forever on its first
+        // `await delay(...)` right after `isAnalysing: true` is set --
+        // deterministic, unlike racing a single `pump()` against the
+        // default fakes, which resolve the whole save-refresh-poll chain
+        // as microtasks before a single frame ever gets a chance to catch
+        // the notice on screen.
+        final delayCompleter = Completer<void>();
+        addTearDown(delayCompleter.complete);
+        await pumpAtScale(
+          tester,
+          ProviderScope(
+            overrides: [
+              requireAuthProvider.overrideWithValue(harness.requireAuth),
+              settingsStoreProvider.overrideWithValue(harness.store),
+              apiClientProvider.overrideWithValue(harness.client),
+              analysisPollConfigProvider.overrideWithValue(instantPoll),
+              analysisPollDelayProvider.overrideWithValue(
+                (_) => delayCompleter.future,
+              ),
+            ],
+            child: MaterialApp(home: DayEntriesScreen(date: '$date')),
+          ),
+          width: 320,
+          scale: 2,
+        );
+
+        await tester.tap(find.text('Edit text'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField), 'New text.');
+        await tester.tap(find.text('Save'));
+        // Not `pumpAndSettle`: the notice's own `CircularProgressIndicator`
+        // schedules a new frame forever while `isAnalysing` stays true (by
+        // design here, via the un-completed `delayCompleter`), so
+        // `pumpAndSettle` would never see an idle frame and time out.
+        // `saveEdit` crosses two awaited network round trips (the `PATCH`,
+        // then `refresh()`) before it blocks on the poll delay, each a
+        // fresh microtask boundary a single frame does not necessarily
+        // drain -- so this pumps a bounded number of plain frames rather
+        // than guessing the exact count.
+        for (
+          var i = 0;
+          i < 10 && find.text('Re-reading that entry…').evaluate().isEmpty;
+          i++
+        ) {
+          // A duration, not a bare `pump()`: `saveEdit` waits on
+          // `entriesApiProvider`'s own async gap, which needs the fake
+          // clock to actually advance to resolve -- a zero-duration
+          // `pump()` never fires it, and the loop spins without
+          // progressing.
+          await tester.pump(const Duration(milliseconds: 5));
+        }
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Re-reading that entry…'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'the feeling-proposal card and its "Use <phrase>" button render with '
+      'no overflow at 320dp/2x',
+      (tester) async {
+        final adapter = FakeHttpAdapter([
+          FakeReply(200, body: feelingsCatalogJson()),
+          FakeReply(
+            200,
+            body: {
+              'entries': [
+                entryJson(id: 'entry-1', rawText: 'Text.', version: 1),
+              ],
+            },
+          ),
+          FakeReply(
+            200,
+            body: entryJson(id: 'entry-1', rawText: 'Text!', version: 2),
+          ),
+          FakeReply(
+            200,
+            body: {
+              'entries': [
+                entryJson(id: 'entry-1', rawText: 'Text!', version: 2),
+              ],
+            },
+          ),
+          FakeReply(
+            200,
+            body: entryJson(
+              id: 'entry-1',
+              rawText: 'Text!',
+              version: 2,
+              suggestedFeelings: [
+                {'key': 'sad', 'confidence': 0.9},
+                {'key': 'anxious', 'confidence': 0.7},
+              ],
+            ),
+          ),
+          FakeReply(
+            200,
+            body: {
+              'entries': [
+                entryJson(id: 'entry-1', rawText: 'Text!', version: 2),
+              ],
+            },
+          ),
+        ]);
+        final harness = configuredHarness(adapter);
+        await pumpAtScale(tester, app(harness), width: 320, scale: 2);
+        await tester.tap(find.text('Edit text'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField), 'Text!');
+        await tester.tap(find.text('Save'));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(
+          find.text('This now reads more like sad and anxious.'),
+          findsOneWidget,
+        );
+        expect(find.text('Use sad and anxious'), findsOneWidget);
+        expect(find.text('Keep as is'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'the editing card (feeling row, text field, Save/Cancel) renders '
+      'with no overflow at 320dp/2x',
+      (tester) async {
+        final harness = configuredHarness(
+          FakeHttpAdapter([
+            FakeReply(200, body: feelingsCatalogJson()),
+            FakeReply(
+              200,
+              body: {
+                'entries': [
+                  entryJson(
+                    id: 'entry-1',
+                    rawText: 'Old text.',
+                    feelingKeys: const ['happy', 'sad', 'anxious'],
+                  ),
+                ],
+              },
+            ),
+          ]),
+        );
+        await pumpAtScale(tester, app(harness), width: 320, scale: 2);
+        await tester.tap(find.text('Edit text'));
+        await tester.pumpAndSettle();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Happy'), findsOneWidget);
+        expect(find.text('Anxious'), findsOneWidget);
+        expect(find.text('Save'), findsOneWidget);
+        expect(find.text('Cancel'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'the back button and both day-step chevrons stay at least 48dp at '
+      '320dp/2x',
+      (tester) async {
+        final handle = tester.ensureSemantics();
+        final harness = configuredHarness(
+          FakeHttpAdapter([
+            FakeReply(200, body: feelingsCatalogJson()),
+            FakeReply(200, body: {'entries': <Object?>[]}),
+          ]),
+        );
+        await pumpAtScale(tester, app(harness), width: 320, scale: 2);
+
+        expect(tester.takeException(), isNull);
+        final backSize = tester.getSize(
+          find.bySemanticsLabel('Back to the calendar'),
+        );
+        expect(backSize.width, greaterThanOrEqualTo(48));
+        expect(backSize.height, greaterThanOrEqualTo(48));
+        final previousSize = tester.getSize(
+          find.bySemanticsLabel('Previous day'),
+        );
+        expect(previousSize.width, greaterThanOrEqualTo(48));
+        expect(previousSize.height, greaterThanOrEqualTo(48));
+        handle.dispose();
+      },
+    );
   });
 }
