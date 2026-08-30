@@ -664,9 +664,9 @@ export class EntriesService {
       handle.prepare('DELETE FROM diary_entries WHERE id = ? AND user_id = ?').run(entryId, userId);
       // Scoped to this user's own topics only — a topic another user still references (through
       // their own `entry_topics`/`patterns` rows) must never be considered for cleanup here; this
-      // user deleting their last entry that named "work" must not touch a different account's
-      // "work" topic, even though both rows can share the same `name` today (see this ticket's PR
-      // description on `topics.name`'s still-global `UNIQUE` constraint).
+      // user deleting their last entry that named "work" must not touch a different account's own
+      // "work" topic (a distinct row since `schema.ts`'s M-1b step 2: `topics.name` is unique per
+      // user, not globally).
       handle
         .prepare(
           `DELETE FROM topics WHERE user_id = ?

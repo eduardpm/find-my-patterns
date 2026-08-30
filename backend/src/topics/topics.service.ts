@@ -77,13 +77,10 @@ export class TopicsService {
   }
 
   /**
-   * `topics.name` still carries a bare, global `UNIQUE` constraint (`schema.ts`'s M-1b note) — this
-   * ticket's PR description explains the decision to defer fixing that to a follow-up rather than
-   * rebuild the table here. The practical consequence, stated plainly: the `SELECT` below is
-   * correctly scoped to `userId` (so this user never silently adopts a *different* user's row for
-   * the same name), but the `INSERT` beneath it can still throw a `UNIQUE constraint failed` error
-   * if a different user already holds a topic with this exact name — a real, known, tracked gap,
-   * not a bug this method is pretending not to have.
+   * `topics.name` is unique per user (`UNIQUE (user_id, name)`, `schema.ts`'s M-1b step 2 note) —
+   * two accounts can each hold their own "coffee" row. The `SELECT` below is scoped to `userId` for
+   * the same reason every other query in this class is: it is what makes this user find (or fail
+   * to find) only their own prior topic, never adopt a different user's row for the same name.
    */
   private getOrCreateTopic(userId: string, name: string): Topic {
     const handle = this.db.forUser(userId);
