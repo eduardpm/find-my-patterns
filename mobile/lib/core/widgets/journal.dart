@@ -87,14 +87,21 @@ class PageHeader extends StatelessWidget {
         title,
         if (actionWidgets != null && actionWidgets.isNotEmpty) ...[
           const SizedBox(height: JournalSpacing.x4),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < actionWidgets.length; i++) ...[
-                if (i > 0) const SizedBox(width: JournalSpacing.x2),
-                actionWidgets[i],
-              ],
-            ],
+          // `Wrap`, not the fixed-size `Row` this used to be: a caller can
+          // pass more than one action, and each is sized to its own content
+          // (a `StatusBadge` beside an icon button, say) rather than being
+          // shrinkable, so a `Row` had nowhere to give ground once their
+          // combined width outgrew the header at a larger text scale --
+          // "Consider changing" plus one icon button overflowed a 320dp
+          // header by 34px at the default scale alone, 238px at 2x. `Wrap`
+          // keeps every action at its full size and drops the ones that
+          // don't fit to a second line instead, the same fix
+          // `ACCESSIBILITY.md` §3 already applies to `IntensityDials` and
+          // `FeelingChips`.
+          Wrap(
+            spacing: JournalSpacing.x2,
+            runSpacing: JournalSpacing.x2,
+            children: actionWidgets,
           ),
         ],
         Padding(

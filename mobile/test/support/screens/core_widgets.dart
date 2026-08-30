@@ -21,7 +21,7 @@ import '../screen_registry.dart';
 /// Content is drawn from real call sites, not invented: the eyebrow mirrors
 /// `day_entries_screen.dart`'s `DateFormat('EEEE, MMMM d')`; the page title
 /// is topic-phrase length, matching `experiment_results_screen.dart`'s
-/// capitalised `patternTopic` title; the button row's labels are
+/// capitalised `patternTopic` title; the stacked button pair's labels are
 /// `entry_detail_screen.dart`'s edit-conflict pair ("Keep mine (overwrite)"
 /// / an even longer PillButton label from `experiment_setup_sheet.dart`,
 /// "Abandon it and start this instead"); the empty state's icon/title/
@@ -80,22 +80,27 @@ Widget _journalDesignSystemScreen() => MaterialApp(
                   ],
                 ),
                 const SizedBox(height: JournalSpacing.x4),
-                Row(
-                  children: [
-                    Expanded(
-                      child: PillButton(
-                        onPressed: () {},
-                        child: const Text(
-                          'Abandon it and start this instead',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: JournalSpacing.x2),
-                    SecondaryPillButton(
-                      onPressed: () {},
-                      child: const Text('Keep mine (overwrite)'),
-                    ),
-                  ],
+                // Stacked full-width, not side by side: this is
+                // `entry_detail_screen.dart`'s own conflict-resolution pair
+                // (`SizedBox(width: double.infinity, child: PillButton(...))`
+                // above a matching `SecondaryPillButton`), the only place in
+                // the app that puts these two buttons together. A `Row`
+                // instead would be a shape this app's own callers never
+                // produce, not a real gap in either button.
+                SizedBox(
+                  width: double.infinity,
+                  child: PillButton(
+                    onPressed: () {},
+                    child: const Text('Abandon it and start this instead'),
+                  ),
+                ),
+                const SizedBox(height: JournalSpacing.x2),
+                SizedBox(
+                  width: double.infinity,
+                  child: SecondaryPillButton(
+                    onPressed: () {},
+                    child: const Text('Keep mine (overwrite)'),
+                  ),
                 ),
               ],
             ),
